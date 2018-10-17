@@ -311,7 +311,8 @@ struct command {
 	struct command *next;
 	const char *error_string;
 	unsigned int skip_update:1,
-		     did_not_exist:1;
+		     did_not_exist:1,
+		     exec_by_hook:1;
 	int index;
 	struct object_id old_oid;
 	struct object_id new_oid;
@@ -668,6 +669,8 @@ static void prepare_push_cert_sha1(struct child_process *proc)
 
 struct receive_hook_feed_state {
 	struct command *cmd;
+	int exec_by_hook;
+	int hook_must_exist;
 	int skip_broken;
 	struct strbuf buf;
 	const struct string_list *push_options;
@@ -683,8 +686,13 @@ static int run_and_feed_hook(const char *hook_name, feed_fn feed,
 	int code;
 
 	argv[0] = find_hook(hook_name);
-	if (!argv[0])
-		return 0;
+	if (!argv[0]) {
+		if (feed_state->hook_must_exist) {
+			rp_error("cannot to find hook '%s'", hook_name);
+			return 1;
+		} else
+			return 0;
+	}
 
 	argv[1] = NULL;
 
@@ -750,9 +758,15 @@ static int feed_receive_hook(void *state_, const char **bufp, size_t *sizep)
 	struct receive_hook_feed_state *state = state_;
 	struct command *cmd = state->cmd;
 
-	while (cmd &&
-	       state->skip_broken && (cmd->error_string || cmd->did_not_exist))
-		cmd = cmd->next;
+	while (cmd)
+		if (state->skip_broken && (cmd->error_string || cmd->did_not_exist))
+			cmd = cmd->next;
+		else if (state->exec_by_hook && !cmd->exec_by_hook)
+			cmd = cmd->next;
+		else if (!state->exec_by_hook && cmd->exec_by_hook)
+			cmd = cmd->next;
+		else
+			break;
 	if (!cmd)
 		return -1; /* EOF */
 	strbuf_reset(&state->buf);
@@ -777,6 +791,8 @@ static int run_receive_hook(struct command *commands,
 
 	strbuf_init(&state.buf, 0);
 	state.cmd = commands;
+	state.exec_by_hook = 0;
+	state.hook_must_exist = 0;
 	state.skip_broken = skip_broken;
 	if (feed_receive_hook(&state, NULL, NULL))
 		return 0;
@@ -814,6 +830,47 @@ static int run_update_hook(struct command *cmd)
 	if (use_sideband)
 		copy_to_sideband(proc.err, -1, NULL);
 	return finish_command(&proc);
+}
+
+static int run_execute_commands_pre_receive_hook(struct command *commands,
+			    const struct string_list *push_options)
+{
+	struct receive_hook_feed_state state;
+	int status;
+
+	strbuf_init(&state.buf, 0);
+	state.cmd = commands;
+	state.exec_by_hook = 1;
+	state.hook_must_exist = 0;
+	state.skip_broken = 0;
+	if (feed_receive_hook(&state, NULL, NULL))
+		return 0;
+	state.cmd = commands;
+	state.push_options = push_options;
+	status = run_and_feed_hook("execute-commands--pre-receive",
+			feed_receive_hook, &state);
+	strbuf_release(&state.buf);
+	return status;
+}
+
+static int run_execute_commands_hook(struct command *commands,
+				     const struct string_list *push_options)
+{
+	struct receive_hook_feed_state state;
+	int status;
+
+	strbuf_init(&state.buf, 0);
+	state.cmd = commands;
+	state.exec_by_hook = 1;
+	state.hook_must_exist = 1;
+	state.skip_broken = 1;
+	if (feed_receive_hook(&state, NULL, NULL))
+		return 0;
+	state.cmd = commands;
+	state.push_options = push_options;
+	status = run_and_feed_hook("execute-commands", feed_receive_hook, &state);
+	strbuf_release(&state.buf);
+	return status;
 }
 
 static int is_ref_checked_out(const char *ref)
@@ -1373,7 +1430,7 @@ static void warn_if_skipped_connectivity_check(struct command *commands,
 	int checked_connectivity = 1;
 
 	for (cmd = commands; cmd; cmd = cmd->next) {
-		if (should_process_cmd(cmd) && si->shallow_ref[cmd->index]) {
+		if (should_process_cmd(cmd) && !cmd->exec_by_hook && si->shallow_ref[cmd->index]) {
 			error("BUG: connectivity check has not been run on ref %s",
 			      cmd->ref_name);
 			checked_connectivity = 0;
@@ -1390,7 +1447,7 @@ static void execute_commands_non_atomic(struct command *commands,
 	struct strbuf err = STRBUF_INIT;
 
 	for (cmd = commands; cmd; cmd = cmd->next) {
-		if (!should_process_cmd(cmd))
+		if (!should_process_cmd(cmd) || cmd->exec_by_hook)
 			continue;
 
 		transaction = ref_transaction_begin(&err);
@@ -1430,7 +1487,7 @@ static void execute_commands_atomic(struct command *commands,
 	}
 
 	for (cmd = commands; cmd; cmd = cmd->next) {
-		if (!should_process_cmd(cmd))
+		if (!should_process_cmd(cmd) || cmd->exec_by_hook)
 			continue;
 
 		cmd->error_string = update(cmd, si);
@@ -1466,6 +1523,8 @@ static void execute_commands(struct command *commands,
 	struct iterate_data data;
 	struct async muxer;
 	int err_fd = 0;
+	int seen_exec_by_hook = 0;
+	int seen_internal_exec = 0;
 
 	if (unpacker_error) {
 		for (cmd = commands; cmd; cmd = cmd->next)
@@ -1495,13 +1554,44 @@ static void execute_commands(struct command *commands,
 
 	reject_updates_to_hidden(commands);
 
-	if (run_receive_hook(commands, "pre-receive", 0, push_options)) {
-		for (cmd = commands; cmd; cmd = cmd->next) {
-			if (!cmd->error_string)
-				cmd->error_string = "pre-receive hook declined";
-		}
-		return;
+	/* Try to find commands that have special prefix, and will run these
+	 * commands using an external "execute-commands" hook.
+	 */
+	for (cmd = commands; cmd; cmd = cmd->next) {
+		if (!should_process_cmd(cmd))
+			continue;
+
+		/* TODO: replace the fixed prefix by looking up git config variables. */
+		if (!strncmp(cmd->ref_name, "refs/for/", 9)) {
+			cmd->exec_by_hook = 1;
+			seen_exec_by_hook = 1;
+		} else
+			seen_internal_exec = 1;
 	}
+
+	if (seen_exec_by_hook) {
+		/* Try to find and run the `execute-commands--pre-receive` hook to check
+		 * permissions on the special commands.
+		 *
+		 * If it does not exists, try to run `execute-commands --pre-receive`.
+		 */
+		if (run_execute_commands_pre_receive_hook(commands, push_options)) {
+			for (cmd = commands; cmd; cmd = cmd->next) {
+				if (!cmd->error_string)
+					cmd->error_string = "execute-commands hook declined";
+			}
+			return;
+		}
+	}
+
+	if (seen_internal_exec)
+		if (run_receive_hook(commands, "pre-receive", 0, push_options)) {
+			for (cmd = commands; cmd; cmd = cmd->next) {
+				if (!cmd->error_string)
+					cmd->error_string = "pre-receive hook declined";
+			}
+			return;
+		}
 
 	/*
 	 * Now we'll start writing out refs, which means the objects need
@@ -1521,10 +1611,21 @@ static void execute_commands(struct command *commands,
 	free(head_name_to_free);
 	head_name = head_name_to_free = resolve_refdup("HEAD", 0, NULL, NULL);
 
-	if (use_atomic)
-		execute_commands_atomic(commands, si);
-	else
-		execute_commands_non_atomic(commands, si);
+	if (seen_exec_by_hook) {
+		if (run_execute_commands_hook(commands, push_options)) {
+			for (cmd = commands; cmd; cmd = cmd->next) {
+				if (!cmd->error_string  && (cmd->exec_by_hook || use_atomic))
+					cmd->error_string = "fail to run execute-commands hook";
+			}
+		}
+	}
+
+	if (seen_internal_exec) {
+		if (use_atomic)
+			execute_commands_atomic(commands, si);
+		else
+			execute_commands_non_atomic(commands, si);
+	}
 
 	if (shallow_update)
 		warn_if_skipped_connectivity_check(commands, si);
