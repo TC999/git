@@ -58,6 +58,49 @@ the message file.
 The default 'applypatch-msg' hook, when enabled, runs the
 'commit-msg' hook, if the latter is enabled.
 
+execute-commands--pre-receive
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+This hook is invoked by linkgit:git-receive-pack[1] when it reacts to
+special `git push` command.  Just before starting to execute the
+external 'execute-commands' hook to make changes to the repository,
+the 'execute-commands--pre-receive' hook is invoked.  This hook has
+the same functionality as 'pre-receive' hook, while it only acts on
+special commands which 'git-push' sends to 'git-receive-pack'.
+The refnames of these spacial commands have special prefix (such as
+"refs/for/") which matches what the `receive.executeCommandsHookRefs`
+configuration variable defines.
+
+If this hook does not exist, will try to find the 'execute-commands'
+hook, and run `execute-command --pre-receive` command to do some
+checks.  Its exit status determines the success or failure of the
+update.  If the hook exits with non-zero status, won't execute any of
+the commands, no metter calling the internal `execute_commands`
+function or calling the external "execute-commands" hook.
+
+This hook executes once for the receive operation, and gets the
+information from its standard input.
+See <<pre-receive,'pre-receive'>> for details.
+
+execute-commands
+~~~~~~~~~~~~~~~~
+This hook is invoked by linkgit:git-receive-pack[1] when it reacts to
+special `git push` command.  According to refnames of the commands which
+`git push` sends to 'git-receive-pack', the commands will be devided
+into two groups by matching what the `receive.executeCommandsHookRefs`
+configuration variable defines.  One group of the commands will execute
+the internal `execute_commands` function to update the corresponding
+refnames, and the other group of commands which have matching refnames
+will execute this external 'execute-commands' hook to create pull
+requests, etc.
+
+Its exit status only determines the success or failure of the group of
+commands with special refnames, unless atomic push is in use.
+
+This hook executes once if there are any special commands with special
+refnames.  There is no argument taken by this hook, and the push options
+(if any) and command(s) will be fed to this book by its standard input.
+See the <<pre-receive,'pre-receive'>> hook for the format of the input.
+
 pre-applypatch
 ~~~~~~~~~~~~~~
 
