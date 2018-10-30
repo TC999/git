@@ -1,0 +1,80 @@
+How to merge all topic branches
+===============================
+
+Run the following commands in order:
+
+	$ tag=refs/tags/v2.24.1
+	$ git checkout master
+	$ git reset --hard $tag
+
+	$ git merge --no-edit topic/0020-refs-txn-hook
+	$ git merge --no-edit topic/0030-black-hole
+	$ git merge --no-edit topic/0040-quiltexport
+	$ git merge --no-edit topic/0050-rate-limit
+	$ git merge --no-edit topic/0060-agit-txn
+	$ git merge --no-edit topic/0070-agit-gc
+	$ git merge --no-edit topic/0999-agit-version
+
+	$ git rebase -i $tag
+	$ git quiltexport $tag
+
+AGIT Release Notes
+==================
+
+v5.4
+-----
+* agit.gc mode: set big pack threshold automatically for git-gc.
+
+v5.3
+-----
+* git-checksum: read ref update cmd from args.
+* git-checksum: save log to file .git/info/checksum.log.
+
+v5.2
+-----
+* galileo: refactor agit protocol extension.
+* galileo: return commands list in agit-txt-req-end request.
+
+v5.0
+-----
+* galileo: protocol extension for galileo project with new agit-txn capability.
+
+v4.5
+-----
+* agit-flow: parse output of `execute-commands` to env_argv and pass to `post-receive`.
+
+v4.4
+-----
+* checksum: fallback to atomic push, if too many commands (>100) in one push.
+* agit-flow: fail if there is a special push, but 'execute-commands' hook not exist.
+* agit-flow: add help for hooks.
+
+v4.3
+-----
+* Suppress error message if "git-checksum" is not installed.
+* refactor agit-flow patches.
+
+v4.2
+------
+* Generate checksum file after writing to repository.
+* Add more test cases.
+* Rebase to Git 2.24.1.
+
+v3
+------
+* Git traffic protection by checking loadavg.
+
+v2
+------
+* Fix dirname bug, which not work well in MacOS.
+* Add test cases for git-receive-pack for execute-commands hook.
+* Add test cases for last-modified timestamp and agit-repo.lock.
+
+v1
+------
+* New command 'git-quiltexport' to export commits to quilt patches.
+* Prohibit to write to repo if there is a 'agit-repo.lock' file at any upword directory.
+* Touch a '.git/info/last-modified' file after write to repo.
+* In order to support centralize workflow like gerrit in git, add a `.git/hooks/execute-commands`
+  hook.  If user has set `receive.executeCommandsRefs` config variables, git will check and mark
+  commands, and run external hook instead of internal functions on marked commands.
