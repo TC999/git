@@ -10,6 +10,7 @@
 #include "commit.h"
 #include "diff.h"
 #include "revision.h"
+#include "limiting.h"
 #include "list-objects.h"
 #include "list-objects-filter.h"
 #include "list-objects-filter-options.h"
@@ -265,6 +266,9 @@ static void create_pack_file(struct upload_pack_data *pack_data,
 	ssize_t sz;
 	int i;
 	FILE *pipe_fd;
+
+	if (wait_for_avail_loadavg(pack_data->use_sideband))
+		die("failed to wait_for_avail_loadavg");
 
 	if (!pack_data->pack_objects_hook)
 		pack_objects.git_cmd = 1;
