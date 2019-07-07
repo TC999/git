@@ -839,6 +839,16 @@ static int get_pack(struct fetch_pack_args *args,
 		argv_array_push(&cmd.args, alternate_shallow_file);
 	}
 
+	if (args->black_hole) {
+		/* Do not keep pack, for we will throw away any data */
+		do_keep = 0;
+
+		if (args->black_hole == 2) {
+			// throw away data from server
+			goto throw_away;
+		}
+	}
+
 	if (do_keep || args->from_promisor) {
 		if (pack_lockfiles)
 			cmd.out = -1;
@@ -880,6 +890,8 @@ static int get_pack(struct fetch_pack_args *args,
 		argv_array_push(&cmd.args, cmd_name);
 		if (args->quiet || args->no_progress)
 			argv_array_push(&cmd.args, "-q");
+		if (args->black_hole)
+			argv_array_push(&cmd.args, "-n");
 		args->check_self_contained_and_connected = 0;
 	}
 
@@ -925,6 +937,32 @@ static int get_pack(struct fetch_pack_args *args,
 			ret == 0;
 	else
 		die(_("%s failed"), cmd_name);
+
+	goto cleanup;
+
+throw_away:
+	if (1) {
+		ssize_t total = 0;
+		ssize_t want_size = 8192;
+		char *buf = xmalloc(want_size);
+
+		for (;;) {
+			ssize_t got = read_in_full(demux.out, buf, want_size);
+			if (got < 0) {
+				die("fail to read from server");
+			}
+			total += got;
+			if (got < want_size) {
+				fprintf(stderr, "\n");
+				break;
+			}
+			fprintf(stderr, "local: read %ld from server...\t\r", total);
+		}
+		fprintf(stderr, "NOTE: read total %ld bytes of pack data from server.\n", total);
+		free(buf);
+	}
+
+cleanup:
 	if (use_sideband && finish_async(&demux))
 		die(_("error in sideband demultiplexer"));
 
