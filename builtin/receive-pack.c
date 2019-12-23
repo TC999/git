@@ -1408,11 +1408,25 @@ static void warn_if_skipped_connectivity_check(struct command *commands,
 		BUG("connectivity check skipped???");
 }
 
+static void execute_commands_atomic(struct command *commands, struct shallow_info *si);
 static void execute_commands_non_atomic(struct command *commands,
 					struct shallow_info *si)
 {
 	struct command *cmd;
 	struct strbuf err = STRBUF_INIT;
+	int count = 0;
+	int max_non_atomic_cmd = 100;
+
+	/* Add the following fallback code here,  not in execute_commands(),
+	 * because it will conflict with other patches.
+	 */
+	for (cmd = commands; cmd; cmd = cmd->next, count++);
+	if (count > max_non_atomic_cmd) {
+		rp_error("too many references (%d > %d) to update, using atomic push",
+				count,
+				max_non_atomic_cmd);
+		return execute_commands_atomic(commands, si);
+	}
 
 	for (cmd = commands; cmd; cmd = cmd->next) {
 		if (!should_process_cmd(cmd))
