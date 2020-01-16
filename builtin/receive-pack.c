@@ -85,6 +85,7 @@ static const char *nonce_status;
 static long nonce_stamp_slop;
 static timestamp_t nonce_stamp_slop_limit;
 static struct ref_transaction *transaction;
+struct argv_array post_receive_env_array;
 
 static enum {
 	KEEPALIVE_NEVER = 0,
@@ -678,7 +679,9 @@ struct receive_hook_feed_state {
 };
 
 typedef int (*feed_fn)(void *, const char **, size_t *);
+typedef void (*stdout_handler_fn)(int out);
 static int run_and_feed_hook(const char *hook_name, feed_fn feed,
+			     stdout_handler_fn stdout_handler,
 			     struct receive_hook_feed_state *feed_state)
 {
 	struct child_process proc = CHILD_PROCESS_INIT;
@@ -713,8 +716,14 @@ static int run_and_feed_hook(const char *hook_name, feed_fn feed,
 
 	proc.argv = argv;
 	proc.in = -1;
-	proc.stdout_to_stderr = 1;
+	if (stdout_handler)
+		proc.out = -1;
+	else
+		proc.stdout_to_stderr = 1;
 	proc.trace2_hook_name = hook_name;
+
+	if (!strcmp(hook_name, "post-receive") && post_receive_env_array.argc > 0)
+		argv_array_pushv(&proc.env_array, post_receive_env_array.argv);
 
 	if (feed_state->push_options) {
 		int i;
@@ -760,6 +769,10 @@ static int run_and_feed_hook(const char *hook_name, feed_fn feed,
 			break;
 	}
 	close(proc.in);
+
+	if (stdout_handler)
+		stdout_handler(proc.out);
+
 	if (use_sideband)
 		finish_async(&muxer);
 
@@ -817,7 +830,7 @@ static int run_receive_hook(struct command *commands,
 		return 0;
 	state.cmd = commands;
 	state.push_options = push_options;
-	status = run_and_feed_hook(hook_name, feed_receive_hook, &state);
+	status = run_and_feed_hook(hook_name, feed_receive_hook, NULL, &state);
 	strbuf_release(&state.buf);
 	return status;
 }
@@ -868,9 +881,27 @@ static int run_execute_commands_pre_receive_hook(struct command *commands,
 	state.cmd = commands;
 	state.push_options = push_options;
 	status = run_and_feed_hook("execute-commands--pre-receive",
-			feed_receive_hook, &state);
+			feed_receive_hook, NULL, &state);
 	strbuf_release(&state.buf);
 	return status;
+}
+
+
+static void prepare_post_receive_env(int in)
+{
+	struct strbuf stdout_buf = STRBUF_INIT;
+
+	while (strbuf_getwholeline_fd(&stdout_buf, in, '\n') != EOF) {
+		char *p = stdout_buf.buf + stdout_buf.len -1;
+		if (*p =='\n')
+			*p = '\0';
+		p = strchr(stdout_buf.buf, '=');
+		if (p == NULL)
+			continue;
+		argv_array_push(&post_receive_env_array, stdout_buf.buf);
+		strbuf_reset(&stdout_buf);
+	}
+	strbuf_release(&stdout_buf);
 }
 
 static int run_execute_commands_hook(struct command *commands,
@@ -889,7 +920,8 @@ static int run_execute_commands_hook(struct command *commands,
 		return 0;
 	state.cmd = commands;
 	state.push_options = push_options;
-	status = run_and_feed_hook("execute-commands", feed_receive_hook, &state);
+	status = run_and_feed_hook("execute-commands",
+			feed_receive_hook, prepare_post_receive_env, &state);
 	strbuf_release(&state.buf);
 	return status;
 }
@@ -2061,6 +2093,8 @@ int cmd_receive_pack(int argc, const char **argv, const char *prefix)
 		OPT_HIDDEN_BOOL(0, "reject-thin-pack-for-testing", &reject_thin, NULL),
 		OPT_END()
 	};
+
+	argv_array_init(&post_receive_env_array);
 
 	packet_trace_identity("receive-pack");
 
