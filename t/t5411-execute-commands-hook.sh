@@ -125,7 +125,7 @@ test_expect_success "create local topic branch" '
 	)
 '
 
-test_expect_failure "push one special ref: refs/for/master" '
+test_expect_success "push one special ref: refs/for/master" '
 	(
 		cd work &&
 		git update-ref HEAD $B &&
@@ -182,7 +182,7 @@ test_expect_success "add back the execute-commands hook" '
 	mv $bare/hooks/execute-commands.ok $bare/hooks/execute-commands
 '
 
-test_expect_failure "push one special ref: refs/for/a/b/c" '
+test_expect_success "push one special ref: refs/for/a/b/c" '
 	(
 		cd work &&
 		git push origin HEAD:refs/for/a/b/c/my/topic
@@ -199,7 +199,7 @@ test_expect_failure "push one special ref: refs/for/a/b/c" '
 	test_cmp expect actual
 '
 
-test_expect_failure "push two special references" '
+test_expect_success "push two special references" '
 	(
 		cd work &&
 		git push origin \
@@ -300,7 +300,7 @@ test_expect_success "restore execute-commands hook" '
 	mv $bare/hooks/execute-commands.ok $bare/hooks/execute-commands
 '
 
-test_expect_failure "push mixed references successfully" '
+test_expect_success "push mixed references successfully" '
 	(
 		cd work &&
 		git push origin \
