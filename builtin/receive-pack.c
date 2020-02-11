@@ -68,6 +68,15 @@ static int auto_update_server_info;
 static int auto_gc = 1;
 static int reject_thin;
 static int stateless_rpc;
+/* If agit_txn mode is enabled, our proxy server (galileo) will write
+ * three copies parallel, and will execute some hooks (such as
+ * "post-receive" and "execute-commands" which upstream has renamed to
+ * "proc-receive") for multiple times.  Galileo can appoint main instance
+ * by our extend protocol, and only execute these hooks if this
+ * 'receive-pack' is the main instance.
+ **/
+static int agit_txn;
+static int agit_main_instance = 0;
 static const char *service_dir;
 static const char *head_name;
 static void *head_name_to_free;
@@ -98,6 +107,55 @@ static enum {
 static int keepalive_in_sec = 5;
 
 static struct tmp_objdir *tmp_objdir;
+
+/*
+ * Reqests from "receive-pack" to Galileo:
+ *
+ *     agit-txn-req-prepare: Which is called right after "pre-receive" hook,
+ *         but before moving the packfile sent by user from a temporary
+ *         directory to git objects directory.  "receive-pack" will execute
+ *         the "execute-commands" hook ("proc-receive" hook in upstream) in
+ *         this stage.
+ *
+ *         A flush packet will be sent after this directive.
+ *
+ *     agit-txn-req-commit: Which is called before executing the commands
+ *         (create, update, delete references).  Galileo should create a
+ *         distributed lock before sending respose to "receive-pack".
+ *
+ *         A flush packet will be sent after this directive.
+ *
+ *     agit-txn-req-end: This directive terminate the session between
+ *         "receive-pack" and Galileo.  An optional checksum and error
+ *         message may send before the flush packet. Example:
+ *
+ *         PKT-LINE("agit-txn-req-end")
+ *         PKT-LINE("checksum e9c022ff72cf02c8afb901e6d308d05e")
+ *         PKT-LINE("error pre-receive hook decliend")
+ *         FLUSH-PKT
+ *
+ * Response from Galileo to "receive-pack":
+ *
+ *     agit-txn-resp-next: Let "receive-pack" continue its process.
+ *         It has one optional parameter (0, or 1).  Default 0,  if
+ *         not parameter is given. The given parameter 1, will
+ *         appoint "receive-pack" as the main instance.  A main
+ *         instance in the "prepare" stage, will execute the
+ *         "execute-commands" hook, and in the "commit" stage, will
+ *         execute the "post-receive" hook.
+ *
+ *         A flush packet will be given after this directive.
+ *
+ *     agit-txn-resp-quit: Let "receive-pack" stop its process, and
+ *         mark all the commands failed.
+ *
+ *         A flush packet will be given after this directive.
+ **/
+#define AGIT_TXN_REQ_PREPARE	"agit-txn-req-prepare"
+#define AGIT_TXN_REQ_COMMIT	"agit-txn-req-commit"
+#define AGIT_TXN_REQ_END	"agit-txn-req-end"
+#define AGIT_TXN_RESP_NEXT	"agit-txn-resp-next"
+#define AGIT_TXN_RESP_QUIT	"agit-txn-resp-quit"
 
 static struct proc_receive_ref {
 	unsigned int want_add:1,
@@ -1043,9 +1101,15 @@ static int read_proc_receive_report(struct packet_reader *reader,
 				report->new_oid = oiddup(&new_oid);
 			else if (!strcmp(key, "forced-update"))
 				report->forced_update = 1;
-			else if (!strcmp(key, "fall-through"))
+			else if (!strcmp(key, "fall-through")) {
 				/* Fall through, let 'receive-pack' to execute it. */
 				hint->run_proc_receive = 0;
+				if (agit_txn) {
+					hint->error_string = "fall-through mode from proc-receive is incompatible with agit-txn";
+					strbuf_addf(errmsg, "%s\n", hint->error_string);
+					code = -1;
+				}
+			}
 			continue;
 		}
 
@@ -1816,6 +1880,72 @@ static int should_process_cmd(struct command *cmd)
 	return !cmd->error_string && !cmd->skip_update;
 }
 
+static int should_prepare_txn(struct command *commands,
+			      struct packet_reader *reader,
+			      int *run_instance)
+{
+	char *p;
+
+	packet_write_fmt(1, "%s\n", AGIT_TXN_REQ_PREPARE);
+	packet_flush(1);
+
+	for (;;) {
+		packet_reader_read(reader);
+		if (reader->status == PACKET_READ_FLUSH)
+			break;
+
+		if (reader->status != PACKET_READ_NORMAL)
+			die("protocol error: got an unexpected agit txn flag");
+
+		if (reader->pktlen >= strlen(AGIT_TXN_RESP_NEXT) &&
+		    starts_with(reader->line, AGIT_TXN_RESP_NEXT)) {
+			p = strchr(reader->line, ' ');
+			if (p) {
+				*run_instance = atoi(++p);
+			}
+			return 1;
+		}
+
+		if (reader->pktlen >= strlen(AGIT_TXN_RESP_QUIT) &&
+		    starts_with(reader->line, AGIT_TXN_RESP_QUIT))
+			return 0;
+	}
+	return 0;
+}
+
+static int should_commit_txn(struct command *commands,
+			     struct packet_reader *reader,
+			     int *run_instance)
+{
+	char *p;
+
+	packet_write_fmt(1, "%s\n", AGIT_TXN_REQ_COMMIT);
+	packet_flush(1);
+
+	for (;;) {
+		packet_reader_read(reader);
+		if (reader->status == PACKET_READ_FLUSH)
+			break;
+
+		if (reader->status != PACKET_READ_NORMAL)
+			die("protocol error: got an unexpected agit txn flag");
+
+		if (reader->pktlen >= strlen(AGIT_TXN_RESP_NEXT) &&
+		    starts_with(reader->line, AGIT_TXN_RESP_NEXT)) {
+			p = strchr(reader->line, ' ');
+			if (p) {
+				*run_instance = atoi(++p);
+			}
+			return 1;
+		}
+
+		if (reader->pktlen >= strlen(AGIT_TXN_RESP_QUIT) &&
+		    starts_with(reader->line, AGIT_TXN_RESP_QUIT))
+			return 0;
+	}
+	return 0;
+}
+
 static void warn_if_skipped_connectivity_check(struct command *commands,
 					       struct shallow_info *si)
 {
@@ -1920,10 +2050,92 @@ cleanup:
 	strbuf_release(&err);
 }
 
+static void agit_txn_read_checksum(struct strbuf *sum) {
+	struct strbuf checksum_file = STRBUF_INIT;
+	char msg[128];
+	int fd;
+
+	strbuf_addf(&checksum_file, "%s/%s/%s",
+		    the_repository->gitdir,
+		    "info",
+		    "checksum");
+
+	if (access(checksum_file.buf, F_OK) != 0) {
+		struct child_process proc = CHILD_PROCESS_INIT;
+		const char *argv[3];
+		int code;
+
+		argv[0] = "git-checksum";
+		argv[1] = "--init";
+		argv[2] = NULL;
+		proc.argv = argv;
+		proc.in = 0;
+		proc.dir = the_repository->gitdir;
+		proc.stdout_to_stderr = 1;
+		proc.silent_exec_failure = 1;
+
+		code = start_command(&proc);
+		if (code) {
+			return;
+		}
+		finish_command(&proc);
+	}
+
+	if ((fd = open(checksum_file.buf, O_RDONLY)) != -1) {
+		int len;
+
+		if ((len = read(fd, msg, sizeof(msg))) > 0) {
+			char *p;
+			p = strchr(msg, '\n');
+			if (p)
+				*p = '\0';
+			strbuf_addstr(sum, msg);
+		}
+		close(fd);
+	}
+
+	strbuf_release(&checksum_file);
+}
+
+static void agit_txn_end(struct command *commands, char *msg)
+{
+	struct command *cmd;
+	struct strbuf checksum = STRBUF_INIT;
+
+	if (!agit_txn)
+		return;
+
+	packet_write_fmt(1, "%s\n", AGIT_TXN_REQ_END);
+
+	agit_txn_read_checksum(&checksum);
+	if (checksum.len > 0)
+		packet_write_fmt(1, "checksum %s\n", checksum.buf);
+
+	if (msg && strlen(msg) > 0)
+		packet_write_fmt(1, "error %s\n", msg);
+
+	for(cmd = commands; cmd; cmd = cmd->next) {
+		if (cmd->error_string ||
+		    cmd->skip_update ||
+		    cmd->did_not_exist ||
+		    cmd->run_proc_receive)
+			continue;
+
+		packet_write_fmt(1, "%s %s %s\n",
+				 oid_to_hex(&cmd->old_oid),
+				 oid_to_hex(&cmd->new_oid),
+				 cmd->ref_name);
+	}
+
+	packet_flush(1);
+	strbuf_release(&checksum);
+}
+
 static void execute_commands(struct command *commands,
 			     const char *unpacker_error,
 			     struct shallow_info *si,
-			     const struct string_list *push_options)
+			     const struct string_list *push_options,
+			     struct packet_reader *reader)
 {
 	struct check_connected_options opt = CHECK_CONNECTED_INIT;
 	struct command *cmd;
@@ -1935,7 +2147,7 @@ static void execute_commands(struct command *commands,
 	if (unpacker_error) {
 		for (cmd = commands; cmd; cmd = cmd->next)
 			cmd->error_string = "unpacker error";
-		return;
+		return agit_txn_end(commands, "unpacker error");
 	}
 
 	if (use_sideband) {
@@ -1981,9 +2193,19 @@ static void execute_commands(struct command *commands,
 			if (!cmd->error_string)
 				cmd->error_string = "pre-receive hook declined";
 		}
-		return;
+		return agit_txn_end(commands, "pre-receive hook decliend");
 	}
 
+	/* agit-txn-prepare: run proc-receive hook */
+	if (agit_txn)
+		if (!should_prepare_txn(commands, reader, &agit_main_instance)) {
+			for (cmd = commands; cmd; cmd = cmd->next) {
+				if (!cmd->error_string)
+					cmd->error_string = "transaction prepared failed";
+			}
+			return agit_txn_end(commands, "transaction prepared failed");
+		}
+ 
 	/*
 	 * Now we'll start writing out refs, which means the objects need
 	 * to be in their final positions so that other processes can see them.
@@ -1993,7 +2215,7 @@ static void execute_commands(struct command *commands,
 			if (!cmd->error_string)
 				cmd->error_string = "unable to migrate objects to permanent storage";
 		}
-		return;
+		return agit_txn_end(commands, "objects migrate failed");
 	}
 	tmp_objdir = NULL;
 
@@ -2003,12 +2225,34 @@ static void execute_commands(struct command *commands,
 	head_name = head_name_to_free = resolve_refdup("HEAD", 0, NULL, NULL);
 
 	if (run_proc_receive &&
-	    run_proc_receive_hook(commands, push_options))
+	    (!agit_txn || agit_main_instance) &&
+	    run_proc_receive_hook(commands, push_options)) {
+		/*
+		 * If agit_txn is enabled, only one instance will execute proc_receive_hook.
+		 * Other instances will report ok for all references which not match the result
+		 * returned from this master instance. So quit.
+		 */
+		if (agit_txn)
+			return agit_txn_end(commands, "proc-receive hook failed");
+
 		for (cmd = commands; cmd; cmd = cmd->next)
 			if (!cmd->error_string &&
 			    !(cmd->run_proc_receive & RUN_PROC_RECEIVE_RETURNED) &&
 			    (cmd->run_proc_receive || use_atomic))
 				cmd->error_string = "fail to run proc-receive hook";
+	}
+
+	/* agit-txn-commit: run internal execute_commands_*() function */
+	if (agit_txn) {
+		agit_main_instance = 0;
+		if (!should_commit_txn(commands, reader, &agit_main_instance)) {
+			for (cmd = commands; cmd; cmd = cmd->next) {
+				if (!cmd->error_string)
+					cmd->error_string = "transaction commit failed";
+			}
+			return agit_txn_end(commands, "transaction commit failed");
+		}
+	}
 
 	if (use_atomic)
 		execute_commands_atomic(commands, si);
@@ -2017,6 +2261,9 @@ static void execute_commands(struct command *commands,
 
 	if (shallow_update)
 		warn_if_skipped_connectivity_check(commands, si);
+
+	if (agit_txn)
+		agit_txn_end(commands, NULL);
 }
 
 static struct command **queue_command(struct command **tail,
@@ -2482,6 +2729,7 @@ int cmd_receive_pack(int argc, const char **argv, const char *prefix)
 		OPT_HIDDEN_BOOL(0, "stateless-rpc", &stateless_rpc, NULL),
 		OPT_HIDDEN_BOOL(0, "advertise-refs", &advertise_refs, NULL),
 		OPT_HIDDEN_BOOL(0, "reject-thin-pack-for-testing", &reject_thin, NULL),
+		OPT_HIDDEN_BOOL(0, "agit-txn", &agit_txn, NULL),
 		OPT_END()
 	};
 
@@ -2567,16 +2815,18 @@ int cmd_receive_pack(int argc, const char **argv, const char *prefix)
 		}
 		use_keepalive = KEEPALIVE_ALWAYS;
 		execute_commands(commands, unpack_status, &si,
-				 &push_options);
+				 &push_options, &reader);
 		if (pack_lockfile)
 			unlink_or_warn(pack_lockfile);
 		if (report_status_v2)
 			report_v2(commands, unpack_status);
 		else if (report_status)
 			report(commands, unpack_status);
-		run_receive_hook(commands, "post-receive", 1,
-				 &push_options);
-		run_update_post_hook(commands);
+		if (!agit_txn || agit_main_instance) {
+			run_receive_hook(commands, "post-receive", 1,
+					 &push_options);
+			run_update_post_hook(commands);
+		}
 		string_list_clear(&push_options, 0);
 		if (auto_gc) {
 			const char *argv_gc_auto[] = {
