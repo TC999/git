@@ -229,7 +229,8 @@ static int receive_pack_config(const char *var, const char *value, void *cb)
 		return 0;
 	}
 
-	if (strcmp(var, "receive.executecommandshookrefs") == 0) {
+	if (strcmp(var, "receive.executecommandsrefs") == 0 /* TODO: for backward compatibility */ ||
+		strcmp(var, "receive.executecommandshookrefs") == 0) {
 		char *prefix;
 		int len;
 
