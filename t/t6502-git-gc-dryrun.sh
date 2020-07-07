@@ -13,7 +13,8 @@ rewrite_gc_output() {
 
 test_expect_success 'Setup' '
 	git init --bare repo.git &&
-	git -C repo.git config gc.autoDetach 0 && \
+	git -C repo.git config gc.autoDetach 0 &&
+	git -C repo.git config agit.gc 0 &&
 	git clone repo.git work
 '
 
@@ -294,6 +295,7 @@ test_expect_success 'gc with bigPackThreshold' '
 	rewrite_gc_output <out | grep "^note: " >actual &&
 
 	cat >expect <<-EOF &&
+	note: big_pack_threshold has pre-defined value: 204800.
 	note: too many packs. (12 > 11)
 	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
 	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
