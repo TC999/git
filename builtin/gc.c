@@ -45,11 +45,13 @@ static int gc_auto_pack_limit = 50;
 static int detach_auto = 1;
 static int dryrun = 0;
 static int verbose = 0;
+static int agit_gc = -1;
 static timestamp_t gc_log_expire_time;
 static const char *gc_log_expire = "1.day.ago";
 static const char *prune_expire = "2.weeks.ago";
 static const char *prune_worktrees_expire = "3.months.ago";
 static unsigned long big_pack_threshold;
+static unsigned long pack_size_limit = 0;
 static unsigned long max_delta_cache_size = DEFAULT_DELTA_CACHE_SIZE;
 
 static struct argv_array pack_refs_cmd = ARGV_ARRAY_INIT;
@@ -156,9 +158,65 @@ static void gc_config(void)
 	git_config_get_expiry("gc.logexpiry", &gc_log_expire);
 
 	git_config_get_ulong("gc.bigpackthreshold", &big_pack_threshold);
+	git_config_get_ulong("pack.packsizelimit", &pack_size_limit);
 	git_config_get_ulong("pack.deltacachesize", &max_delta_cache_size);
 
+	git_config_get_bool("agit.gc", &agit_gc);
+
 	git_config(git_default_config, NULL);
+}
+
+static void set_agit_pack_threshold(void)
+{
+	struct packed_git *p;
+	unsigned long total = 0;
+	char *env;
+
+	if (!agit_gc)
+		return;
+
+	for (p = get_all_packs(the_repository); p; p = p->next) {
+		if (!p->pack_local)
+			continue;
+		total += p->pack_size;
+	}
+
+	env = getenv("AGIT_DEBUG_TOTAL_PACK_SIZE");
+	if (env) {
+		if (verbose)
+			fprintf(stderr, "note: AGIT_DEBUG_TOTAL_PACK_SIZE is set to %s.\n", env);
+		total = atol(env);
+	}
+
+	if (total > 15L * 1024 * 1024 * 1024 /* 15GB ~ */) {
+		big_pack_threshold = 1L * 1024 * 1024 * 1024;
+		pack_size_limit = 2L * 1024 * 1024 * 1024;
+	} else if (total > 7.5L * 1024 * 1024 * 1024 /* 7.5GB ~ 15GB */) {
+		big_pack_threshold = 512L * 1024 * 1024;
+		pack_size_limit = 1L * 1024 * 1024 * 1024;
+	} else if (total > 3.5L * 1024 * 1024 * 1024 /* 3.5GB ~ 7.5GB */) {
+		big_pack_threshold = 256L * 1024 * 1024;
+		pack_size_limit = 512L * 1024 * 1024;
+	} else if (total > 1L * 1024 * 1024 * 1024 /* 1GB ~ 3.5GB */) {
+		big_pack_threshold = 100L * 1024 * 1024;
+		pack_size_limit = 256L * 1024 * 1024;
+	} else if (total > 1L * 100 * 1024 * 1024 /* 100MB ~ 1GB */) {
+		big_pack_threshold = 100L * 1024 * 1024;
+		pack_size_limit = 100L * 1024 * 1024;
+	} else if (agit_gc == -1) {
+		/* If total pack size below 100MB, disable agit-gc. */
+		agit_gc = 0;
+		if (verbose)
+			fprintf(stderr, "note: agit_gc is disabled for repo size below 100MB.\n");
+		return;
+	} else {
+		return;
+	}
+
+	if (verbose) {
+		fprintf(stderr, "note: big_pack_threshold is set to %ld.\n", big_pack_threshold);
+		fprintf(stderr, "note: pack_size_limit is set to %ld.\n", pack_size_limit);
+	}
 }
 
 static void show_command(const char **argv, int flag)
@@ -210,23 +268,35 @@ static int too_many_loose_objects(void)
 }
 
 static struct packed_git *find_base_packs(struct string_list *packs,
-					  unsigned long limit)
+					  unsigned long limit1,
+					  unsigned int num1,
+					  unsigned long limit2,
+					  unsigned int num2)
 {
 	struct packed_git *p, *base = NULL;
+	int count1 = 0;
+	int count2 = 0;
 
 	for (p = get_all_packs(the_repository); p; p = p->next) {
 		if (!p->pack_local)
 			continue;
-		if (limit) {
-			if (p->pack_size >= limit) {
-				if (verbose)
-					fprintf(stderr, "note: will keep pack '%s' (%lld > %ld).\n",
-						p->pack_name, p->pack_size, limit);
-				string_list_append(packs, p->pack_name);
-			}
-		} else if (!base || base->pack_size < p->pack_size) {
-			base = p;
+		if (limit2 && p->pack_size >= limit2 && (!num2 || count2++ < num2)) {
+			if (verbose)
+				fprintf(stderr, "note: will keep pack '%s' (%lld > %ld).\n",
+					p->pack_name, p->pack_size, limit2);
+			string_list_append(packs, p->pack_name);
+			continue;
+		} else if (limit1 && p->pack_size >= limit1 && (!num1 || count1++ < num1)) {
+			if (verbose)
+				fprintf(stderr, "note: will keep pack '%s' (%lld > %ld).\n",
+					p->pack_name, p->pack_size, limit1);
+			string_list_append(packs, p->pack_name);
+			continue;
 		}
+		/* Always keep largest pack if use agit_gc mode, or limit1 is zero. */
+		if ((agit_gc || (!limit1 && !limit2)) &&
+		    (!base || base->pack_size < p->pack_size))
+			base = p;
 	}
 
 	if (base) {
@@ -258,6 +328,9 @@ static int too_many_packs(void)
 		 * Perhaps check the size of the pack and count only
 		 * very small ones here?
 		 */
+		if (agit_gc && big_pack_threshold &&
+		    p->pack_size > big_pack_threshold)
+			continue;
 		cnt++;
 	}
 	if (verbose) {
@@ -387,18 +460,22 @@ static int need_to_gc(void)
 		struct string_list keep_pack = STRING_LIST_INIT_NODUP;
 
 		if (big_pack_threshold) {
-			find_base_packs(&keep_pack, big_pack_threshold);
-			if (keep_pack.nr >= gc_auto_pack_limit) {
+			if (pack_size_limit)
+				find_base_packs(&keep_pack, big_pack_threshold, 10,
+						pack_size_limit, 0);
+			else
+				find_base_packs(&keep_pack, big_pack_threshold, 0, 0, 0);
+			if (!agit_gc && keep_pack.nr >= gc_auto_pack_limit) {
 				if (verbose)
 					fprintf(stderr,
 						"note: too many packs to keep: %d > %d, clean and use largest one to keep.\n",
 						keep_pack.nr, gc_auto_pack_limit);
 				big_pack_threshold = 0;
 				string_list_clear(&keep_pack, 0);
-				find_base_packs(&keep_pack, 0);
+				find_base_packs(&keep_pack, 0, 0, 0, 0);
 			}
 		} else {
-			struct packed_git *p = find_base_packs(&keep_pack, 0);
+			struct packed_git *p = find_base_packs(&keep_pack, 0, 0, 0, 0);
 			uint64_t mem_have, mem_want;
 
 			mem_have = total_ram();
@@ -641,6 +718,16 @@ int cmd_gc(int argc, const char **argv, const char *prefix)
 	if (quiet)
 		argv_array_push(&repack, "-q");
 
+	if (verbose) {
+		if (big_pack_threshold)
+			fprintf(stderr, "note: big_pack_threshold has pre-defined value: %ld.\n",
+				big_pack_threshold);
+		if (pack_size_limit)
+			fprintf(stderr, "note: pack_size_limit has pre-defined value: %ld.\n",
+				pack_size_limit);
+	}
+	set_agit_pack_threshold();
+
 	if (auto_gc) {
 		/*
 		 * Auto-gc should be least intrusive as possible.
@@ -677,16 +764,25 @@ int cmd_gc(int argc, const char **argv, const char *prefix)
 	} else {
 		struct string_list keep_pack = STRING_LIST_INIT_NODUP;
 
-		if (keep_base_pack != -1) {
+		if (big_pack_threshold) {
+			if (pack_size_limit)
+				find_base_packs(&keep_pack, big_pack_threshold, 10,
+						pack_size_limit, 0);
+			else
+				find_base_packs(&keep_pack, big_pack_threshold, 0,
+						0, 0);
+		} else if (keep_base_pack != -1) {
 			if (keep_base_pack)
-				find_base_packs(&keep_pack, 0);
-		} else if (big_pack_threshold) {
-			find_base_packs(&keep_pack, big_pack_threshold);
+				find_base_packs(&keep_pack, 0, 0, 0, 0);
 		}
 
 		add_repack_all_option(&keep_pack);
 		string_list_clear(&keep_pack, 0);
 	}
+
+	if (pack_size_limit)
+		argv_array_pushf(&repack, "--max-pack-size=%ld",
+				 pack_size_limit * 10 / 9 /* real packfile will be a bit smaller */);
 
 	name = lock_repo_for_gc(force, &pid);
 	if (name) {
