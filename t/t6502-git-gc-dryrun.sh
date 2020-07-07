@@ -35,6 +35,7 @@ rewrite_gc_output() {
 test_expect_success 'setup' '
 	create_bare_repo repo.git &&
 	git -C repo.git config gc.autoDetach 0 &&
+	git -C repo.git config agit.gc 0 &&
 	git clone repo.git work
 '
 
