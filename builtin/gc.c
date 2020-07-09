@@ -47,6 +47,8 @@ static int aggressive_window = 250;
 static int gc_auto_threshold = 6700;
 static int gc_auto_pack_limit = 50;
 static int detach_auto = 1;
+static int dryrun = 0;
+static int verbose = 0;
 static timestamp_t gc_log_expire_time;
 static const char *gc_log_expire = "1.day.ago";
 static const char *prune_expire = "2.weeks.ago";
@@ -162,13 +164,43 @@ static void gc_config(void)
 	git_config(git_default_config, NULL);
 }
 
+static void show_command(const char **argv, int flag)
+{
+	struct strbuf sb = STRBUF_INIT;
+
+	if (flag & RUN_GIT_CMD)
+		strbuf_addstr(&sb, "git");
+	for (; *argv; argv++)
+		strbuf_addf(&sb, " %s", *argv);
+	fprintf(stderr, "note: will run: %s\n", sb.buf);
+	strbuf_release(&sb);
+}
+
+#define run_command_v_opt(argv, opt) \
+	run_command_v_opt_fallback(argv, opt, 1)
+static int run_command_v_opt_fallback(const char **argv, int opt, int show_err) {
+	if (show_err)
+		fprintf(stderr, "WARNING: gc.c: should call run_command_v_opt_with_dryrun() instead.\n");
+	return run_command_v_opt_cd_env(argv, opt, NULL, NULL);
+}
+
+static int run_command_v_opt_with_dryrun(const char **argv, int opt)
+{
+	if (verbose)
+		show_command(argv, opt);
+	if (dryrun)
+		return 0;
+	return run_command_v_opt_fallback(argv, opt, 0);
+}
+
+
 struct maintenance_run_opts;
 static int maintenance_task_pack_refs(MAYBE_UNUSED struct maintenance_run_opts *opts)
 {
 	struct strvec pack_refs_cmd = STRVEC_INIT;
 	strvec_pushl(&pack_refs_cmd, "pack-refs", "--all", "--prune", NULL);
 
-	return run_command_v_opt(pack_refs_cmd.v, RUN_GIT_CMD);
+	return run_command_v_opt_with_dryrun(pack_refs_cmd.v, RUN_GIT_CMD);
 }
 
 static int too_many_loose_objects(void)
@@ -196,6 +228,9 @@ static int too_many_loose_objects(void)
 		    ent->d_name[hexsz_loose] != '\0')
 			continue;
 		if (++num_loose > auto_threshold) {
+			if (verbose)
+				fprintf(stderr, "note: too many loose objects, greater than: %d.\n",
+					auto_threshold);
 			needed = 1;
 			break;
 		}
@@ -213,15 +248,22 @@ static struct packed_git *find_base_packs(struct string_list *packs,
 		if (!p->pack_local)
 			continue;
 		if (limit) {
-			if (p->pack_size >= limit)
+			if (p->pack_size >= limit) {
+				if (verbose)
+					fprintf(stderr, "note: will keep pack '%s' (%"PRIu64" > %"PRIu64").\n",
+						p->pack_name, (uint64_t)p->pack_size, (uint64_t)limit);
 				string_list_append(packs, p->pack_name);
+			}
 		} else if (!base || base->pack_size < p->pack_size) {
 			base = p;
 		}
 	}
 
-	if (base)
+	if (base) {
+		if (verbose)
+			fprintf(stderr, "note: will keep largest pack '%s'.\n", base->pack_name);
 		string_list_append(packs, base->pack_name);
+	}
 
 	return base;
 }
@@ -237,13 +279,20 @@ static int too_many_packs(void)
 	for (cnt = 0, p = get_all_packs(the_repository); p; p = p->next) {
 		if (!p->pack_local)
 			continue;
-		if (p->pack_keep)
+		if (p->pack_keep) {
+			if (verbose)
+				fprintf(stderr, "note: pack '%s' has already been marked as keep.\n", p->pack_name);
 			continue;
+		}
 		/*
 		 * Perhaps check the size of the pack and count only
 		 * very small ones here?
 		 */
 		cnt++;
+	}
+	if (verbose) {
+		if (gc_auto_pack_limit < cnt)
+			fprintf(stderr, "note: too many packs. (%d > %d)\n", cnt, gc_auto_pack_limit);
 	}
 	return gc_auto_pack_limit < cnt;
 }
@@ -352,8 +401,11 @@ static int need_to_gc(void)
 	 * Setting gc.auto to 0 or negative can disable the
 	 * automatic gc.
 	 */
-	if (gc_auto_threshold <= 0)
+	if (gc_auto_threshold <= 0) {
+		if (verbose)
+			fprintf(stderr, "note: no need to gc, for 'gc.auto == 0'.\n");
 		return 0;
+	}
 
 	/*
 	 * If there are too many loose objects, but not too many
@@ -367,6 +419,10 @@ static int need_to_gc(void)
 		if (big_pack_threshold) {
 			find_base_packs(&keep_pack, big_pack_threshold);
 			if (keep_pack.nr >= gc_auto_pack_limit) {
+				if (verbose)
+					fprintf(stderr,
+						"note: too many packs to keep: %" PRIuMAX " > %d, clean and use largest one to keep.\n",
+						(uintmax_t)keep_pack.nr, gc_auto_pack_limit);
 				big_pack_threshold = 0;
 				string_list_clear(&keep_pack, 0);
 				find_base_packs(&keep_pack, 0);
@@ -383,16 +439,23 @@ static int need_to_gc(void)
 			 * the rest for the OS and other processes in the
 			 * system.
 			 */
-			if (!mem_have || mem_want < mem_have / 2)
+			if (!mem_have || mem_want < mem_have / 2) {
+				if (verbose)
+					fprintf(stderr,
+						"note: little memory footprint, no pack to keep, and will repack all.\n");
 				string_list_clear(&keep_pack, 0);
+			}
 		}
 
 		add_repack_all_option(&keep_pack);
 		string_list_clear(&keep_pack, 0);
 	} else if (too_many_loose_objects())
 		add_repack_incremental_option();
-	else
+	else {
+		if (verbose)
+			fprintf(stderr, "note: repo is healthy, no need to gc.\n");
 		return 0;
+	}
 
 	if (run_hooks("pre-auto-gc"))
 		return 0;
@@ -530,7 +593,7 @@ static void gc_before_repack(void)
 	if (pack_refs && maintenance_task_pack_refs(NULL))
 		die(FAILED_RUN, "pack-refs");
 
-	if (prune_reflogs && run_command_v_opt(reflog.v, RUN_GIT_CMD))
+	if (prune_reflogs && run_command_v_opt_with_dryrun(reflog.v, RUN_GIT_CMD))
 		die(FAILED_RUN, reflog.v[0]);
 }
 
@@ -559,6 +622,8 @@ int cmd_gc(int argc, const char **argv, const char *prefix)
 			   PARSE_OPT_NOCOMPLETE),
 		OPT_BOOL(0, "keep-largest-pack", &keep_largest_pack,
 			 N_("repack all other packs except the largest pack")),
+		OPT_BOOL(0, "verbose", &verbose, N_("verbose mode")),
+		OPT_BOOL(0, "dryrun", &dryrun, N_("dryrun mode")),
 		OPT_END()
 	};
 
@@ -581,6 +646,8 @@ int cmd_gc(int argc, const char **argv, const char *prefix)
 
 	argc = parse_options(argc, argv, prefix, builtin_gc_options,
 			     builtin_gc_usage, 0);
+	if (dryrun)
+		verbose = 1;
 	if (argc > 0)
 		usage_with_options(builtin_gc_usage, builtin_gc_options);
 
@@ -665,8 +732,8 @@ int cmd_gc(int argc, const char **argv, const char *prefix)
 	gc_before_repack();
 
 	if (!repository_format_precious_objects) {
-		if (run_command_v_opt(repack.v,
-				      RUN_GIT_CMD | RUN_CLOSE_OBJECT_STORE))
+		if (run_command_v_opt_with_dryrun(
+			    repack.v, RUN_GIT_CMD | RUN_CLOSE_OBJECT_STORE))
 			die(FAILED_RUN, repack.v[0]);
 
 		if (prune_expire) {
@@ -676,18 +743,18 @@ int cmd_gc(int argc, const char **argv, const char *prefix)
 			if (has_promisor_remote())
 				strvec_push(&prune,
 					    "--exclude-promisor-objects");
-			if (run_command_v_opt(prune.v, RUN_GIT_CMD))
+			if (run_command_v_opt_with_dryrun(prune.v, RUN_GIT_CMD))
 				die(FAILED_RUN, prune.v[0]);
 		}
 	}
 
 	if (prune_worktrees_expire) {
 		strvec_push(&prune_worktrees, prune_worktrees_expire);
-		if (run_command_v_opt(prune_worktrees.v, RUN_GIT_CMD))
+		if (run_command_v_opt_with_dryrun(prune_worktrees.v, RUN_GIT_CMD))
 			die(FAILED_RUN, prune_worktrees.v[0]);
 	}
 
-	if (run_command_v_opt(rerere.v, RUN_GIT_CMD))
+	if (run_command_v_opt_with_dryrun(rerere.v, RUN_GIT_CMD))
 		die(FAILED_RUN, rerere.v[0]);
 
 	report_garbage = report_pack_garbage;
@@ -1853,7 +1920,7 @@ static int schtasks_remove_task(enum schedule_priority schedule)
 	strvec_split(&args, cmd);
 	strvec_pushl(&args, "/delete", "/tn", name, "/f", NULL);
 
-	result = run_command_v_opt(args.v, 0);
+	result = run_command_v_opt_with_dryrun(args.v, 0);
 
 	strvec_clear(&args);
 	free(name);
