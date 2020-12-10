@@ -27,6 +27,7 @@
 struct trace_key trace_default_key = { "GIT_TRACE", 0, 0, 0 };
 struct trace_key trace_perf_key = TRACE_KEY_INIT(PERFORMANCE);
 struct trace_key trace_setup_key = TRACE_KEY_INIT(SETUP);
+struct trace_key trace_crypto_key = TRACE_KEY_INIT(CRYPTO);
 
 /* Get a trace file descriptor from "key" env variable. */
 static int get_trace_fd(struct trace_key *key, const char *override_envvar)
@@ -227,6 +228,39 @@ static void trace_performance_vprintf_fl(const char *file, int line,
 
 	print_trace_line(&trace_perf_key, &buf);
 	strbuf_release(&buf);
+}
+
+void trace_hexdump_key(struct trace_key *key, const char *name, const void *ptr,
+		       unsigned long len)
+{
+	const unsigned char *p = (const unsigned char *)ptr;
+	struct strbuf buf = STRBUF_INIT;
+	struct strbuf asc_buf = STRBUF_INIT;
+	unsigned long i = 0;
+
+	if (!trace_want(key))
+		return;
+
+	if (name)
+		trace_printf_key(key, "# %s hexdump (%lu bytes):\n", name, len);
+
+	for (i = 0; i < len; i++, p++) {
+		if (i % 16 == 0) {
+			if (i > 0)
+				trace_printf_key(key, "%-55s    | %-16s |\n",
+						 buf.buf, asc_buf.buf);
+			strbuf_reset(&buf);
+			strbuf_reset(&asc_buf);
+			strbuf_addf(&buf, "%07lu", i);
+		}
+		strbuf_addf(&buf, " %02x", *p);
+		strbuf_addch(&asc_buf, isprint(*p) ? *p : '.');
+	}
+	if (buf.len)
+		trace_printf_key(key, "%-55s    | %-16s |\n", buf.buf,
+				 asc_buf.buf);
+	strbuf_release(&buf);
+	strbuf_release(&asc_buf);
 }
 
 #ifndef HAVE_VARIADIC_MACROS
