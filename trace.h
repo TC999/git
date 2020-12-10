@@ -92,6 +92,7 @@ extern struct trace_key trace_default_key;
 #define TRACE_KEY_INIT(name) { "GIT_TRACE_" #name, 0, 0, 0 }
 extern struct trace_key trace_perf_key;
 extern struct trace_key trace_setup_key;
+extern struct trace_key trace_crypto_key;
 
 void trace_repo_setup(const char *prefix);
 
@@ -125,6 +126,12 @@ uint64_t getnanotime(void);
 void trace_command_performance(const char **argv);
 void trace_verbatim(struct trace_key *key, const void *buf, unsigned len);
 uint64_t trace_performance_enter(void);
+
+/**
+ * Show hexadecimal dump of data for if turn on specific trace_key.
+ */
+void trace_hexdump_key(struct trace_key *key, const char *name, const void *ptr,
+		       unsigned long len);
 
 #ifndef HAVE_VARIADIC_MACROS
 
