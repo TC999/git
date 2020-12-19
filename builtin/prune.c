@@ -1,5 +1,6 @@
 #include "cache.h"
 #include "commit.h"
+#include "config.h"
 #include "diff.h"
 #include "revision.h"
 #include "builtin.h"
@@ -145,6 +146,9 @@ int cmd_prune(int argc, const char **argv, const char *prefix)
 	read_replace_refs = 0;
 	ref_paranoia = 1;
 	repo_init_revisions(the_repository, &revs, prefix);
+
+	/* load default config, such as agit.crypto settings */
+	git_config(git_default_config, NULL);
 
 	argc = parse_options(argc, argv, prefix, options, prune_usage, 0);
 
