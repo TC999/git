@@ -41,6 +41,7 @@ static const char * const builtin_bundle_unbundle_usage[] = {
 };
 
 static int verbose;
+static int encrypt_bundle;
 
 static int parse_options_cmd_bundle(int argc,
 		const char **argv,
@@ -72,6 +73,9 @@ static int cmd_bundle_create(int argc, const char **argv, const char *prefix) {
 		OPT_BOOL(0, "all-progress-implied",
 			 &all_progress_implied,
 			 N_("similar to --all-progress when progress meter is shown")),
+		OPT_BOOL(0, "encrypt",
+			 &encrypt_bundle,
+			 N_("encrypt bundle")),
 		OPT_END()
 	};
 	const char* bundle_file;
@@ -89,6 +93,8 @@ static int cmd_bundle_create(int argc, const char **argv, const char *prefix) {
 		argv_array_push(&pack_opts, "--all-progress");
 	if (progress && all_progress_implied)
 		argv_array_push(&pack_opts, "--all-progress-implied");
+	if (!encrypt_bundle)
+		argv_array_push(&pack_opts, "--no-pack-enc");
 
 	if (!startup_info->have_repository)
 		die(_("Need a repository to create a bundle."));
