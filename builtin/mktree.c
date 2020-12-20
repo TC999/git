@@ -4,6 +4,7 @@
  * Copyright (c) Junio C Hamano, 2006, 2009
  */
 #include "builtin.h"
+#include "config.h"
 #include "quote.h"
 #include "tree.h"
 #include "parse-options.h"
@@ -156,6 +157,9 @@ int cmd_mktree(int ac, const char **av, const char *prefix)
 		OPT_SET_INT( 0 , "batch", &is_batch_mode, N_("allow creation of more than one tree"), 1),
 		OPT_END()
 	};
+
+	/* load default config, such as agit.crypto settings */
+	git_config(git_default_config, NULL);
 
 	ac = parse_options(ac, av, prefix, option, mktree_usage, 0);
 	getline_fn = nul_term_line ? strbuf_getline_nul : strbuf_getline_lf;
