@@ -13,7 +13,7 @@ test_expect_success 'create unencrypted bundle from main' '
 	test -f 1.bundle
 '
 
-test_expect_failure 'clone from unencrypted bundle' '
+test_expect_success 'clone from unencrypted bundle' '
 	git clone --mirror 1.bundle repo1.git &&
 	git -C repo1.git show-ref |
 		make_user_friendly_and_stable_output >actual &&
@@ -30,7 +30,7 @@ test_expect_success 'create additional unencrypted bundle' '
 	test -f 2.bundle
 '
 
-test_expect_failure 'fetch from additional bundle' '
+test_expect_success 'fetch from additional bundle' '
 	(
 		cd repo1.git &&
 		git fetch ../2.bundle "+refs/*:refs/*"
@@ -49,7 +49,7 @@ test_expect_failure 'fetch from additional bundle' '
 '
 
 ###################################
-test_expect_failure 'create encrypted bundle from main' '
+test_expect_success 'create encrypted bundle from main' '
 	git -C "$COMMON_GITDIR" bundle create \
 		--encrypt \
 		"$(pwd)/3.bundle" \
@@ -65,7 +65,7 @@ test_expect_success 'cannot clone from encrypted bundle without crypto settings'
 	)
 '
 
-test_expect_failure 'fetch from encrypted bundle' '
+test_expect_success 'fetch from encrypted bundle' '
 	(
 		cd repo2.git &&
 		git config agit.crypto.enabled 1 &&
@@ -81,7 +81,7 @@ test_expect_failure 'fetch from encrypted bundle' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'create additional encrypted bundle' '
+test_expect_success 'create additional encrypted bundle' '
 	git -C "$COMMON_GITDIR" bundle create \
 		--encrypt \
 		"$(pwd)/4.bundle" \
@@ -89,7 +89,7 @@ test_expect_failure 'create additional encrypted bundle' '
 	test -f 4.bundle
 '
 
-test_expect_failure 'fetch from additional encrypted bundle' '
+test_expect_success 'fetch from additional encrypted bundle' '
 	(
 		cd repo2.git &&
 		git fetch ../4.bundle "+refs/*:refs/*"
