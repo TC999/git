@@ -8,6 +8,7 @@
 #include "cache.h"
 #include "branch.h"
 #include "config.h"
+#include "crypto.h"
 #include "repository.h"
 #include "lockfile.h"
 #include "exec-cmd.h"
@@ -1533,6 +1534,26 @@ int git_default_config(const char *var, const char *value, void *cb)
 			die(_("bad pack compression level %d"), level);
 		pack_compression_level = level;
 		pack_compression_seen = 1;
+		return 0;
+	}
+
+	if (starts_with(var, "agit."))
+		return git_default_agit_config(var, value, cb);
+
+	/* Add other config variables here and to Documentation/config.txt. */
+	return 0;
+}
+
+int git_default_agit_config(const char *var, const char *value, void *cb)
+{
+	if (!strcmp(var, "agit.crypto.secret"))
+		return git_config_string(&agit_crypto_secret, var, value);
+
+	if (!strcmp(var, "agit.crypto.nonce"))
+		return git_config_string(&agit_crypto_nonce, var, value);
+
+	if (!strcmp(var, "agit.crypto.enabled")) {
+		agit_crypto_enabled = git_config_bool(var, value);
 		return 0;
 	}
 
