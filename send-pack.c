@@ -72,6 +72,7 @@ static int pack_objects(int fd, struct ref *refs, struct oid_array *extra, struc
 	argv_array_push(&po.args, "--all-progress-implied");
 	argv_array_push(&po.args, "--revs");
 	argv_array_push(&po.args, "--stdout");
+	argv_array_push(&po.args, "--no-pack-enc");
 	if (args->use_thin_pack)
 		argv_array_push(&po.args, "--thin");
 	if (args->use_ofs_delta)

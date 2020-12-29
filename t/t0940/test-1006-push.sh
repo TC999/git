@@ -2,7 +2,7 @@
 
 # Test crypto on "git-push"
 
-test_expect_failure 'push encrypted repo to normal repo' '
+test_expect_success 'push encrypted repo to normal repo' '
 	cp -a "$COMMON_GITDIR" encrypt.git &&
 	git init --bare normal.git &&
 	(
@@ -15,7 +15,7 @@ test_expect_success 'run fsck on normal repo' '
 	git -C normal.git fsck
 '
 
-test_expect_failure 'check log of master' '
+test_expect_success 'check log of master' '
 	git -C normal.git log --oneline |
 		make_user_friendly_and_stable_output >actual &&
 	cat >expect <<-EOF &&
