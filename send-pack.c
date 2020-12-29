@@ -1,6 +1,7 @@
 #include "builtin.h"
 #include "config.h"
 #include "commit.h"
+#include "crypto.h"
 #include "refs.h"
 #include "object-store.h"
 #include "pkt-line.h"
@@ -74,6 +75,10 @@ static int pack_objects(int fd, struct ref *refs, struct oid_array *extra, struc
 	argv_array_push(&po.args, "--stdout");
 	if (args->use_thin_pack)
 		argv_array_push(&po.args, "--thin");
+	if (args->pack_enc)
+		argv_array_push(&po.args, "--pack-enc");
+	else
+		argv_array_push(&po.args, "--no-pack-enc");
 	if (args->use_ofs_delta)
 		argv_array_push(&po.args, "--delta-base-offset");
 	if (args->quiet || !args->progress)
@@ -450,6 +455,8 @@ int send_pack(struct send_pack_args *args,
 		atomic_supported = 1;
 	if (server_supports("push-options"))
 		push_options_supported = 1;
+	if (server_supports("pack-enc") && agit_crypto_enabled)
+		args->pack_enc = 1;
 
 	if (!server_supports_hash(the_hash_algo->name, &object_format_supported))
 		die(_("the receiving end does not support this repository's hash algorithm"));
@@ -498,6 +505,8 @@ int send_pack(struct send_pack_args *args,
 		strbuf_addstr(&cap_buf, " push-options");
 	if (object_format_supported)
 		strbuf_addf(&cap_buf, " object-format=%s", the_hash_algo->name);
+	if (args->pack_enc)
+		strbuf_addstr(&cap_buf, " pack-enc");
 	if (agent_supported)
 		strbuf_addf(&cap_buf, " agent=%s", git_user_agent_sanitized());
 

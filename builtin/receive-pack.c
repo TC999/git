@@ -328,6 +328,8 @@ static void show_ref(const char *path, const struct object_id *oid)
 		if (advertise_push_options)
 			strbuf_addstr(&cap, " push-options");
 		strbuf_addf(&cap, " object-format=%s", the_hash_algo->name);
+		if (agit_crypto_enabled)
+			strbuf_addstr(&cap, " pack-enc");
 		strbuf_addf(&cap, " agent=%s", git_user_agent_sanitized());
 		packet_write_fmt(1, "%s %s%c%s\n",
 			     oid_to_hex(oid), path, 0, cap.buf);
@@ -2407,6 +2409,12 @@ static const char *unpack(int err_fd, struct shallow_info *si)
 		if (err_fd > 0)
 			close(err_fd);
 		return hdr_err;
+	}
+
+	if (GIT_CRYPTO_PACK_IS_ENCRYPT(hdr.hdr_version) && !agit_crypto_secret) {
+		if (err_fd > 0)
+			close(err_fd);
+		return "pack is encrypted but agit.crypto.secret not given";
 	}
 
 	if (si->nr_ours || si->nr_theirs) {

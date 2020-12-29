@@ -8,6 +8,7 @@
 #include "cache.h"
 #include "branch.h"
 #include "config.h"
+#include "crypto.h"
 #include "repository.h"
 #include "lockfile.h"
 #include "exec-cmd.h"
@@ -1490,6 +1491,23 @@ static int git_default_mailmap_config(const char *var, const char *value)
 	return 0;
 }
 
+static int git_default_agit_config(const char *var, const char *value)
+{
+	if (!strcmp(var, "agit.crypto.secret"))
+		return git_config_string(&agit_crypto_secret, var, value);
+
+	if (!strcmp(var, "agit.crypto.salt"))
+		return git_config_string(&agit_crypto_salt, var, value);
+
+	if (!strcmp(var, "agit.crypto.enabled")) {
+		agit_crypto_enabled = git_config_bool(var, value);
+		return 0;
+	}
+
+	/* Add other config variables here and to Documentation/config.txt. */
+	return 0;
+}
+
 int git_default_config(const char *var, const char *value, void *cb)
 {
 	if (starts_with(var, "core."))
@@ -1535,6 +1553,9 @@ int git_default_config(const char *var, const char *value, void *cb)
 		pack_compression_seen = 1;
 		return 0;
 	}
+
+	if (starts_with(var, "agit."))
+		return git_default_agit_config(var, value);
 
 	/* Add other config variables here and to Documentation/config.txt. */
 	return 0;

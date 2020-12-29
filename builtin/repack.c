@@ -174,6 +174,8 @@ static void prepare_pack_objects(struct child_process *cmd,
 		argv_array_push(&cmd->args,  "--quiet");
 	if (delta_base_offset)
 		argv_array_push(&cmd->args,  "--delta-base-offset");
+	if (agit_crypto_enabled)
+		argv_array_push(&cmd->args, "--pack-enc");
 	argv_array_push(&cmd->args, packtmp);
 	cmd->git_cmd = 1;
 	cmd->out = -1;

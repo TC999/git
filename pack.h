@@ -3,6 +3,7 @@
 
 #include "object.h"
 #include "csum-file.h"
+#include "crypto.h"
 
 struct repository;
 
@@ -11,7 +12,8 @@ struct repository;
  */
 #define PACK_SIGNATURE 0x5041434b	/* "PACK" */
 #define PACK_VERSION 2
-#define pack_version_ok(v) ((v) == htonl(2) || (v) == htonl(3))
+#define pack_version_ok(v) \
+	((ntohl(v) & 0x000000ff) == 2 || (ntohl(v) & 0x000000ff) == 3)
 struct pack_header {
 	uint32_t hdr_signature;
 	uint32_t hdr_version;

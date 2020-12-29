@@ -1,5 +1,6 @@
 #include "cache.h"
 #include "config.h"
+#include "crypto.h"
 #include "refs.h"
 #include "pkt-line.h"
 #include "sideband.h"
@@ -108,6 +109,8 @@ struct upload_pack_data {
 	unsigned done : 1;					/* v2 only */
 	unsigned allow_ref_in_want : 1;				/* v2 only */
 	unsigned allow_sideband_all : 1;			/* v2 only */
+
+	unsigned pack_enc : 1;
 };
 
 static void upload_pack_data_init(struct upload_pack_data *data)
@@ -309,6 +312,10 @@ static void create_pack_file(struct upload_pack_data *pack_data,
 					 spec);
 		}
 	}
+	if (pack_data->pack_enc)
+		argv_array_push(&pack_objects.args, "--pack-enc");
+	else
+		argv_array_push(&pack_objects.args, "--no-pack-enc");
 	if (uri_protocols) {
 		for (i = 0; i < uri_protocols->nr; i++)
 			argv_array_pushf(&pack_objects.args, "--uri-protocol=%s",
@@ -1048,7 +1055,9 @@ static void receive_needs(struct upload_pack_data *data,
 		if (data->allow_filter &&
 		    parse_feature_request(features, "filter"))
 			data->filter_capability_requested = 1;
-
+		if (parse_feature_request(features, "pack-enc") &&
+		    agit_crypto_enabled)
+			data->pack_enc = 1;
 		o = parse_object(the_repository, &oid_buf);
 		if (!o) {
 			packet_writer_error(&data->writer,
@@ -1124,7 +1133,7 @@ static int send_ref(const char *refname, const struct object_id *oid,
 {
 	static const char *capabilities = "multi_ack thin-pack side-band"
 		" side-band-64k ofs-delta shallow deepen-since deepen-not"
-		" deepen-relative no-progress include-tag multi_ack_detailed";
+		" deepen-relative no-progress include-tag multi_ack_detailed pack-enc";
 	const char *refname_nons = strip_namespace(refname);
 	struct object_id peeled;
 	struct upload_pack_data *data = cb_data;
@@ -1205,7 +1214,10 @@ static int upload_pack_config(const char *var, const char *value, void *cb_data)
 		data->allow_sideband_all = git_config_bool(var, value);
 	} else if (!strcmp("core.precomposeunicode", var)) {
 		precomposed_unicode = git_config_bool(var, value);
-	}
+	} else if (!strcmp("agit.crypto.secret", var))
+		git_config_string(&agit_crypto_secret, var, value);
+	else if (!strcmp("agit.crypto.salt", var))
+		git_config_string(&agit_crypto_salt, var, value);
 
 	if (current_config_scope() != CONFIG_SCOPE_LOCAL &&
 	current_config_scope() != CONFIG_SCOPE_WORKTREE) {

@@ -1,6 +1,7 @@
 #ifndef SEND_PACK_H
 #define SEND_PACK_H
 
+#include "crypto.h"
 #include "string-list.h"
 
 struct child_process;
@@ -26,6 +27,7 @@ struct send_pack_args {
 		/* One of the SEND_PACK_PUSH_CERT_* constants. */
 		push_cert:2,
 		stateless_rpc:1,
+		pack_enc:1,
 		atomic:1;
 	const struct string_list *push_options;
 };
