@@ -21,7 +21,7 @@ init_git_crypto_settings () {
 	done
 
 	git ${indir:+ -C "$indir"} config agit.crypto.enabled $enable &&
-	git ${indir:+ -C "$indir"} config agit.crypto.secret nekot-terces &&
+	git ${indir:+ -C "$indir"} config agit.crypto.secret c2VjcmV0LXRva2VuMTIzNA== &&
 	git ${indir:+ -C "$indir"} config agit.crypto.nonce random_nonce
 }
 
