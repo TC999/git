@@ -312,6 +312,8 @@ inventing new variables for use in your own tool, make sure their
 names do not conflict with those that are used by Git itself and
 other popular tools, and describe them in your documentation.
 
+include::config/agit.txt[]
+
 include::config/advice.txt[]
 
 include::config/core.txt[]

@@ -124,6 +124,9 @@ ifeq ($(uname_S),Darwin)
 	ifeq ($(shell test "`expr "$(uname_R)" : '\([0-9][0-9]*\)\.'`" -ge 11 && echo 1),1)
 		HAVE_GETDELIM = YesPlease
 	endif
+	# NOTE: to encrypt pack and loose object, we use aes encrypt function in openssl.
+	NO_APPLE_COMMON_CRYPTO = YesPlease
+
 	NO_MEMMEM = YesPlease
 	USE_ST_TIMESPEC = YesPlease
 	HAVE_DEV_TTY = YesPlease
