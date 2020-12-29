@@ -909,6 +909,7 @@ LIB_OBJS += connected.o
 LIB_OBJS += convert.o
 LIB_OBJS += copy.o
 LIB_OBJS += credential.o
+LIB_OBJS += crypto.o
 LIB_OBJS += csum-file.o
 LIB_OBJS += ctype.o
 LIB_OBJS += date.o
@@ -1523,6 +1524,8 @@ ifndef NO_OPENSSL
 	ifdef NEEDS_CRYPTO_WITH_SSL
 		OPENSSL_LIBSSL += -lcrypto
 	endif
+	# Alibaba git crypto need openssl: "-lssl -lcrypto"
+	EXTLIBS += $(LIB_4_CRYPTO)
 else
 	BASIC_CFLAGS += -DNO_OPENSSL
 	OPENSSL_LIBSSL =
