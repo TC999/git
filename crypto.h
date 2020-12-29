@@ -43,6 +43,9 @@ static const unsigned char git_crypto_lo_signature[4] = {
 
 /* decrypt buffer zlib compress too small input may return a bigger output */
 #define GIT_CRYPTO_DECRYPT_BUFFER_SIZE 256
+/* Threshold for size of loose object, do not encrypt for loose object larger
+ * than this size. */
+#define GIT_CRYPTO_ENCRYPT_LO_MAX_SIZE 1024 * 1024 /* 1MB */
 
 extern const char *agit_crypto_secret;
 extern const char *agit_crypto_salt;

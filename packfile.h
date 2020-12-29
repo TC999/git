@@ -2,6 +2,7 @@
 #define PACKFILE_H
 
 #include "cache.h"
+#include "crypto.h"
 #include "oidset.h"
 
 /* in object-store.h */

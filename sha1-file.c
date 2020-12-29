@@ -1159,11 +1159,27 @@ static int unpack_loose_short_header(git_zstream *stream,
 				     void *buffer, unsigned long bufsiz)
 {
 	int ret;
+	git_cryptor cryptor;
+	uint32_t header;
+	unsigned char *in = map;
+	unsigned char *swap = NULL;
+	unsigned long insize = mapsize;
+
+	if (mapsize > GIT_CRYPTO_LO_HEADER_SIZE &&
+	    !memcmp(map, git_crypto_lo_signature, 4)) {
+		insize = mapsize - GIT_CRYPTO_LO_HEADER_SIZE;
+		swap = xmalloc(insize);
+		memcpy(&header, map + 4, sizeof(uint32_t));
+		git_decryptor_init_or_die(&cryptor, header);
+		cryptor.decrypt(&cryptor, map + GIT_CRYPTO_LO_HEADER_SIZE,
+				swap, insize, insize);
+		in = swap;
+	}
 
 	/* Get the data stream */
 	memset(stream, 0, sizeof(*stream));
-	stream->next_in = map;
-	stream->avail_in = mapsize;
+	stream->next_in = in;
+	stream->avail_in = insize;
 	stream->next_out = buffer;
 	stream->avail_out = bufsiz;
 
@@ -1171,6 +1187,10 @@ static int unpack_loose_short_header(git_zstream *stream,
 	obj_read_unlock();
 	ret = git_inflate(stream, 0);
 	obj_read_lock();
+
+	/* NOTE/TODO: swap cannot be freed here, and should freed in
+	 * other location.
+	 */
 
 	return ret;
 }
@@ -1847,6 +1867,12 @@ static int write_loose_object(const struct object_id *oid, char *hdr,
 	struct object_id parano_oid;
 	static struct strbuf tmp_file = STRBUF_INIT;
 	static struct strbuf filename = STRBUF_INIT;
+	git_cryptor cryptor;
+	unsigned char *git_cryptor_header;
+	int do_encrypt = 0;
+
+	if (agit_crypto_enabled && len < GIT_CRYPTO_ENCRYPT_LO_MAX_SIZE)
+		do_encrypt = 1;
 
 	loose_object_path(the_repository, &filename, oid);
 
@@ -1856,6 +1882,16 @@ static int write_loose_object(const struct object_id *oid, char *hdr,
 			return error(_("insufficient permission for adding an object to repository database %s"), get_object_directory());
 		else
 			return error_errno(_("unable to create temporary file"));
+	}
+
+	if (do_encrypt) {
+		git_encryptor_init_or_die(&cryptor);
+		git_cryptor_header =
+			git_encryptor_get_net_object_header(&cryptor, NULL);
+		if (write_buffer(fd, git_cryptor_header,
+				 GIT_CRYPTO_LO_HEADER_SIZE) < 0)
+			die(_("unable to write loose object file"));
+		free(git_cryptor_header);
 	}
 
 	/* Set it up */
@@ -1878,6 +1914,9 @@ static int write_loose_object(const struct object_id *oid, char *hdr,
 		unsigned char *in0 = stream.next_in;
 		ret = git_deflate(&stream, Z_FINISH);
 		the_hash_algo->update_fn(&c, in0, stream.next_in - in0);
+		if (do_encrypt)
+			cryptor.encrypt(&cryptor, compressed, compressed,
+					stream.next_out - compressed);
 		if (write_buffer(fd, compressed, stream.next_out - compressed) < 0)
 			die(_("unable to write loose object file"));
 		stream.next_out = compressed;
