@@ -9,6 +9,7 @@
 #include "date.h"
 #include "branch.h"
 #include "config.h"
+#include "crypto.h"
 #include "environment.h"
 #include "repository.h"
 #include "lockfile.h"
@@ -1891,10 +1892,34 @@ int git_default_config(const char *var, const char *value, void *cb)
 		return 0;
 	}
 
+	if (starts_with(var, "agit."))
+		return git_default_agit_config(var, value, cb);
+
 	if (starts_with(var, "sparse."))
 		return git_default_sparse_config(var, value);
 
 	/* Add other config variables here and to Documentation/config.txt. */
+	return 0;
+}
+
+int git_default_agit_config(const char *var, const char *value, void *cb)
+{
+	if (!strcmp(var, "agit.crypto.secret"))
+		return git_config_string(&agit_crypto_secret, var, value);
+
+	if (!strcmp(var, "agit.crypto.nonce"))
+		return git_config_string(&agit_crypto_nonce, var, value);
+
+	if (!strcmp(var, "agit.crypto.enabled")) {
+		agit_crypto_enabled = git_config_bool(var, value);
+		return 0;
+	}
+
+	if (!strcmp(var, "agit.crypto.algorithm")) {
+		agit_crypto_default_algorithm = git_config_int(var, value);
+		return 0;
+	}
+
 	return 0;
 }
 

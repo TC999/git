@@ -131,6 +131,7 @@ struct config_options {
 typedef int (*config_fn_t)(const char *, const char *, void *);
 
 int git_default_config(const char *, const char *, void *);
+int git_default_agit_config(const char *, const char *, void *);
 
 /**
  * Read a specific file in git-config format.

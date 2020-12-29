@@ -3,6 +3,7 @@
 #include "parse-options.h"
 #include "cache.h"
 #include "bundle.h"
+#include "config.h"
 
 /*
  * Basic handler for bundle files to connect repositories via sneakernet.
@@ -199,6 +200,9 @@ int cmd_bundle(int argc, const char **argv, const char *prefix)
 		OPT_END()
 	};
 	int result;
+
+	/* load default agit config, such as agit.crypto settings */
+	git_config(git_default_agit_config, NULL);
 
 	argc = parse_options(argc, argv, prefix, options, builtin_bundle_usage,
 		PARSE_OPT_STOP_AT_NON_OPTION);
