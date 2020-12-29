@@ -74,6 +74,7 @@ static int pack_objects(int fd, struct ref *refs, struct oid_array *advertised,
 	strvec_push(&po.args, "--all-progress-implied");
 	strvec_push(&po.args, "--revs");
 	strvec_push(&po.args, "--stdout");
+	strvec_push(&po.args, "--no-pack-enc");
 	if (args->use_thin_pack)
 		strvec_push(&po.args, "--thin");
 	if (args->use_ofs_delta)
