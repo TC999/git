@@ -1557,6 +1557,11 @@ int git_default_agit_config(const char *var, const char *value, void *cb)
 		return 0;
 	}
 
+	if (!strcmp(var, "agit.crypto.bigfilenoencryptthreshold")) {
+		big_file_no_encrypt_threshold = git_config_ulong(var, value);
+		return 0;
+	}
+
 	/* Add other config variables here and to Documentation/config.txt. */
 	return 0;
 }

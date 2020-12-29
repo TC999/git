@@ -42,10 +42,6 @@ enum agit_crypto_algo {
  * for loose object.
  */
 
-/* Threshold for size of loose object, do not encrypt for loose object larger
- * than this size. */
-#define GIT_CRYPTO_ENCRYPT_LO_MAX_SIZE 10 * 1024 * 1024 /* 10MB */
-
 extern const char *agit_crypto_secret;
 extern const char *agit_crypto_nonce;
 /* enable git crypto will make sha-file or packfile encrypted */
