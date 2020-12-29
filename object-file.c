@@ -1256,6 +1256,18 @@ enum unpack_loose_header_result unpack_loose_header(git_zstream *stream,
 
 	/* Get the data stream */
 	memset(stream, 0, sizeof(*stream));
+
+	if (mapsize > GIT_CRYPTO_LO_HEADER_SIZE &&
+	    git_crypto_lo_has_signature(map)) {
+		git_cryptor *cryptor = xmalloc(sizeof(struct git_cryptor));
+
+		git_decryptor_init_or_die(cryptor, *(uint32_t *)(map + 4),
+					  map + 8);
+		map += GIT_CRYPTO_LO_HEADER_SIZE;
+		mapsize -= GIT_CRYPTO_LO_HEADER_SIZE;
+		stream->cryptor = cryptor;
+	}
+
 	stream->next_in = map;
 	stream->avail_in = mapsize;
 	stream->next_out = buffer;
@@ -1431,6 +1443,7 @@ static int loose_object_info(struct repository *r,
 	enum object_type type_scratch;
 	int allow_unknown = flags & OBJECT_INFO_ALLOW_UNKNOWN_TYPE;
 
+	memset(&stream, 0, sizeof(stream));
 	if (oi->delta_base_oid)
 		oidclr(oi->delta_base_oid);
 
@@ -1495,6 +1508,7 @@ static int loose_object_info(struct repository *r,
 	git_inflate_end(&stream);
 cleanup:
 	munmap(map, mapsize);
+	free(stream.cryptor);
 	if (oi->sizep == &size_scratch)
 		oi->sizep = NULL;
 	strbuf_release(&hdrbuf);
@@ -1960,6 +1974,12 @@ static int write_loose_object(const struct object_id *oid, char *hdr,
 	struct object_id parano_oid;
 	static struct strbuf tmp_file = STRBUF_INIT;
 	static struct strbuf filename = STRBUF_INIT;
+	git_cryptor cryptor;
+	unsigned char *git_cryptor_header = NULL;
+	int do_encrypt = 0;
+
+	if (agit_crypto_enabled && len < big_file_no_encrypt_threshold)
+		do_encrypt = 1;
 
 	loose_object_path(the_repository, &filename, oid);
 
@@ -1973,10 +1993,22 @@ static int write_loose_object(const struct object_id *oid, char *hdr,
 			return error_errno(_("unable to create temporary file"));
 	}
 
+	if (do_encrypt) {
+		git_encryptor_init_for_loose_object(&cryptor);
+		git_cryptor_header =
+			git_encryptor_get_net_object_header(&cryptor, NULL);
+		if (write_buffer(fd, git_cryptor_header,
+				 GIT_CRYPTO_LO_HEADER_SIZE) < 0)
+			die(_("unable to write loose object file"));
+		free(git_cryptor_header);
+	}
+
 	/* Set it up */
 	git_deflate_init(&stream, zlib_compression_level);
 	stream.next_out = compressed;
 	stream.avail_out = sizeof(compressed);
+	if (do_encrypt)
+		stream.cryptor = &cryptor;
 	the_hash_algo->init_fn(&c);
 
 	/* First header.. */
@@ -2617,6 +2649,8 @@ int read_loose_object(const char *path,
 	char hdr[MAX_HEADER_LEN];
 	unsigned long *size = oi->sizep;
 
+	memset(&stream, 0, sizeof(stream));
+
 	map = map_loose_object_1(the_repository, path, NULL, &mapsize);
 	if (!map) {
 		error_errno(_("unable to mmap %s"), path);
@@ -2661,5 +2695,6 @@ int read_loose_object(const char *path,
 out:
 	if (map)
 		munmap(map, mapsize);
+	free(stream.cryptor);
 	return ret;
 }
