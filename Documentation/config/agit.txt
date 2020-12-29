@@ -1,0 +1,8 @@
+agit.crypto.enabled::
+	If crypto enabled or not.
+
+agit.crypto.secret::
+	Secret must be given if crypto enabled.
+
+agit.crypto.salt::
+	Crypto salt is optional.
