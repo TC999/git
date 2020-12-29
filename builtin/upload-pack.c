@@ -1,5 +1,6 @@
 #include "cache.h"
 #include "builtin.h"
+#include "config.h"
 #include "exec-cmd.h"
 #include "pkt-line.h"
 #include "parse-options.h"
@@ -46,6 +47,8 @@ int cmd_upload_pack(int argc, const char **argv, const char *prefix)
 
 	if (!enter_repo(dir, strict))
 		die("'%s' does not appear to be a git repository", dir);
+
+	git_config(git_default_agit_config, NULL);
 
 	switch (determine_protocol_version_server()) {
 	case protocol_v2:

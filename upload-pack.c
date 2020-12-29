@@ -305,6 +305,7 @@ static void create_pack_file(struct upload_pack_data *pack_data,
 		strvec_push(&pack_objects.args, "--thin");
 
 	strvec_push(&pack_objects.args, "--stdout");
+	strvec_push(&pack_objects.args, "--no-pack-enc");
 	if (pack_data->shallow_nr)
 		strvec_push(&pack_objects.args, "--shallow");
 	if (!pack_data->no_progress)
