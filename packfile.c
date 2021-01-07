@@ -520,7 +520,7 @@ const char *pack_basename(struct packed_git *p)
 static int open_packed_git_1(struct packed_git *p)
 {
 	struct stat st;
-	struct pack_header hdr;
+	union extend_pack_header h;
 	unsigned char hash[GIT_MAX_RAWSZ];
 	unsigned char *idx_hash;
 	ssize_t read_result;
@@ -556,23 +556,41 @@ static int open_packed_git_1(struct packed_git *p)
 		return error("packfile %s size changed", p->pack_name);
 
 	/* Verify we recognize this pack file format. */
-	read_result = read_in_full(p->pack_fd, &hdr, sizeof(hdr));
+	read_result = read_in_full(p->pack_fd, &h.hdr, sizeof(h.hdr));
 	if (read_result < 0)
 		return error_errno("error reading from %s", p->pack_name);
-	if (read_result != sizeof(hdr))
+	if (read_result != sizeof(h.hdr))
 		return error("file %s is far too short to be a packfile", p->pack_name);
-	if (hdr.hdr_signature != htonl(PACK_SIGNATURE))
+	if (h.hdr.hdr_signature != htonl(PACK_SIGNATURE))
 		return error("file %s is not a GIT packfile", p->pack_name);
-	if (!pack_version_ok(hdr.hdr_version))
+	if (!pack_version_ok(h.hdr.hdr_version))
 		return error("packfile %s is version %"PRIu32" and not"
 			" supported (try upgrading GIT to a newer version)",
-			p->pack_name, ntohl(hdr.hdr_version));
+			p->pack_name, ntohl(h.hdr.hdr_version));
+	if (git_crypto_pack_is_encrypt(h.hdr.hdr_version)) {
+		p->cryptor = xmalloc(sizeof(*p->cryptor));
+		if (crypto_pack_has_longer_nonce_for_version(
+			    h.hdr.hdr_version)) {
+			read_result = read_in_full(p->pack_fd, &h.ehdr.nonce,
+						   NONCE_LEN);
+			if (read_result < 0)
+				return error_errno("error reading nonce from %s",
+						p->pack_name);
+			git_decryptor_init_or_die(
+				p->cryptor, h.ehdr.hdr_version, h.ehdr.nonce);
+		} else {
+			git_decryptor_init_or_die(p->cryptor, h.hdr.hdr_version,
+						  NULL);
+		}
+	} else {
+		p->cryptor = NULL;
+	}
 
 	/* Verify the pack matches its index. */
-	if (p->num_objects != ntohl(hdr.hdr_entries))
+	if (p->num_objects != ntohl(h.hdr.hdr_entries))
 		return error("packfile %s claims to have %"PRIu32" objects"
 			     " while index indicates %"PRIu32" objects",
-			     p->pack_name, ntohl(hdr.hdr_entries),
+			     p->pack_name, ntohl(h.hdr.hdr_entries),
 			     p->num_objects);
 	read_result = pread_in_full(p->pack_fd, hash, hashsz,
 					p->pack_size - hashsz);
@@ -1105,6 +1123,10 @@ unsigned long get_size_from_delta(struct packed_git *p,
 	git_inflate_init(&stream);
 	do {
 		in = use_pack(p, w_curs, curpos, &stream.avail_in);
+		if (p->cryptor) {
+			stream.cryptor = p->cryptor;
+			stream.cryptor->byte_counter = curpos;
+		}
 		stream.next_in = in;
 		/*
 		 * Note: the window section returned by use_pack() must be
@@ -1153,6 +1175,7 @@ int unpack_object_header(struct packed_git *p,
 	unsigned long left;
 	unsigned long used;
 	enum object_type type;
+	unsigned char decrypt_header[20];
 
 	/* use_pack() assures us we have [base, base + 20) available
 	 * as a range that we can look at.  (Its actually the hash
@@ -1161,7 +1184,15 @@ int unpack_object_header(struct packed_git *p,
 	 * insane, so we know won't exceed what we have been given.
 	 */
 	base = use_pack(p, w_curs, *curpos, &left);
-	used = unpack_object_header_buffer(base, left, &type, sizep);
+	if (p->cryptor) {
+		p->cryptor->byte_counter = *curpos;
+		p->cryptor->decrypt(p->cryptor, base, decrypt_header, left,
+				    sizeof(decrypt_header));
+		used = unpack_object_header_buffer(
+			decrypt_header, sizeof(decrypt_header), &type, sizep);
+	} else {
+		used = unpack_object_header_buffer(base, left, &type, sizep);
+	}
 	if (!used) {
 		type = OBJ_BAD;
 	} else
@@ -1194,6 +1225,15 @@ off_t get_delta_base(struct packed_git *p,
 {
 	unsigned char *base_info = use_pack(p, w_curs, *curpos, NULL);
 	off_t base_offset;
+	unsigned char decrypt_buffer[32];
+
+	if (p->cryptor) {
+		p->cryptor->byte_counter = *curpos;
+		p->cryptor->decrypt(p->cryptor, base_info, decrypt_buffer,
+				    the_hash_algo->rawsz,
+				    sizeof(decrypt_buffer));
+		base_info = decrypt_buffer;
+	}
 
 	/* use_pack() assured us we have [base_info, base_info + 20)
 	 * as a range that we can look at without walking off the
@@ -1239,7 +1279,15 @@ static int get_delta_base_oid(struct packed_git *p,
 			      off_t delta_obj_offset)
 {
 	if (type == OBJ_REF_DELTA) {
+		unsigned char decrypt_buffer[32];
 		unsigned char *base = use_pack(p, w_curs, curpos, NULL);
+		if (p->cryptor) {
+			p->cryptor->byte_counter = curpos;
+			p->cryptor->decrypt(p->cryptor, base, decrypt_buffer,
+					    the_hash_algo->rawsz,
+					    sizeof(decrypt_buffer));
+			base = decrypt_buffer;
+		}
 		oidread(oid, base);
 		return 0;
 	} else if (type == OBJ_OFS_DELTA) {
@@ -1612,6 +1660,10 @@ static void *unpack_compressed_entry(struct packed_git *p,
 	git_inflate_init(&stream);
 	do {
 		in = use_pack(p, w_curs, curpos, &stream.avail_in);
+		if (p->cryptor) {
+			stream.cryptor = p->cryptor;
+			stream.cryptor->byte_counter = curpos;
+		}
 		stream.next_in = in;
 		/*
 		 * Note: we must ensure the window section returned by

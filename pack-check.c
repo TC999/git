@@ -40,6 +40,10 @@ int check_pack_crc(struct packed_git *p, struct pack_window **w_curs,
 
 	index_crc = p->index_data;
 	index_crc += 2 + 256 + (size_t)p->num_objects * (the_hash_algo->rawsz/4) + nr;
+	trace_printf_key(
+		&trace_crypto_key,
+		"pack-check.c: check_pack_crc: data_crc: %x, index_crc: %x\n",
+		htonl(data_crc), *index_crc);
 
 	return data_crc != ntohl(*index_crc);
 }

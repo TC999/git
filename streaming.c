@@ -288,6 +288,10 @@ static ssize_t read_istream_pack_non_delta(struct git_istream *st, char *buf,
 
 		mapped = use_pack(st->u.in_pack.pack, &window,
 				  st->u.in_pack.pos, &st->z.avail_in);
+		if (st->u.in_pack.pack->cryptor) {
+			st->z.cryptor = st->u.in_pack.pack->cryptor;
+			st->z.cryptor->byte_counter = st->u.in_pack.pos;
+		}
 
 		st->z.next_out = (unsigned char *)buf + total_read;
 		st->z.avail_out = sz - total_read;

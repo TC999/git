@@ -89,7 +89,11 @@ test_expect_success 'index-pack on encrypted packfile' '
 	test -f index-pack.1/.git/objects/pack/pack-$pack.pack
 '
 
-test_expect_failure 'verify-pack on encrypted packfile' '
+test_expect_success 'fsck on encrypted packfile' '
+	git -C index-pack.1 fsck
+'
+
+test_expect_success 'verify-pack on encrypted packfile' '
 	git -C index-pack.1 verify-pack .git/objects/pack/pack-$pack.pack
 '
 
@@ -109,4 +113,12 @@ test_expect_success 'index-pack on unencrypted packfile to encrypted packfile' '
 	pack=$(git -C index-pack.2 index-pack --stdin <packfile.0) &&
 	pack=${pack#pack?} &&
 	test -f index-pack.2/.git/objects/pack/pack-$pack.pack
+'
+
+test_expect_success 'fsck on unencrypted packfile to encrypted packfile' '
+	git -C index-pack.2 fsck
+'
+
+test_expect_success 'verify-pack on unencrypted packfile to encrypted packfile' '
+	git -C index-pack.2 verify-pack .git/objects/pack/pack-$pack.pack
 '
