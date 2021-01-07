@@ -8,6 +8,7 @@
  * able to verify hasn't been messed with afterwards.
  */
 #include "cache.h"
+#include "crypto.h"
 #include "progress.h"
 #include "csum-file.h"
 
@@ -48,7 +49,11 @@ void hashflush(struct hashfile *f)
 
 	if (offset) {
 		the_hash_algo->update_fn(&f->ctx, f->buffer, offset);
-		flush(f, f->buffer, offset);
+		if (f->enc)
+			/* flush with encrypted buffer */
+			flush(f, f->encrypted_buffer, offset);
+		else
+			flush(f, f->buffer, offset);
 		f->offset = 0;
 	}
 }
@@ -86,21 +91,38 @@ int finalize_hashfile(struct hashfile *f, unsigned char *result, unsigned int fl
 	return fd;
 }
 
-void hashwrite(struct hashfile *f, const void *buf, unsigned int count)
+void hashwrite(struct hashfile *f, const void *buf, unsigned int count, int enc)
 {
+	unsigned char *buf_enc = NULL;
+	if (enc) {
+		buf_enc = malloc(count);
+		f->cryptor->byte_counter = f->writen;
+		f->cryptor->encrypt(f->cryptor, (const unsigned char *)buf,
+				    buf_enc, count);
+	}
+	f->writen += count;
 	while (count) {
 		unsigned offset = f->offset;
 		unsigned left = sizeof(f->buffer) - offset;
 		unsigned nr = count > left ? left : count;
-		const void *data;
+		const void *data, *enc_data = NULL;
 
 		if (f->do_crc)
 			f->crc32 = crc32(f->crc32, buf, nr);
 
 		if (nr == sizeof(f->buffer)) {
 			/* process full buffer directly without copy */
+			if (enc)
+				enc_data = buf_enc;
 			data = buf;
 		} else {
+			if (enc) {
+				memcpy(f->encrypted_buffer + offset, buf_enc,
+				       nr);
+				enc_data = f->encrypted_buffer;
+			} else {
+				memcpy(f->encrypted_buffer + offset, buf, nr);
+			}
 			memcpy(f->buffer + offset, buf, nr);
 			data = f->buffer;
 		}
@@ -108,10 +130,15 @@ void hashwrite(struct hashfile *f, const void *buf, unsigned int count)
 		count -= nr;
 		offset += nr;
 		buf = (char *) buf + nr;
+		if (enc)
+			buf_enc = buf_enc + nr;
 		left -= nr;
 		if (!left) {
 			the_hash_algo->update_fn(&f->ctx, data, offset);
-			flush(f, data, offset);
+			if (enc)
+				flush(f, enc_data, offset);
+			else
+				flush(f, data, offset);
 			offset = 0;
 		}
 		f->offset = offset;
@@ -146,9 +173,11 @@ struct hashfile *hashfd_throughput(int fd, const char *name, struct progress *tp
 	f->check_fd = -1;
 	f->offset = 0;
 	f->total = 0;
+	f->writen = 0;
 	f->tp = tp;
 	f->name = name;
 	f->do_crc = 0;
+	f->enc = 0;
 	the_hash_algo->init_fn(&f->ctx);
 	return f;
 }

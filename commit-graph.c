@@ -981,7 +981,7 @@ static void write_graph_chunk_oids(struct hashfile *f, int hash_len,
 	int count;
 	for (count = 0; count < ctx->commits.nr; count++, list++) {
 		display_progress(ctx->progress, ++ctx->progress_cnt);
-		hashwrite(f, (*list)->object.oid.hash, (int)hash_len);
+		hashwrite(f, (*list)->object.oid.hash, (int)hash_len, 0);
 	}
 }
 
@@ -1009,7 +1009,7 @@ static void write_graph_chunk_data(struct hashfile *f, int hash_len,
 			die(_("unable to parse commit %s"),
 				oid_to_hex(&(*list)->object.oid));
 		tree = get_commit_tree_oid(*list);
-		hashwrite(f, tree->hash, hash_len);
+		hashwrite(f, tree->hash, hash_len, 0);
 
 		parent = (*list)->parents;
 
@@ -1085,7 +1085,7 @@ static void write_graph_chunk_data(struct hashfile *f, int hash_len,
 		packedDate[0] |= htonl(commit_graph_data_at(*list)->generation << 2);
 
 		packedDate[1] = htonl((*list)->date);
-		hashwrite(f, packedDate, 8);
+		hashwrite(f, packedDate, 8, 0);
 
 		list++;
 	}
@@ -1173,7 +1173,8 @@ static void write_graph_chunk_bloom_data(struct hashfile *f,
 	while (list < last) {
 		struct bloom_filter *filter = get_bloom_filter(ctx->r, *list, 0);
 		display_progress(ctx->progress, ++ctx->progress_cnt);
-		hashwrite(f, filter->data, filter->len * sizeof(unsigned char));
+		hashwrite(f, filter->data, filter->len * sizeof(unsigned char),
+			  0);
 		list++;
 	}
 }
@@ -1569,7 +1570,7 @@ static int write_graph_chunk_base_1(struct hashfile *f,
 		return 0;
 
 	num = write_graph_chunk_base_1(f, g->base_graph);
-	hashwrite(f, g->oid.hash, the_hash_algo->rawsz);
+	hashwrite(f, g->oid.hash, the_hash_algo->rawsz, 0);
 	return num + 1;
 }
 
@@ -1703,7 +1704,7 @@ static int write_commit_graph_file(struct write_commit_graph_context *ctx)
 		chunk_write[0] = htonl(chunk_ids[i]);
 		chunk_write[1] = htonl(chunk_offsets[i] >> 32);
 		chunk_write[2] = htonl(chunk_offsets[i] & 0xffffffff);
-		hashwrite(f, chunk_write, 12);
+		hashwrite(f, chunk_write, 12, 0);
 	}
 
 	if (ctx->report_progress) {
@@ -2237,7 +2238,7 @@ int verify_commit_graph(struct repository *r, struct commit_graph *g, int flags)
 
 	devnull = open("/dev/null", O_WRONLY);
 	f = hashfd(devnull, NULL);
-	hashwrite(f, g->data, g->data_len - g->hash_len);
+	hashwrite(f, g->data, g->data_len - g->hash_len, 0);
 	finalize_hashfile(f, checksum.hash, CSUM_CLOSE);
 	if (!hasheq(checksum.hash, g->data + g->data_len - g->hash_len)) {
 		graph_report(_("the commit-graph file has incorrect checksum and is likely corrupt"));

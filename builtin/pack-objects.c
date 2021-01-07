@@ -236,7 +236,7 @@ static unsigned long write_large_blob_data(struct git_istream *st, struct hashfi
 			stream.next_out = obuf;
 			stream.avail_out = sizeof(obuf);
 			zret = git_deflate(&stream, readlen ? 0 : Z_FINISH);
-			hashwrite(f, obuf, stream.next_out - obuf);
+			hashwrite(f, obuf, stream.next_out - obuf, 0);
 			olen += stream.next_out - obuf;
 		}
 		if (stream.avail_in)
@@ -294,7 +294,7 @@ static void copy_pack_data(struct hashfile *f,
 		in = use_pack(p, w_curs, offset, &avail);
 		if (avail > len)
 			avail = (unsigned long)len;
-		hashwrite(f, in, avail);
+		hashwrite(f, in, avail, 0);
 		offset += avail;
 		len -= avail;
 	}
@@ -375,8 +375,8 @@ static unsigned long write_no_reuse_object(struct hashfile *f, struct object_ent
 			free(buf);
 			return 0;
 		}
-		hashwrite(f, header, hdrlen);
-		hashwrite(f, dheader + pos, sizeof(dheader) - pos);
+		hashwrite(f, header, hdrlen, 0);
+		hashwrite(f, dheader + pos, sizeof(dheader) - pos, 0);
 		hdrlen += sizeof(dheader) - pos;
 	} else if (type == OBJ_REF_DELTA) {
 		/*
@@ -389,8 +389,8 @@ static unsigned long write_no_reuse_object(struct hashfile *f, struct object_ent
 			free(buf);
 			return 0;
 		}
-		hashwrite(f, header, hdrlen);
-		hashwrite(f, DELTA(entry)->idx.oid.hash, hashsz);
+		hashwrite(f, header, hdrlen, 0);
+		hashwrite(f, DELTA(entry)->idx.oid.hash, hashsz, 0);
 		hdrlen += hashsz;
 	} else {
 		if (limit && hdrlen + datalen + hashsz >= limit) {
@@ -399,13 +399,13 @@ static unsigned long write_no_reuse_object(struct hashfile *f, struct object_ent
 			free(buf);
 			return 0;
 		}
-		hashwrite(f, header, hdrlen);
+		hashwrite(f, header, hdrlen, 0);
 	}
 	if (st) {
 		datalen = write_large_blob_data(st, f, &entry->idx.oid);
 		close_istream(st);
 	} else {
-		hashwrite(f, buf, datalen);
+		hashwrite(f, buf, datalen, 0);
 		free(buf);
 	}
 
@@ -466,8 +466,8 @@ static off_t write_reuse_object(struct hashfile *f, struct object_entry *entry,
 			unuse_pack(&w_curs);
 			return 0;
 		}
-		hashwrite(f, header, hdrlen);
-		hashwrite(f, dheader + pos, sizeof(dheader) - pos);
+		hashwrite(f, header, hdrlen, 0);
+		hashwrite(f, dheader + pos, sizeof(dheader) - pos, 0);
 		hdrlen += sizeof(dheader) - pos;
 		reused_delta++;
 	} else if (type == OBJ_REF_DELTA) {
@@ -475,8 +475,8 @@ static off_t write_reuse_object(struct hashfile *f, struct object_entry *entry,
 			unuse_pack(&w_curs);
 			return 0;
 		}
-		hashwrite(f, header, hdrlen);
-		hashwrite(f, DELTA(entry)->idx.oid.hash, hashsz);
+		hashwrite(f, header, hdrlen, 0);
+		hashwrite(f, DELTA(entry)->idx.oid.hash, hashsz, 0);
 		hdrlen += hashsz;
 		reused_delta++;
 	} else {
@@ -484,7 +484,7 @@ static off_t write_reuse_object(struct hashfile *f, struct object_entry *entry,
 			unuse_pack(&w_curs);
 			return 0;
 		}
-		hashwrite(f, header, hdrlen);
+		hashwrite(f, header, hdrlen, 0);
 	}
 	copy_pack_data(f, p, &w_curs, offset, datalen);
 	unuse_pack(&w_curs);
@@ -891,8 +891,8 @@ static void write_reused_pack_one(size_t pos, struct hashfile *out,
 
 			len = encode_in_pack_object_header(header, sizeof(header),
 							   OBJ_REF_DELTA, size);
-			hashwrite(out, header, len);
-			hashwrite(out, base_oid.hash, the_hash_algo->rawsz);
+			hashwrite(out, header, len, 0);
+			hashwrite(out, base_oid.hash, the_hash_algo->rawsz, 0);
 			copy_pack_data(out, reuse_packfile, w_curs, cur, next - cur);
 			return;
 		}
@@ -915,8 +915,10 @@ static void write_reused_pack_one(size_t pos, struct hashfile *out,
 
 			ofs_len = sizeof(ofs_header) - i;
 
-			hashwrite(out, header, len);
-			hashwrite(out, ofs_header + sizeof(ofs_header) - ofs_len, ofs_len);
+			hashwrite(out, header, len, 0);
+			hashwrite(out,
+				  ofs_header + sizeof(ofs_header) - ofs_len,
+				  ofs_len, 0);
 			copy_pack_data(out, reuse_packfile, w_curs, cur, next - cur);
 			return;
 		}

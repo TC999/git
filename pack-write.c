@@ -91,7 +91,7 @@ const char *write_idx_file(const char *index_name, struct pack_idx_entry **objec
 		struct pack_idx_header hdr;
 		hdr.idx_signature = htonl(PACK_IDX_SIGNATURE);
 		hdr.idx_version = htonl(index_version);
-		hashwrite(f, &hdr, sizeof(hdr));
+		hashwrite(f, &hdr, sizeof(hdr), 0);
 	}
 
 	/*
@@ -110,7 +110,7 @@ const char *write_idx_file(const char *index_name, struct pack_idx_entry **objec
 		array[i] = htonl(next - sorted_by_sha);
 		list = next;
 	}
-	hashwrite(f, array, 256 * 4);
+	hashwrite(f, array, 256 * 4, 0);
 
 	/*
 	 * Write the actual SHA1 entries..
@@ -120,9 +120,9 @@ const char *write_idx_file(const char *index_name, struct pack_idx_entry **objec
 		struct pack_idx_entry *obj = *list++;
 		if (index_version < 2) {
 			uint32_t offset = htonl(obj->offset);
-			hashwrite(f, &offset, 4);
+			hashwrite(f, &offset, 4, 0);
 		}
-		hashwrite(f, obj->oid.hash, the_hash_algo->rawsz);
+		hashwrite(f, obj->oid.hash, the_hash_algo->rawsz, 0);
 		if ((opts->flags & WRITE_IDX_STRICT) &&
 		    (i && oideq(&list[-2]->oid, &obj->oid)))
 			die("The same object %s appears twice in the pack",
@@ -137,7 +137,7 @@ const char *write_idx_file(const char *index_name, struct pack_idx_entry **objec
 		for (i = 0; i < nr_objects; i++) {
 			struct pack_idx_entry *obj = *list++;
 			uint32_t crc32_val = htonl(obj->crc32);
-			hashwrite(f, &crc32_val, 4);
+			hashwrite(f, &crc32_val, 4, 0);
 		}
 
 		/* write the 32-bit offset table */
@@ -150,7 +150,7 @@ const char *write_idx_file(const char *index_name, struct pack_idx_entry **objec
 				  ? (0x80000000 | nr_large_offset++)
 				  : obj->offset);
 			offset = htonl(offset);
-			hashwrite(f, &offset, 4);
+			hashwrite(f, &offset, 4, 0);
 		}
 
 		/* write the large offset table */
@@ -164,12 +164,12 @@ const char *write_idx_file(const char *index_name, struct pack_idx_entry **objec
 				continue;
 			split[0] = htonl(offset >> 32);
 			split[1] = htonl(offset & 0xffffffff);
-			hashwrite(f, split, 8);
+			hashwrite(f, split, 8, 0);
 			nr_large_offset--;
 		}
 	}
 
-	hashwrite(f, sha1, the_hash_algo->rawsz);
+	hashwrite(f, sha1, the_hash_algo->rawsz, 0);
 	finalize_hashfile(f, NULL, CSUM_HASH_IN_STREAM | CSUM_CLOSE |
 				    ((opts->flags & WRITE_IDX_VERIFY)
 				    ? 0 : CSUM_FSYNC));
@@ -181,9 +181,13 @@ off_t write_pack_header(struct hashfile *f, uint32_t nr_entries)
 	struct pack_header hdr;
 
 	hdr.hdr_signature = htonl(PACK_SIGNATURE);
-	hdr.hdr_version = htonl(PACK_VERSION);
+	if (f->enc)
+		hdr.hdr_version =
+			htonl(git_encryptor_get_host_pack_version(f->cryptor));
+	else
+		hdr.hdr_version = htonl(PACK_VERSION);
 	hdr.hdr_entries = htonl(nr_entries);
-	hashwrite(f, &hdr, sizeof(hdr));
+	hashwrite(f, &hdr, sizeof(hdr), 0);
 	return sizeof(hdr);
 }
 
@@ -210,11 +214,13 @@ void fixup_pack_header_footer(int pack_fd,
 			 unsigned char *partial_pack_hash,
 			 off_t partial_pack_offset)
 {
-	int aligned_sz, buf_sz = 8 * 1024;
+	int aligned_sz, buf_sz = 8 * 1024, is_enc;
 	git_hash_ctx old_hash_ctx, new_hash_ctx;
 	struct pack_header hdr;
 	char *buf;
 	ssize_t read_result;
+	git_cryptor cryptor_r;
+	off_t from;
 
 	the_hash_algo->init_fn(&old_hash_ctx);
 	the_hash_algo->init_fn(&new_hash_ctx);
@@ -229,14 +235,18 @@ void fixup_pack_header_footer(int pack_fd,
 			  pack_name);
 	if (lseek(pack_fd, 0, SEEK_SET) != 0)
 		die_errno("Failed seeking to start of '%s'", pack_name);
+	is_enc = GIT_CRYPTO_PACK_IS_ENCRYPT(hdr.hdr_version);
 	the_hash_algo->update_fn(&old_hash_ctx, &hdr, sizeof(hdr));
 	hdr.hdr_entries = htonl(object_count);
 	the_hash_algo->update_fn(&new_hash_ctx, &hdr, sizeof(hdr));
+	if (is_enc)
+		git_decryptor_init_or_die(&cryptor_r, hdr.hdr_version);
 	write_or_die(pack_fd, &hdr, sizeof(hdr));
 	partial_pack_offset -= sizeof(hdr);
 
 	buf = xmalloc(buf_sz);
 	aligned_sz = buf_sz - sizeof(hdr);
+	from = sizeof(hdr);
 	for (;;) {
 		ssize_t m, n;
 		m = (partial_pack_hash && partial_pack_offset < aligned_sz) ?
@@ -246,6 +256,12 @@ void fixup_pack_header_footer(int pack_fd,
 			break;
 		if (n < 0)
 			die_errno("Failed to checksum '%s'", pack_name);
+		if (is_enc) {
+			cryptor_r.byte_counter = from;
+			cryptor_r.decrypt(&cryptor_r, (unsigned char *)buf,
+					  (unsigned char *)buf, n, n);
+		}
+		from += n;
 		the_hash_algo->update_fn(&new_hash_ctx, buf, n);
 
 		aligned_sz -= n;

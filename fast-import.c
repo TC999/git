@@ -761,7 +761,7 @@ static void start_packfile(void)
 	hdr.hdr_signature = htonl(PACK_SIGNATURE);
 	hdr.hdr_version = htonl(2);
 	hdr.hdr_entries = 0;
-	hashwrite(pack_file, &hdr, sizeof(hdr));
+	hashwrite(pack_file, &hdr, sizeof(hdr), 0);
 
 	pack_data = p;
 	pack_size = sizeof(hdr);
@@ -1036,23 +1036,23 @@ static int store_object(
 
 		hdrlen = encode_in_pack_object_header(hdr, sizeof(hdr),
 						      OBJ_OFS_DELTA, deltalen);
-		hashwrite(pack_file, hdr, hdrlen);
+		hashwrite(pack_file, hdr, hdrlen, 0);
 		pack_size += hdrlen;
 
 		hdr[pos] = ofs & 127;
 		while (ofs >>= 7)
 			hdr[--pos] = 128 | (--ofs & 127);
-		hashwrite(pack_file, hdr + pos, sizeof(hdr) - pos);
+		hashwrite(pack_file, hdr + pos, sizeof(hdr) - pos, 0);
 		pack_size += sizeof(hdr) - pos;
 	} else {
 		e->depth = 0;
 		hdrlen = encode_in_pack_object_header(hdr, sizeof(hdr),
 						      type, dat->len);
-		hashwrite(pack_file, hdr, hdrlen);
+		hashwrite(pack_file, hdr, hdrlen, 0);
 		pack_size += hdrlen;
 	}
 
-	hashwrite(pack_file, out, s.total_out);
+	hashwrite(pack_file, out, s.total_out, 0);
 	pack_size += s.total_out;
 
 	e->idx.crc32 = crc32_end(pack_file);
@@ -1132,7 +1132,7 @@ static void stream_blob(uintmax_t len, struct object_id *oidout, uintmax_t mark)
 
 		if (!s.avail_out || status == Z_STREAM_END) {
 			size_t n = s.next_out - out_buf;
-			hashwrite(pack_file, out_buf, n);
+			hashwrite(pack_file, out_buf, n, 0);
 			pack_size += n;
 			s.next_out = out_buf;
 			s.avail_out = out_sz;

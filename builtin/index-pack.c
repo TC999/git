@@ -1288,7 +1288,7 @@ static int write_compressed(struct hashfile *f, void *in, unsigned int size)
 		stream.next_out = outbuf;
 		stream.avail_out = sizeof(outbuf);
 		status = git_deflate(&stream, Z_FINISH);
-		hashwrite(f, outbuf, sizeof(outbuf) - stream.avail_out);
+		hashwrite(f, outbuf, sizeof(outbuf) - stream.avail_out, 0);
 	} while (status == Z_OK);
 
 	if (status != Z_STREAM_END)
@@ -1315,7 +1315,7 @@ static struct object_entry *append_obj_to_pack(struct hashfile *f,
 	}
 	header[n++] = c;
 	crc32_begin(f);
-	hashwrite(f, header, n);
+	hashwrite(f, header, n, 0);
 	obj[0].size = size;
 	obj[0].hdr_size = n;
 	obj[0].type = type;

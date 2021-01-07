@@ -453,7 +453,7 @@ void bitmap_writer_select_commits(struct commit **indexed_commits,
 static int hashwrite_ewah_helper(void *f, const void *buf, size_t len)
 {
 	/* hashwrite will die on error */
-	hashwrite(f, buf, len);
+	hashwrite(f, buf, len, 0);
 	return len;
 }
 
@@ -504,7 +504,7 @@ static void write_hash_cache(struct hashfile *f,
 	for (i = 0; i < index_nr; ++i) {
 		struct object_entry *entry = (struct object_entry *)index[i];
 		uint32_t hash_value = htonl(entry->hash);
-		hashwrite(f, &hash_value, sizeof(hash_value));
+		hashwrite(f, &hash_value, sizeof(hash_value), 0);
 	}
 }
 
@@ -535,7 +535,8 @@ void bitmap_writer_finish(struct pack_idx_entry **index,
 	header.entry_count = htonl(writer.selected_nr);
 	hashcpy(header.checksum, writer.pack_checksum);
 
-	hashwrite(f, &header, sizeof(header) - GIT_MAX_RAWSZ + the_hash_algo->rawsz);
+	hashwrite(f, &header,
+		  sizeof(header) - GIT_MAX_RAWSZ + the_hash_algo->rawsz, 0);
 	dump_bitmap(f, writer.commits);
 	dump_bitmap(f, writer.trees);
 	dump_bitmap(f, writer.blobs);

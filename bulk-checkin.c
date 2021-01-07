@@ -151,7 +151,7 @@ static int stream_to_pack(struct bulk_checkin_state *state,
 					return -1;
 				}
 
-				hashwrite(state->f, obuf, written);
+				hashwrite(state->f, obuf, written, 0);
 				state->offset += written;
 			}
 			s.next_out = obuf;

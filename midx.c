@@ -421,7 +421,7 @@ static size_t write_midx_header(struct hashfile *f,
 	byte_values[1] = MIDX_HASH_VERSION;
 	byte_values[2] = num_chunks;
 	byte_values[3] = 0; /* unused */
-	hashwrite(f, byte_values, sizeof(byte_values));
+	hashwrite(f, byte_values, sizeof(byte_values), 0);
 	hashwrite_be32(f, num_packs);
 
 	return MIDX_HEADER_SIZE;
@@ -653,7 +653,7 @@ static size_t write_midx_pack_names(struct hashfile *f,
 			    info[i].pack_name);
 
 		writelen = strlen(info[i].pack_name) + 1;
-		hashwrite(f, info[i].pack_name, writelen);
+		hashwrite(f, info[i].pack_name, writelen, 0);
 		written += writelen;
 	}
 
@@ -661,7 +661,7 @@ static size_t write_midx_pack_names(struct hashfile *f,
 	i = MIDX_CHUNK_ALIGNMENT - (written % MIDX_CHUNK_ALIGNMENT);
 	if (i < MIDX_CHUNK_ALIGNMENT) {
 		memset(padding, 0, sizeof(padding));
-		hashwrite(f, padding, i);
+		hashwrite(f, padding, i, 0);
 		written += i;
 	}
 
@@ -716,7 +716,7 @@ static size_t write_midx_oid_lookup(struct hashfile *f, unsigned char hash_len,
 				    oid_to_hex(&next->oid));
 		}
 
-		hashwrite(f, obj->oid.hash, (int)hash_len);
+		hashwrite(f, obj->oid.hash, (int)hash_len, 0);
 		written += hash_len;
 	}
 
