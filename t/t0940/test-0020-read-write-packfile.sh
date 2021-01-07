@@ -78,7 +78,7 @@ test_expect_success 'unpack-objects on encrypted packfile' '
 	git -C unpack.1 unpack-objects <packfile.algo-${GIT_TEST_CRYPTO_ALGORITHM_TYPE}
 '
 
-test_expect_failure 'index-pack on encrypted packfile' '
+test_expect_success 'index-pack on encrypted packfile' '
 	test_create_repo index-pack.1 &&
 	git -C index-pack.1 config agit.crypto.enabled 1 &&
 	git -C index-pack.1 config agit.crypto.secret c2VjcmV0LXRva2VuMTIzNA== &&
@@ -91,4 +91,22 @@ test_expect_failure 'index-pack on encrypted packfile' '
 
 test_expect_failure 'verify-pack on encrypted packfile' '
 	git -C index-pack.1 verify-pack .git/objects/pack/pack-$pack.pack
+'
+
+test_expect_success 'unpack-objects on unencrypted packfile to encrypted loose objects' '
+	test_create_repo unpack.2 &&
+	git -C unpack.2 config agit.crypto.enabled 1 &&
+	git -C unpack.2 config agit.crypto.secret c2VjcmV0LXRva2VuMTIzNA== &&
+	git -C unpack.2 config agit.crypto.nonce random_nonce &&
+	git -C unpack.2 unpack-objects <packfile.0
+'
+
+test_expect_success 'index-pack on unencrypted packfile to encrypted packfile' '
+	test_create_repo index-pack.2 &&
+	git -C index-pack.2 config agit.crypto.enabled 1 &&
+	git -C index-pack.2 config agit.crypto.secret c2VjcmV0LXRva2VuMTIzNA== &&
+	git -C index-pack.2 config agit.crypto.nonce random_nonce &&
+	pack=$(git -C index-pack.2 index-pack --stdin <packfile.0) &&
+	pack=${pack#pack?} &&
+	test -f index-pack.2/.git/objects/pack/pack-$pack.pack
 '
