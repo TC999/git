@@ -89,6 +89,8 @@ static struct progress *progress;
 /* We always read in 4kB chunks. */
 static unsigned char input_buffer[4096];
 static unsigned int input_offset, input_len;
+static unsigned char enc_output_buffer[4096];
+static unsigned int output_offset;
 static off_t consumed_bytes;
 static off_t max_input_size;
 static unsigned deepest_delta;
@@ -96,6 +98,7 @@ static git_hash_ctx input_ctx;
 static uint32_t input_crc32;
 static int input_fd, output_fd;
 static const char *curr_pack;
+static git_cryptor cryptor_w, cryptor_r;
 
 static struct thread_local *thread_data;
 static int nr_dispatched;
@@ -235,11 +238,47 @@ static unsigned check_objects(void)
 
 
 /* Discard current buffer used content. */
-static void flush(void)
+static void flush(int pack_enc)
 {
+	struct pack_header *hdr;
+	unsigned char *body;
+	unsigned int body_size;
+
 	if (input_offset) {
-		if (output_fd >= 0)
-			write_or_die(output_fd, input_buffer, input_offset);
+		if (output_fd >= 0) {
+			if (pack_enc) {
+				memcpy(enc_output_buffer, input_buffer,
+				       input_offset);
+				if (!output_offset) {
+					/* write header */
+					hdr = (struct pack_header *)
+						enc_output_buffer;
+					/* overwrite version and needn't encrypt
+					 */
+					hdr->hdr_version = htonl(
+						git_encryptor_get_host_pack_version(
+							&cryptor_w));
+					cryptor_w.byte_counter =
+						sizeof(struct pack_header);
+					body = enc_output_buffer +
+					       sizeof(struct pack_header);
+					body_size = input_offset -
+						    sizeof(struct pack_header);
+				} else {
+					cryptor_w.byte_counter = output_offset;
+					body = enc_output_buffer;
+					body_size = input_offset;
+				}
+				cryptor_w.encrypt(&cryptor_w, body, body,
+						  body_size);
+				write_or_die(output_fd, enc_output_buffer,
+					     input_offset);
+				output_offset += input_offset;
+			} else {
+				write_or_die(output_fd, input_buffer,
+					     input_offset);
+			}
+		}
 		the_hash_algo->update_fn(&input_ctx, input_buffer, input_offset);
 		memmove(input_buffer, input_buffer + input_offset, input_len);
 		input_offset = 0;
@@ -259,20 +298,46 @@ static void *fill(int min)
 		       "cannot fill %d bytes",
 		       min),
 		    min);
-	flush();
+	flush(agit_crypto_enabled);
 	do {
-		ssize_t ret = xread(input_fd, input_buffer + input_len,
-				sizeof(input_buffer) - input_len);
+		unsigned char *in;
+		ssize_t ret;
+
+		in = input_buffer + input_len;
+		ret = xread(input_fd, in, sizeof(input_buffer) - input_len);
 		if (ret <= 0) {
 			if (!ret)
 				die(_("early EOF"));
 			die_errno(_("read error on input"));
 		}
+		if (agit_pack_encrypted)
+			cryptor_r.decrypt(&cryptor_r, in, in, ret, ret);
 		input_len += ret;
 		if (from_stdin)
 			display_throughput(progress, consumed_bytes + input_len);
 	} while (input_len < min);
 	return input_buffer;
+}
+
+/*
+ * Read pack header to buffer and return the pointer to the buffer.
+ */
+static void *fill_header(void)
+{
+	int hdr_size = sizeof(struct pack_header);
+	struct pack_header *hdr;
+	unsigned char *in;
+
+	in = fill(hdr_size);
+	hdr = (struct pack_header *)in;
+	if (GIT_CRYPTO_PACK_IS_ENCRYPT(hdr->hdr_version)) {
+		agit_pack_encrypted = 1;
+		git_decryptor_init_or_die(&cryptor_r, hdr->hdr_version);
+		cryptor_r.byte_counter = sizeof(struct pack_header);
+		cryptor_r.decrypt(&cryptor_r, in + hdr_size, in + hdr_size,
+				  input_len - hdr_size, input_len - hdr_size);
+	}
+	return in;
 }
 
 static void use(int bytes)
@@ -317,9 +382,13 @@ static const char *open_pack_file(const char *pack_name)
 	return pack_name;
 }
 
-static void parse_pack_header(void)
+static void parse_pack_header(int pack_header_given)
 {
-	struct pack_header *hdr = fill(sizeof(struct pack_header));
+	struct pack_header *hdr;
+	if (pack_header_given)
+		hdr = fill(sizeof(struct pack_header));
+	else
+		hdr = fill_header();
 
 	/* Header consistency check */
 	if (hdr->hdr_signature != htonl(PACK_SIGNATURE))
@@ -327,6 +396,9 @@ static void parse_pack_header(void)
 	if (!pack_version_ok(hdr->hdr_version))
 		die(_("pack version %"PRIu32" unsupported"),
 			ntohl(hdr->hdr_version));
+
+	if (GIT_CRYPTO_PACK_IS_ENCRYPT(hdr->hdr_version))
+		trace_printf_key(&trace_crypto_key, "pack encrypted\n");
 
 	nr_objects = ntohl(hdr->hdr_entries);
 	use(sizeof(struct pack_header));
@@ -470,10 +542,8 @@ static void *unpack_entry_data(off_t offset, unsigned long size,
 	return buf == fixed_buf ? NULL : buf;
 }
 
-static void *unpack_raw_entry(struct object_entry *obj,
-			      off_t *ofs_offset,
-			      struct object_id *ref_oid,
-			      struct object_id *oid)
+static void *unpack_raw_entry(struct object_entry *obj, off_t *ofs_offset,
+			      struct object_id *ref_oid, struct object_id *oid)
 {
 	unsigned char *p;
 	unsigned long size, c;
@@ -545,7 +615,9 @@ static void *unpack_data(struct object_entry *obj,
 	off_t len = obj[1].idx.offset - from;
 	unsigned char *data, *inbuf;
 	git_zstream stream;
-	int status;
+	int status, enc;
+	struct pack_header *hdr = xmallocz(sizeof(struct pack_header));
+	git_cryptor cryptor;
 
 	data = xmallocz(consume ? 64*1024 : obj->size);
 	inbuf = xmalloc((len < 64*1024) ? (int)len : 64*1024);
@@ -554,6 +626,16 @@ static void *unpack_data(struct object_entry *obj,
 	git_inflate_init(&stream);
 	stream.next_out = data;
 	stream.avail_out = consume ? 64*1024 : obj->size;
+
+	if (xpread(get_thread_data()->pack_fd, hdr, 12, 0) < 0)
+		die_errno(_("cannot pread pack file header"));
+
+	enc = GIT_CRYPTO_PACK_IS_ENCRYPT(hdr->hdr_version);
+
+	if (enc) {
+		trace_printf_key(&trace_crypto_key, "unpack-data encryted\n");
+		git_decryptor_init_or_die(&cryptor, hdr->hdr_version);
+	}
 
 	do {
 		ssize_t n = (len < 64*1024) ? (ssize_t)len : 64*1024;
@@ -565,6 +647,10 @@ static void *unpack_data(struct object_entry *obj,
 			       "premature end of pack file, %"PRIuMAX" bytes missing",
 			       (unsigned int)len),
 			    (uintmax_t)len);
+		if (enc) {
+			cryptor.byte_counter = from;
+			cryptor_r.decrypt(&cryptor, inbuf, inbuf, n, n);
+		}
 		from += n;
 		len -= n;
 		stream.next_in = inbuf;
@@ -1115,6 +1201,7 @@ static void parse_pack_objects(unsigned char *hash)
 	struct ofs_delta_entry *ofs_delta = ofs_deltas;
 	struct object_id ref_delta_oid;
 	struct stat st;
+	unsigned char *fill_hash;
 
 	if (verbose)
 		progress = start_progress(
@@ -1149,9 +1236,16 @@ static void parse_pack_objects(unsigned char *hash)
 	stop_progress(&progress);
 
 	/* Check pack integrity */
-	flush();
+	flush(agit_crypto_enabled);
 	the_hash_algo->final_fn(hash, &input_ctx);
-	if (!hasheq(fill(the_hash_algo->rawsz), hash))
+	fill_hash = fill(the_hash_algo->rawsz);
+	if (agit_pack_encrypted) {
+		cryptor_r.byte_counter -= the_hash_algo->rawsz;
+		cryptor_r.decrypt(&cryptor_r, fill_hash, fill_hash,
+				  the_hash_algo->rawsz, the_hash_algo->rawsz);
+	}
+
+	if (!hasheq(fill_hash, hash))
 		die(_("pack is corrupted (SHA1 mismatch)"));
 	use(the_hash_algo->rawsz);
 
@@ -1235,7 +1329,7 @@ static void conclude_pack(int fix_thin_pack, const char *curr_pack, unsigned cha
 	if (nr_ref_deltas + nr_ofs_deltas == nr_resolved_deltas) {
 		stop_progress(&progress);
 		/* Flush remaining pack final hash. */
-		flush();
+		flush(0);
 		return;
 	}
 
@@ -1251,6 +1345,9 @@ static void conclude_pack(int fix_thin_pack, const char *curr_pack, unsigned cha
 		memset(objects + nr_objects + 1, 0,
 		       nr_unresolved * sizeof(*objects));
 		f = hashfd(output_fd, curr_pack);
+		/* continue file writen */
+		f->writen = output_offset;
+		f->enc = agit_crypto_enabled;
 		fix_unresolved_deltas(f);
 		strbuf_addf(&msg, Q_("completed with %d local object",
 				     "completed with %d local objects",
@@ -1288,7 +1385,7 @@ static int write_compressed(struct hashfile *f, void *in, unsigned int size)
 		stream.next_out = outbuf;
 		stream.avail_out = sizeof(outbuf);
 		status = git_deflate(&stream, Z_FINISH);
-		hashwrite(f, outbuf, sizeof(outbuf) - stream.avail_out, 0);
+		hashwrite(f, outbuf, sizeof(outbuf) - stream.avail_out, f->enc);
 	} while (status == Z_OK);
 
 	if (status != Z_STREAM_END)
@@ -1315,7 +1412,7 @@ static struct object_entry *append_obj_to_pack(struct hashfile *f,
 	}
 	header[n++] = c;
 	crc32_begin(f);
-	hashwrite(f, header, n, 0);
+	hashwrite(f, header, n, f->enc);
 	obj[0].size = size;
 	obj[0].hdr_size = n;
 	obj[0].type = type;
@@ -1668,6 +1765,7 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
 	unsigned foreign_nr = 1;	/* zero is a "good" value, assume bad */
 	int report_end_of_input = 0;
 	int hash_algo = 0;
+	int pack_header_given = 0;
 
 	/*
 	 * index-pack never needs to fetch missing objects except when
@@ -1730,7 +1828,6 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
 			} else if (starts_with(arg, "--pack_header=")) {
 				struct pack_header *hdr;
 				char *c;
-
 				hdr = (struct pack_header *)input_buffer;
 				hdr->hdr_signature = htonl(PACK_SIGNATURE);
 				hdr->hdr_version = htonl(strtoul(arg + 14, &c, 10));
@@ -1740,6 +1837,17 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
 				if (*c)
 					die(_("bad %s"), arg);
 				input_len = sizeof(*hdr);
+				pack_header_given = 1;
+				if (GIT_CRYPTO_PACK_IS_ENCRYPT(hdr->hdr_version)) {
+					trace_printf_key(
+						&trace_crypto_key,
+						"index-pack encryted\n");
+					agit_pack_encrypted = 1;
+					git_decryptor_init_or_die(
+						&cryptor_r, hdr->hdr_version);
+					cryptor_r.byte_counter =
+						sizeof(struct pack_header);
+				}
 			} else if (!strcmp(arg, "-v")) {
 				verbose = 1;
 			} else if (!strcmp(arg, "--show-resolving-progress")) {
@@ -1796,6 +1904,10 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
 	if (strict)
 		opts.flags |= WRITE_IDX_STRICT;
 
+	/* init encryptor if agit_crypto_secret is set */
+	if (agit_crypto_enabled)
+		git_encryptor_init_or_die(&cryptor_w);
+
 	if (HAVE_THREADS && !nr_threads) {
 		nr_threads = online_cpus();
 		/* An experiment showed that more threads does not mean faster */
@@ -1804,7 +1916,7 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
 	}
 
 	curr_pack = open_pack_file(pack_name);
-	parse_pack_header();
+	parse_pack_header(pack_header_given);
 	objects = xcalloc(st_add(nr_objects, 1), sizeof(struct object_entry));
 	if (show_stat)
 		obj_stat = xcalloc(st_add(nr_objects, 1), sizeof(struct object_stat));
