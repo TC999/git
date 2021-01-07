@@ -88,14 +88,21 @@ static struct progress *progress;
 
 /* We always read in 4kB chunks. */
 static unsigned char input_buffer[4096];
+static unsigned char decrypt_string[4096];
+static unsigned char output_string[4096];
+static unsigned char *decrypt_buffer;
+static unsigned char *output_buffer;
 static unsigned int input_offset, input_len;
 static off_t consumed_bytes;
 static off_t max_input_size;
 static unsigned deepest_delta;
 static git_hash_ctx input_ctx;
+static git_hash_ctx output_ctx;
 static uint32_t input_crc32;
 static int input_fd, output_fd;
 static const char *curr_pack;
+static git_cryptor cryptor_w, cryptor_r;
+static int pack_is_encrypted;
 
 static struct thread_local *thread_data;
 static int nr_dispatched;
@@ -238,11 +245,102 @@ static unsigned check_objects(void)
 static void flush(void)
 {
 	if (input_offset) {
-		if (output_fd >= 0)
-			write_or_die(output_fd, input_buffer, input_offset);
+		if (output_fd >= 0) {
+			write_or_die(output_fd, output_buffer, input_offset);
+			if (output_buffer != input_buffer)
+				the_hash_algo->update_fn(&output_ctx, output_buffer, input_offset);
+		}
+		/* Calculate checksum based on raw data from packfile. */
 		the_hash_algo->update_fn(&input_ctx, input_buffer, input_offset);
 		memmove(input_buffer, input_buffer + input_offset, input_len);
+		if (decrypt_buffer == decrypt_string)
+			memmove(decrypt_buffer, decrypt_buffer + input_offset, input_len);
+		if (output_buffer == output_string)
+			memmove(output_buffer, output_buffer + input_offset, input_len);
 		input_offset = 0;
+	}
+}
+
+static void flush_header(void)
+{
+	int in_bytes, out_bytes;
+
+	in_bytes = pack_is_encrypted ?
+			sizeof(struct pack_header_with_nonce) :
+			sizeof(struct pack_header);
+	out_bytes = agit_crypto_enabled ?
+			sizeof(struct pack_header_with_nonce) :
+			sizeof(struct pack_header);
+
+	if (output_fd >= 0) {
+		write_or_die(output_fd, output_buffer, out_bytes);
+		if (output_buffer != input_buffer)
+			the_hash_algo->update_fn(&output_ctx, output_buffer, out_bytes);
+	}
+	/* Calculate checksum based on raw data from packfile. */
+	the_hash_algo->update_fn(&input_ctx, input_buffer, in_bytes);
+
+	input_offset = 0;
+	input_len = 0;
+	if (output_fd >= 0)
+		consumed_bytes += out_bytes;
+	else
+		consumed_bytes += in_bytes;
+}
+
+static void setup_buffers_from_header(void)
+{
+	union extend_pack_header *input_hdr;
+	struct pack_header *decrypt_hdr;
+	struct pack_header_with_nonce *output_hdr;
+
+	input_hdr = (union extend_pack_header *)input_buffer;
+	/* Header consistency check */
+	if (input_hdr->hdr.hdr_signature != htonl(PACK_SIGNATURE))
+		die(_("pack signature mismatch"));
+	if (!pack_version_ok(input_hdr->hdr.hdr_version))
+		die(_("pack version %"PRIu32" unsupported"),
+			ntohl(input_hdr->hdr.hdr_version));
+	nr_objects = ntohl(input_hdr->hdr.hdr_entries);
+
+	if (git_crypto_pack_is_encrypt(input_hdr->hdr.hdr_version)) {
+		pack_is_encrypted = 1;
+		git_decryptor_init_or_die(&cryptor_r, input_hdr->ehdr.hdr_version,
+					  input_hdr->ehdr.nonce,
+					  NONCE_LEN);
+		cryptor_r.byte_counter = sizeof(input_hdr->ehdr);
+	}
+	if (pack_is_encrypted) {
+		decrypt_buffer = decrypt_string;
+		if (output_fd >= 0) {
+			if (agit_crypto_enabled)
+				output_buffer = input_buffer;
+			else
+				output_buffer = decrypt_string;
+		} else {
+			output_buffer = input_buffer;
+		}
+	} else {
+		decrypt_buffer = input_buffer;
+		if (output_fd >= 0) {
+			if (agit_crypto_enabled)
+				output_buffer = output_string;
+			else
+				output_buffer = input_buffer;
+		} else {
+			output_buffer = input_buffer;
+		}
+	}
+	if (pack_is_encrypted) {
+		decrypt_hdr = (struct pack_header *)decrypt_buffer;
+		memcpy(decrypt_hdr, input_hdr, sizeof(*decrypt_hdr));
+		decrypt_hdr->hdr_version = (decrypt_hdr->hdr_version >> 24) << 24;
+	} else if (output_buffer == output_string) {
+		output_hdr  = (struct pack_header_with_nonce *)output_buffer;
+		memcpy(output_hdr, input_hdr, sizeof(struct pack_header));
+		output_hdr->hdr_version =
+			htonl(git_encryptor_get_host_pack_version(&cryptor_w));
+		memcpy(output_hdr->nonce, cryptor_w.nonce, NONCE_LEN);
 	}
 }
 
@@ -252,13 +350,20 @@ static void flush(void)
  */
 static void *fill(int min)
 {
-	if (min <= input_len)
-		return input_buffer + input_offset;
+	unsigned int orig_input_len = input_len;
+
+	if (min <= input_len) {
+		if (pack_is_encrypted)
+			return decrypt_buffer + input_offset;
+		else
+			return input_buffer + input_offset;
+	}
 	if (min > sizeof(input_buffer))
 		die(Q_("cannot fill %d byte",
 		       "cannot fill %d bytes",
 		       min),
 		    min);
+	/* Flush input buffer, and set input_offset to zero. */
 	flush();
 	do {
 		ssize_t ret = xread(input_fd, input_buffer + input_len,
@@ -272,14 +377,32 @@ static void *fill(int min)
 		if (from_stdin)
 			display_throughput(progress, consumed_bytes + input_len);
 	} while (input_len < min);
-	return input_buffer;
+
+	if (pack_is_encrypted)
+		cryptor_r.decrypt(&cryptor_r,
+				  input_buffer + orig_input_len,
+				  decrypt_buffer + orig_input_len,
+				  input_len - orig_input_len,
+				  input_len - orig_input_len);
+	if (output_fd >= 0 && 
+	    agit_crypto_enabled &&
+	    output_buffer == output_string)
+		cryptor_w.encrypt(&cryptor_w,
+				  decrypt_buffer + orig_input_len,
+				  output_buffer + orig_input_len,
+				  input_len - orig_input_len);
+
+	if (pack_is_encrypted)
+		return decrypt_buffer;
+	else
+		return input_buffer;
 }
 
 static void use(int bytes)
 {
 	if (bytes > input_len)
 		die(_("used more bytes than were available"));
-	input_crc32 = crc32(input_crc32, input_buffer + input_offset, bytes);
+	input_crc32 = crc32(input_crc32, output_buffer + input_offset, bytes);
 	input_len -= bytes;
 	input_offset += bytes;
 
@@ -314,22 +437,44 @@ static const char *open_pack_file(const char *pack_name)
 		nothread_data.pack_fd = input_fd;
 	}
 	the_hash_algo->init_fn(&input_ctx);
+	if (output_fd >= 0 && output_buffer != input_buffer)
+		the_hash_algo->init_fn(&output_ctx);
 	return pack_name;
 }
 
 static void parse_pack_header(void)
 {
-	struct pack_header *hdr = fill(sizeof(struct pack_header));
+	union extend_pack_header *hdr;
+	int hdr_size = sizeof(struct pack_header);
 
-	/* Header consistency check */
-	if (hdr->hdr_signature != htonl(PACK_SIGNATURE))
-		die(_("pack signature mismatch"));
-	if (!pack_version_ok(hdr->hdr_version))
-		die(_("pack version %"PRIu32" unsupported"),
-			ntohl(hdr->hdr_version));
+	/* Header maybe provided by command line option: --pack_header=... */
+	if (input_len == 0) {
+		ssize_t ret = read_in_full(input_fd, input_buffer, hdr_size);
+		if (ret <= 0) {
+			if (!ret)
+				die(_("early EOF"));
+			die_errno(_("read error on input"));
+		}
+		input_len += ret;
+		hdr = (union extend_pack_header *) input_buffer;
+		if (git_crypto_pack_is_encrypt(hdr->hdr.hdr_version)) {
+			ssize_t ret = read_in_full(input_fd, input_buffer + input_len,
+						   sizeof(struct pack_header_with_nonce) - input_len);
+			if (ret <= 0) {
+				if (!ret)
+					die(_("early EOF"));
+				die_errno(_("read error on input"));
+			}
+			input_len += ret;
+		}
+		if (from_stdin)
+			display_throughput(progress, consumed_bytes + input_len);
 
-	nr_objects = ntohl(hdr->hdr_entries);
-	use(sizeof(struct pack_header));
+		/* Filling header */
+		setup_buffers_from_header();
+	}
+
+	flush_header();
 }
 
 static NORETURN void bad_object(off_t offset, const char *format,
@@ -546,6 +691,10 @@ static void *unpack_data(struct object_entry *obj,
 	unsigned char *data, *inbuf;
 	git_zstream stream;
 	int status;
+	git_cryptor cryptor;
+	unsigned char hdr_buf[12 + NONCE_LEN];
+	union extend_pack_header *hdr;
+	int hdr_size = sizeof(struct pack_header);
 
 	data = xmallocz(consume ? 64*1024 : obj->size);
 	inbuf = xmalloc((len < 64*1024) ? (int)len : 64*1024);
@@ -554,6 +703,19 @@ static void *unpack_data(struct object_entry *obj,
 	git_inflate_init(&stream);
 	stream.next_out = data;
 	stream.avail_out = consume ? 64*1024 : obj->size;
+
+	if (pread_in_full(get_thread_data()->pack_fd, hdr_buf, hdr_size, 0) <= 0)
+		die_errno(_("cannot pread pack file header"));
+	hdr = (union extend_pack_header *)hdr_buf;
+	if (git_crypto_pack_is_encrypt(hdr->hdr.hdr_version)) {
+		if (pread_in_full(get_thread_data()->pack_fd,
+				  hdr_buf + hdr_size, NONCE_LEN, hdr_size) <= 0)
+			die_errno(_("cannot pread pack file header"));
+		git_decryptor_init_or_die(&cryptor, hdr->ehdr.hdr_version,
+					  hdr->ehdr.nonce, NONCE_LEN);
+		stream.cryptor = &cryptor;
+		cryptor.byte_counter = from;
+	}
 
 	do {
 		ssize_t n = (len < 64*1024) ? (ssize_t)len : 64*1024;
@@ -1109,12 +1271,13 @@ static void *threaded_second_pass(void *data)
  * - calculate SHA1 of all non-delta objects;
  * - remember base (SHA1 or offset) for all deltas.
  */
-static void parse_pack_objects(unsigned char *hash)
+static void parse_pack_objects(unsigned char *output_hash)
 {
 	int i, nr_delays = 0;
 	struct ofs_delta_entry *ofs_delta = ofs_deltas;
 	struct object_id ref_delta_oid;
 	struct stat st;
+	unsigned char input_hash[GIT_MAX_RAWSZ];
 
 	if (verbose)
 		progress = start_progress(
@@ -1150,9 +1313,18 @@ static void parse_pack_objects(unsigned char *hash)
 
 	/* Check pack integrity */
 	flush();
-	the_hash_algo->final_fn(hash, &input_ctx);
-	if (!hasheq(fill(the_hash_algo->rawsz), hash))
+	the_hash_algo->final_fn(input_hash, &input_ctx);
+	if (output_fd >= 0 && output_buffer != input_buffer)
+		the_hash_algo->final_fn(output_hash, &output_ctx);
+	else
+		memcpy(output_hash, input_hash, GIT_MAX_RAWSZ);
+	fill(the_hash_algo->rawsz);
+
+	if (!hasheq(input_buffer + input_offset, input_hash))
 		die(_("pack is corrupted (SHA1 mismatch)"));
+	/* Fix trailing checksum for output buffer. */
+	if (output_fd >= 0 && output_buffer != input_buffer)
+		memcpy(output_buffer, output_hash, the_hash_algo->rawsz);
 	use(the_hash_algo->rawsz);
 
 	/* If input_fd is a file, we should have reached its end now. */
@@ -1166,6 +1338,7 @@ static void parse_pack_objects(unsigned char *hash)
 		struct object_entry *obj = &objects[i];
 		if (obj->real_type != OBJ_BAD)
 			continue;
+		/* large blobs, marked as OBJ_BAD, will check here */
 		obj->real_type = obj->type;
 		sha1_object(NULL, obj, obj->size, obj->type,
 			    &obj->idx.oid);
@@ -1234,7 +1407,6 @@ static void conclude_pack(int fix_thin_pack, const char *curr_pack, unsigned cha
 {
 	if (nr_ref_deltas + nr_ofs_deltas == nr_resolved_deltas) {
 		stop_progress(&progress);
-		/* Flush remaining pack final hash. */
 		flush();
 		return;
 	}
@@ -1251,6 +1423,13 @@ static void conclude_pack(int fix_thin_pack, const char *curr_pack, unsigned cha
 		memset(objects + nr_objects + 1, 0,
 		       nr_unresolved * sizeof(*objects));
 		f = hashfd(output_fd, curr_pack);
+		if (agit_crypto_enabled) {
+			f->cryptor = &cryptor_w;
+			f->encrypt_offset = lseek(output_fd, 0, SEEK_CUR);
+			cryptor_w.byte_counter = f->encrypt_offset;
+		}
+
+		/* continue file written */
 		fix_unresolved_deltas(f);
 		strbuf_addf(&msg, Q_("completed with %d local object",
 				     "completed with %d local objects",
@@ -1258,7 +1437,7 @@ static void conclude_pack(int fix_thin_pack, const char *curr_pack, unsigned cha
 			    nr_objects - nr_objects_initial);
 		stop_progress_msg(&progress, msg.buf);
 		strbuf_release(&msg);
-		finalize_hashfile(f, tail_hash, 0);
+		finalize_hashfile(f, tail_hash, CSUM_CRYPTOR_NO_FREE);
 		hashcpy(read_hash, pack_hash);
 		fixup_pack_header_footer(output_fd, pack_hash,
 					 curr_pack, nr_objects,
@@ -1288,7 +1467,7 @@ static int write_compressed(struct hashfile *f, void *in, unsigned int size)
 		stream.next_out = outbuf;
 		stream.avail_out = sizeof(outbuf);
 		status = git_deflate(&stream, Z_FINISH);
-		hashwrite(f, outbuf, sizeof(outbuf) - stream.avail_out);
+		hashwrite_try_encrypt(f, outbuf, sizeof(outbuf) - stream.avail_out);
 	} while (status == Z_OK);
 
 	if (status != Z_STREAM_END)
@@ -1315,7 +1494,11 @@ static struct object_entry *append_obj_to_pack(struct hashfile *f,
 	}
 	header[n++] = c;
 	crc32_begin(f);
-	hashwrite(f, header, n);
+	/*
+		if (f->cryptor)
+			f->encrypt_offset = obj[0].idx.offset;
+	*/
+	hashwrite_try_encrypt(f, header, n);
 	obj[0].size = size;
 	obj[0].hdr_size = n;
 	obj[0].type = type;
@@ -1688,6 +1871,12 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
 	if (prefix && chdir(prefix))
 		die(_("Cannot come back to cwd"));
 
+	/* Init encryptor before calling setup_buffers_from_header(). */
+	if (agit_crypto_enabled) {
+		git_encryptor_init_or_die(&cryptor_w);
+		cryptor_w.byte_counter = sizeof(struct pack_header_with_nonce);
+	}
+
 	for (i = 1; i < argc; i++) {
 		const char *arg = argv[i];
 
@@ -1728,18 +1917,37 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
 					nr_threads = 1;
 				}
 			} else if (starts_with(arg, "--pack_header=")) {
-				struct pack_header *hdr;
+				union extend_pack_header *h;
 				char *c;
 
-				hdr = (struct pack_header *)input_buffer;
-				hdr->hdr_signature = htonl(PACK_SIGNATURE);
-				hdr->hdr_version = htonl(strtoul(arg + 14, &c, 10));
+				h = (union extend_pack_header *)input_buffer;
+				h->hdr.hdr_signature = htonl(PACK_SIGNATURE);
+				h->hdr.hdr_version = htonl(strtoul(arg + 14, &c, 10));
 				if (*c != ',')
 					die(_("bad %s"), arg);
-				hdr->hdr_entries = htonl(strtoul(c + 1, &c, 10));
-				if (*c)
-					die(_("bad %s"), arg);
-				input_len = sizeof(*hdr);
+				h->hdr.hdr_entries = htonl(strtoul(c + 1, &c, 10));
+				if (git_crypto_pack_is_encrypt(h->hdr.hdr_version)) {
+					memset(h->ehdr.nonce, 0, NONCE_LEN);
+					if (*c && *c != ',') {
+						die(_("bad %s"), arg);
+					} else if (!*c) {
+						uint64_t tm = htonll(getnanotime());
+						uint32_t pid = htonl((uint32_t)getpid());
+						memcpy(h->ehdr.nonce, &tm, 8);
+						memcpy(h->ehdr.nonce + NONCE_LEN - 4, &pid, 4);
+					} else if (*++c) {
+						int size = strlen(c);
+						if (size > NONCE_LEN)
+							size = NONCE_LEN;
+						memcpy(h->ehdr.nonce, c, size);
+					}
+					input_len = sizeof(h->ehdr);
+				} else {
+					if (*c)
+						die(_("bad %s"), arg);
+					input_len = sizeof(h->hdr);
+				}
+				setup_buffers_from_header();
 			} else if (!strcmp(arg, "-v")) {
 				verbose = 1;
 			} else if (!strcmp(arg, "--show-resolving-progress")) {
