@@ -2385,6 +2385,12 @@ int index_path(struct index_state *istate, struct object_id *oid,
 	return rc;
 }
 
+/* read_pack_header is used by "fetch-pack" and "receive-pack" to quick validate
+ * packfile before passing the whole packfile to "unpack-objects" or "index-pack".
+ * After consuming the header by this function, will pass the consumed header
+ * information to "unpack-objects" or "index-pack" by additional option
+ * "--pack_header=xxx".
+ */
 int read_pack_header(int fd, struct pack_header *header)
 {
 	if (read_in_full(fd, header, sizeof(*header)) != sizeof(*header))

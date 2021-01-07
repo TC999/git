@@ -761,7 +761,7 @@ static void start_packfile(void)
 	pack_file = hashfd(pack_fd, p->pack_name);
 
 	pack_data = p;
-	pack_size = write_pack_header(pack_file, 0);
+	pack_size = write_pack_header_no_encrypt(pack_file, 0);
 	object_count = 0;
 
 	REALLOC_ARRAY(all_packs, pack_id + 1);

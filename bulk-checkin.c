@@ -198,8 +198,10 @@ static void prepare_to_stream(struct bulk_checkin_state *state,
 	state->f = create_tmp_packfile(&state->pack_tmp_name);
 	reset_pack_idx_option(&state->pack_idx_opts);
 
-	/* Pretend we are going to write only one object */
-	state->offset = write_pack_header(state->f, 1);
+	/* Pretend we are going to write only one object, and do not
+	 * encrypt this one-object packfile which is used to hold very
+	 * large blob object. */
+	state->offset = write_pack_header_no_encrypt(state->f, 1);
 	if (!state->offset)
 		die_errno("unable to write pack header");
 }

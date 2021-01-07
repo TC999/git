@@ -42,6 +42,22 @@ show_lo_header () {
 	test_copy_bytes 20
 }
 
+show_pack_header () {
+	case ${GIT_TEST_CRYPTO_ALGORITHM_TYPE} in
+	1 | 2)
+		hdr_size=24
+		;;
+	64 | 65)
+		hdr_size=12
+		;;
+	*)
+		echo >&2 "ERROR: unknown algorithm"
+		return 1
+		;;
+	esac &&
+	test_copy_bytes $hdr_size
+}
+
 # Some absolute path tests should be skipped on Windows due to path mangling
 # on POSIX-style absolute paths
 case $(uname -s) in

@@ -594,6 +594,13 @@ static int open_packed_git(struct packed_git *p)
 	return -1;
 }
 
+int open_packed_git_once(struct packed_git *p)
+{
+	if (p->pack_fd == -1)
+		return open_packed_git(p);
+	return 0;
+}
+
 static int in_window(struct pack_window *win, off_t offset)
 {
 	/* We must promise at least one full hash after the

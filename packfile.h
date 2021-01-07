@@ -72,6 +72,8 @@ struct packed_git *find_sha1_pack(const unsigned char *sha1,
 
 void pack_report(void);
 
+int open_packed_git_once(struct packed_git *p);
+
 /*
  * mmap the index file for the specified packfile (if it is not
  * already mmapped).  Return 0 on success.
