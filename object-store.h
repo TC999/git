@@ -83,6 +83,7 @@ struct packed_git {
 		 do_not_close:1,
 		 pack_promisor:1,
 		 multi_pack_index:1;
+	git_cryptor *cryptor;	/* for crypto.c */
 	unsigned char hash[GIT_MAX_RAWSZ];
 	struct revindex_entry *revindex;
 	/* something like ".git/objects/pack/xxxxx.pack" */

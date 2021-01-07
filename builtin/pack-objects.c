@@ -269,6 +269,10 @@ static int check_pack_inflate(struct packed_git *p,
 	git_inflate_init(&stream);
 	do {
 		in = use_pack(p, w_curs, offset, &stream.avail_in);
+		if (p->cryptor) {
+			stream.cryptor = p->cryptor;
+			stream.cryptor->byte_counter = offset;
+		}
 		stream.next_in = in;
 		stream.next_out = fakebuf;
 		stream.avail_out = sizeof(fakebuf);
@@ -289,14 +293,33 @@ static void copy_pack_data(struct hashfile *f,
 {
 	unsigned char *in;
 	unsigned long avail;
+	unsigned char decrypt_buffer[4096];
 
 	while (len) {
 		in = use_pack(p, w_curs, offset, &avail);
+		if (p->cryptor)
+			p->cryptor->byte_counter = offset;
 		if (avail > len)
 			avail = (unsigned long)len;
-		hashwrite_try_encrypt(f, in, avail);
 		offset += avail;
 		len -= avail;
+		if (!p->cryptor)
+			hashwrite_try_encrypt(f, in, avail);
+		else
+			while (avail) {
+				unsigned long decrypt_size =
+					sizeof(decrypt_buffer);
+
+				if (decrypt_size > avail)
+					decrypt_size = avail;
+				p->cryptor->decrypt(p->cryptor, in,
+						    decrypt_buffer,
+						    decrypt_size, decrypt_size);
+				hashwrite_try_encrypt(f, decrypt_buffer,
+						      decrypt_size);
+				avail -= decrypt_size;
+				in += decrypt_size;
+			}
 	}
 }
 
@@ -555,8 +578,13 @@ static off_t write_object(struct hashfile *f,
 	if (usable_delta)
 		written_delta++;
 	written++;
-	if (!pack_to_stdout)
+	if (!pack_to_stdout) {
 		entry->idx.crc32 = crc32_end(f);
+		trace_printf_key(&trace_crypto_key,
+			"pack-object.c: write-object: crc32 = %x, file: %s\n",
+			htonl(entry->idx.crc32),
+			f->name);
+	}
 	return len;
 }
 
@@ -1724,8 +1752,16 @@ static void check_object(struct object_entry *entry)
 		unsigned char *buf, c;
 		enum object_type type;
 		unsigned long in_pack_size;
+		unsigned char decrypt_header[32];
 
 		buf = use_pack(p, &w_curs, entry->in_pack_offset, &avail);
+		if (p->cryptor) {
+			p->cryptor->byte_counter = entry->in_pack_offset;
+			p->cryptor->decrypt(p->cryptor, buf, decrypt_header,
+					    the_hash_algo->rawsz,
+					    sizeof(decrypt_header));
+			buf = decrypt_header;
+		}
 
 		/*
 		 * We want in_pack_type even if we do not reuse delta
@@ -1758,17 +1794,35 @@ static void check_object(struct object_entry *entry)
 			return;
 		case OBJ_REF_DELTA:
 			if (reuse_delta && !entry->preferred_base) {
-				oidread(&base_ref,
-					use_pack(p, &w_curs,
-						 entry->in_pack_offset + used,
-						 NULL));
+				buf = use_pack(p, &w_curs,
+					       entry->in_pack_offset + used,
+					       NULL);
+				if (p->cryptor) {
+					p->cryptor->byte_counter =
+						entry->in_pack_offset + used;
+					p->cryptor->decrypt(
+						p->cryptor, buf, decrypt_header,
+						the_hash_algo->rawsz,
+						sizeof(decrypt_header));
+					buf = decrypt_header;
+				}
+				oidread(&base_ref, buf);
 				have_base = 1;
 			}
 			entry->in_pack_header_size = used + the_hash_algo->rawsz;
 			break;
 		case OBJ_OFS_DELTA:
-			buf = use_pack(p, &w_curs,
-				       entry->in_pack_offset + used, NULL);
+			buf = use_pack(p, &w_curs, entry->in_pack_offset + used,
+				       NULL);
+			if (p->cryptor) {
+				p->cryptor->byte_counter =
+					entry->in_pack_offset + used;
+				p->cryptor->decrypt(p->cryptor, buf,
+						    decrypt_header,
+						    the_hash_algo->rawsz,
+						    sizeof(decrypt_header));
+				buf = decrypt_header;
+			}
 			used_0 = 0;
 			c = buf[used_0++];
 			ofs = c & 127;
@@ -2181,6 +2235,7 @@ unsigned long oe_get_size_slow(struct packing_data *pack,
 	unsigned char *buf;
 	enum object_type type;
 	unsigned long used, avail, size;
+	unsigned char decrypt_header[32];
 
 	if (e->type_ != OBJ_OFS_DELTA && e->type_ != OBJ_REF_DELTA) {
 		packing_data_lock(&to_pack);
@@ -2198,6 +2253,13 @@ unsigned long oe_get_size_slow(struct packing_data *pack,
 	packing_data_lock(&to_pack);
 	w_curs = NULL;
 	buf = use_pack(p, &w_curs, e->in_pack_offset, &avail);
+	if (p->cryptor) {
+		p->cryptor->byte_counter = e->in_pack_offset;
+		p->cryptor->decrypt(p->cryptor, buf, decrypt_header,
+				    the_hash_algo->rawsz,
+				    sizeof(decrypt_header));
+		buf = decrypt_header;
+	}
 	used = unpack_object_header_buffer(buf, avail, &type, &size);
 	if (used == 0)
 		die(_("unable to parse object header of %s"),
