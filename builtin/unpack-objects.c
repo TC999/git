@@ -25,6 +25,7 @@ static off_t max_input_size;
 static git_hash_ctx ctx;
 static struct fsck_options fsck_options = FSCK_OPTIONS_STRICT;
 static struct progress *progress;
+static struct git_cryptor cryptor_r;
 
 /*
  * When running under --strict mode, objects whose reachability are
@@ -69,15 +70,39 @@ static void *fill(int min)
 		offset = 0;
 	}
 	do {
-		ssize_t ret = xread(0, buffer + len, sizeof(buffer) - len);
+		unsigned char *in = buffer + len;
+		ssize_t ret = xread(0, in, sizeof(buffer) - len);
 		if (ret <= 0) {
 			if (!ret)
 				die("early EOF");
 			die_errno("read error on input");
 		}
 		len += ret;
+		if (agit_pack_encrypted)
+			cryptor_r.decrypt(&cryptor_r, in, in, ret, ret);
 	} while (len < min);
 	return buffer;
+}
+
+/*
+ * Read pack header to buffer and return the pointer to the buffer.
+ */
+static void *fill_header(void)
+{
+	int hdr_size = sizeof(struct pack_header);
+	struct pack_header *hdr;
+	unsigned char *in;
+
+	in = fill(hdr_size);
+	hdr = (struct pack_header *)in;
+	if (GIT_CRYPTO_PACK_IS_ENCRYPT(hdr->hdr_version)) {
+		agit_pack_encrypted = 1;
+		git_decryptor_init_or_die(&cryptor_r, hdr->hdr_version);
+		cryptor_r.byte_counter = sizeof(struct pack_header);
+		cryptor_r.decrypt(&cryptor_r, in + hdr_size, in + hdr_size,
+				  len - hdr_size, len - hdr_size);
+	}
+	return in;
 }
 
 static void use(int bytes)
@@ -484,10 +509,14 @@ static void unpack_one(unsigned nr)
 	}
 }
 
-static void unpack_all(void)
+static void unpack_all(int pack_header_given)
 {
 	int i;
-	struct pack_header *hdr = fill(sizeof(struct pack_header));
+	struct pack_header *hdr;
+	if (pack_header_given)
+		hdr = fill(sizeof(struct pack_header));
+	else
+		hdr = fill_header();
 
 	nr_objects = ntohl(hdr->hdr_entries);
 
@@ -515,6 +544,8 @@ int cmd_unpack_objects(int argc, const char **argv, const char *prefix)
 {
 	int i;
 	struct object_id oid;
+	int pack_header_given = 0;
+	unsigned char *hash;
 
 	read_replace_refs = 0;
 
@@ -560,6 +591,16 @@ int cmd_unpack_objects(int argc, const char **argv, const char *prefix)
 				if (*c)
 					die("bad %s", arg);
 				len = sizeof(*hdr);
+				pack_header_given = 1;
+				if (GIT_CRYPTO_PACK_IS_ENCRYPT(hdr->hdr_version)) {
+					trace_printf_key(&trace_crypto_key,
+							 "unpack-objects encryted\n");
+					agit_pack_encrypted = 1;
+					git_decryptor_init_or_die(
+						&cryptor_r, hdr->hdr_version);
+					cryptor_r.byte_counter =
+						sizeof(struct pack_header);
+				}
 				continue;
 			}
 			if (skip_prefix(arg, "--max-input-size=", &arg)) {
@@ -573,7 +614,7 @@ int cmd_unpack_objects(int argc, const char **argv, const char *prefix)
 		usage(unpack_usage);
 	}
 	the_hash_algo->init_fn(&ctx);
-	unpack_all();
+	unpack_all(pack_header_given);
 	the_hash_algo->update_fn(&ctx, buffer, offset);
 	the_hash_algo->final_fn(oid.hash, &ctx);
 	if (strict) {
@@ -581,7 +622,14 @@ int cmd_unpack_objects(int argc, const char **argv, const char *prefix)
 		if (fsck_finish(&fsck_options))
 			die(_("fsck error in pack objects"));
 	}
-	if (!hasheq(fill(the_hash_algo->rawsz), oid.hash))
+	hash = fill(the_hash_algo->rawsz);
+	if (agit_pack_encrypted) {
+		/* As hash was already encrypted when fill, it should be decrypted */
+		cryptor_r.byte_counter -= the_hash_algo->rawsz;
+		cryptor_r.decrypt(&cryptor_r, hash, hash, the_hash_algo->rawsz,
+				   the_hash_algo->rawsz);
+	}
+	if (!hasheq(hash, oid.hash))
 		die("final sha1 did not match");
 	use(the_hash_algo->rawsz);
 
