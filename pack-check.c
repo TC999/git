@@ -30,10 +30,12 @@ int check_pack_crc(struct packed_git *p, struct pack_window **w_curs,
 
 	do {
 		unsigned long avail;
-		void *data = use_pack(p, w_curs, offset, &avail);
+		void *data = use_pack(p, w_curs, offset, &avail, len);
 		if (avail > len)
 			avail = len;
 		data_crc = crc32(data_crc, data, avail);
+		if (p->enc)
+			free(data);
 		offset += avail;
 		len -= avail;
 	} while (len);
@@ -59,6 +61,7 @@ static int verify_packfile(struct repository *r,
 	uint32_t nr_objects, i;
 	int err = 0;
 	struct idx_entry *entries;
+	struct git_cryptor cryptor_r;
 
 	if (!is_pack_valid(p))
 		return error("packfile %s cannot be accessed", p->pack_name);
@@ -66,16 +69,26 @@ static int verify_packfile(struct repository *r,
 	r->hash_algo->init_fn(&ctx);
 	do {
 		unsigned long remaining;
-		unsigned char *in = use_pack(p, w_curs, offset, &remaining);
+		unsigned char *in = use_pack(p, w_curs, offset, &remaining, 0);
 		offset += remaining;
 		if (!pack_sig_ofs)
 			pack_sig_ofs = p->pack_size - r->hash_algo->rawsz;
 		if (offset > pack_sig_ofs)
 			remaining -= (unsigned int)(offset - pack_sig_ofs);
 		r->hash_algo->update_fn(&ctx, in, remaining);
+		if (p->enc)
+			free(in);
 	} while (offset < pack_sig_ofs);
 	r->hash_algo->final_fn(hash, &ctx);
-	pack_sig = use_pack(p, w_curs, pack_sig_ofs, NULL);
+	pack_sig = use_pack(p, w_curs, pack_sig_ofs, NULL, GIT_MAX_RAWSZ);
+	if (p->enc) {
+		/* As hash was already encrypted when fill, it should be
+		 * decrypted */
+		git_decryptor_init_or_die(&cryptor_r, p->hdr_version);
+		cryptor_r.byte_counter = pack_sig_ofs;
+		cryptor_r.decrypt(&cryptor_r, pack_sig, pack_sig,
+				  the_hash_algo->rawsz, the_hash_algo->rawsz);
+	}
 	if (!hasheq(hash, pack_sig))
 		err = error("%s pack checksum mismatch",
 			    p->pack_name);
@@ -83,6 +96,8 @@ static int verify_packfile(struct repository *r,
 		err = error("%s pack checksum does not match its index",
 			    p->pack_name);
 	unuse_pack(w_curs);
+	if (p->enc)
+		free(pack_sig);
 
 	/* Make sure everything reachable from idx is valid.  Since we
 	 * have verified that nr_objects matches between idx and pack,

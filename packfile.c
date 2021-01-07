@@ -566,6 +566,12 @@ static int open_packed_git_1(struct packed_git *p)
 		return error("packfile %s is version %"PRIu32" and not"
 			" supported (try upgrading GIT to a newer version)",
 			p->pack_name, ntohl(hdr.hdr_version));
+	p->enc = GIT_CRYPTO_PACK_IS_ENCRYPT(hdr.hdr_version);
+	p->hdr_version = hdr.hdr_version;
+	if (p->enc && !agit_crypto_secret)
+		return error(
+			"packfile %s is encrypted but agit.crypto.secret not given",
+			p->pack_name);
 
 	/* Skip index checking if in multi-pack-index */
 	if (!p->index_data)
@@ -610,12 +616,12 @@ static int in_window(struct pack_window *win, off_t offset)
 		&& (offset + the_hash_algo->rawsz) <= (win_off + win->len);
 }
 
-unsigned char *use_pack(struct packed_git *p,
-		struct pack_window **w_cursor,
-		off_t offset,
-		unsigned long *left)
+unsigned char *use_pack(struct packed_git *p, struct pack_window **w_cursor,
+			off_t offset, unsigned long *left, unsigned long size)
 {
 	struct pack_window *win = *w_cursor;
+	git_cryptor cryptor;
+	unsigned char *out, *buffer;
 
 	/* Since packfiles end in a hash of their content and it's
 	 * pointless to ask for an offset into the middle of that
@@ -624,6 +630,12 @@ unsigned char *use_pack(struct packed_git *p,
 	 */
 	if (!p->pack_size && p->pack_fd == -1 && open_packed_git(p))
 		die("packfile %s cannot be accessed", p->pack_name);
+
+	if (p->enc) {
+		git_decryptor_init_or_die(&cryptor, p->hdr_version);
+		cryptor.byte_counter = offset;
+	}
+
 	if (offset > (p->pack_size - the_hash_algo->rawsz))
 		die("offset beyond end of packfile (truncated pack?)");
 	if (offset < 0)
@@ -678,9 +690,37 @@ unsigned char *use_pack(struct packed_git *p,
 		*w_cursor = win;
 	}
 	offset -= win->offset;
-	if (left)
+	out = win->base + offset;
+	if (left) {
 		*left = win->len - xsize_t(offset);
-	return win->base + offset;
+		if (p->enc) {
+			if (!size) {
+				size = *left;
+			}
+			buffer = malloc(size);
+			if (!offset) {
+				int hdr_size = sizeof(struct pack_header);
+				/* head should not be decrypted */
+				memcpy(buffer, out, hdr_size);
+				cryptor.byte_counter = hdr_size;
+				cryptor.decrypt(&cryptor, out + hdr_size,
+						buffer + hdr_size,
+						*left - hdr_size,
+						size - hdr_size);
+			} else {
+				cryptor.decrypt(&cryptor, out, buffer, *left,
+						size);
+			}
+			out = buffer;
+		}
+	} else {
+		if (p->enc) {
+			buffer = malloc(64);
+			cryptor.decrypt(&cryptor, out, buffer, 64, 64);
+			out = buffer;
+		}
+	}
+	return out;
 }
 
 void unuse_pack(struct pack_window **w_cursor)
@@ -1087,7 +1127,9 @@ unsigned long get_size_from_delta(struct packed_git *p,
 
 	git_inflate_init(&stream);
 	do {
-		in = use_pack(p, w_curs, curpos, &stream.avail_in);
+		in = use_pack(p, w_curs, curpos, &stream.avail_in,
+			      stream.avail_out * 2 +
+				      GIT_CRYPTO_DECRYPT_BUFFER_SIZE);
 		stream.next_in = in;
 		/*
 		 * Note: the window section returned by use_pack() must be
@@ -1143,13 +1185,15 @@ int unpack_object_header(struct packed_git *p,
 	 * the maximum deflated object size is 2^137, which is just
 	 * insane, so we know won't exceed what we have been given.
 	 */
-	base = use_pack(p, w_curs, *curpos, &left);
+	base = use_pack(p, w_curs, *curpos, &left, GIT_CRYPTO_DECRYPT_BUFFER_SIZE);
 	used = unpack_object_header_buffer(base, left, &type, sizep);
 	if (!used) {
 		type = OBJ_BAD;
 	} else
 		*curpos += used;
 
+	if (p->enc)
+		free(base);
 	return type;
 }
 
@@ -1187,7 +1231,8 @@ off_t get_delta_base(struct packed_git *p,
 		     enum object_type type,
 		     off_t delta_obj_offset)
 {
-	unsigned char *base_info = use_pack(p, w_curs, *curpos, NULL);
+	unsigned char *base_info =
+		use_pack(p, w_curs, *curpos, NULL, the_hash_algo->rawsz);
 	off_t base_offset;
 
 	/* use_pack() assured us we have [base_info, base_info + 20)
@@ -1234,8 +1279,11 @@ static int get_delta_base_oid(struct packed_git *p,
 			      off_t delta_obj_offset)
 {
 	if (type == OBJ_REF_DELTA) {
-		unsigned char *base = use_pack(p, w_curs, curpos, NULL);
+		unsigned char *base =
+			use_pack(p, w_curs, curpos, NULL, the_hash_algo->rawsz);
 		oidread(oid, base);
+		if (p->enc)
+			free(base);
 		return 0;
 	} else if (type == OBJ_OFS_DELTA) {
 		struct revindex_entry *revidx;
@@ -1597,7 +1645,9 @@ static void *unpack_compressed_entry(struct packed_git *p,
 
 	git_inflate_init(&stream);
 	do {
-		in = use_pack(p, w_curs, curpos, &stream.avail_in);
+		in = use_pack(p, w_curs, curpos, &stream.avail_in,
+			      stream.avail_out * 2 +
+				      GIT_CRYPTO_DECRYPT_BUFFER_SIZE);
 		stream.next_in = in;
 		/*
 		 * Note: we must ensure the window section returned by
@@ -1611,6 +1661,8 @@ static void *unpack_compressed_entry(struct packed_git *p,
 		if (!stream.avail_out)
 			break; /* the payload is larger than it should be */
 		curpos += stream.next_in - in;
+		if (p->enc)
+			free(in);
 	} while (st == Z_OK || st == Z_BUF_ERROR);
 	git_inflate_end(&stream);
 	if ((st != Z_STREAM_END) || stream.total_out != size) {

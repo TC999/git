@@ -268,7 +268,8 @@ static int check_pack_inflate(struct packed_git *p,
 	memset(&stream, 0, sizeof(stream));
 	git_inflate_init(&stream);
 	do {
-		in = use_pack(p, w_curs, offset, &stream.avail_in);
+		in = use_pack(p, w_curs, offset, &stream.avail_in,
+			      sizeof(fakebuf) * 2 + GIT_CRYPTO_DECRYPT_BUFFER_SIZE);
 		stream.next_in = in;
 		stream.next_out = fakebuf;
 		stream.avail_out = sizeof(fakebuf);
@@ -291,7 +292,7 @@ static void copy_pack_data(struct hashfile *f,
 	unsigned long avail;
 
 	while (len) {
-		in = use_pack(p, w_curs, offset, &avail);
+		in = use_pack(p, w_curs, offset, &avail, len);
 		if (avail > len)
 			avail = (unsigned long)len;
 		hashwrite(f, in, avail, 0);
@@ -1723,7 +1724,8 @@ static void check_object(struct object_entry *entry)
 		enum object_type type;
 		unsigned long in_pack_size;
 
-		buf = use_pack(p, &w_curs, entry->in_pack_offset, &avail);
+		buf = use_pack(p, &w_curs, entry->in_pack_offset, &avail,
+			       GIT_CRYPTO_DECRYPT_BUFFER_SIZE);
 
 		/*
 		 * We want in_pack_type even if we do not reuse delta
@@ -1759,14 +1761,14 @@ static void check_object(struct object_entry *entry)
 				oidread(&base_ref,
 					use_pack(p, &w_curs,
 						 entry->in_pack_offset + used,
-						 NULL));
+						 NULL, the_hash_algo->rawsz));
 				have_base = 1;
 			}
 			entry->in_pack_header_size = used + the_hash_algo->rawsz;
 			break;
 		case OBJ_OFS_DELTA:
-			buf = use_pack(p, &w_curs,
-				       entry->in_pack_offset + used, NULL);
+			buf = use_pack(p, &w_curs, entry->in_pack_offset + used,
+				       NULL, GIT_CRYPTO_DECRYPT_BUFFER_SIZE);
 			used_0 = 0;
 			c = buf[used_0++];
 			ofs = c & 127;
@@ -2195,7 +2197,8 @@ unsigned long oe_get_size_slow(struct packing_data *pack,
 
 	packing_data_lock(&to_pack);
 	w_curs = NULL;
-	buf = use_pack(p, &w_curs, e->in_pack_offset, &avail);
+	buf = use_pack(p, &w_curs, e->in_pack_offset, &avail,
+		       GIT_CRYPTO_DECRYPT_BUFFER_SIZE);
 	used = unpack_object_header_buffer(buf, avail, &type, &size);
 	if (used == 0)
 		die(_("unable to parse object header of %s"),

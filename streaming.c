@@ -393,17 +393,22 @@ static read_method_decl(pack_non_delta)
 		struct pack_window *window = NULL;
 		unsigned char *mapped;
 
-		mapped = use_pack(st->u.in_pack.pack, &window,
-				  st->u.in_pack.pos, &st->z.avail_in);
-
 		st->z.next_out = (unsigned char *)buf + total_read;
 		st->z.avail_out = sz - total_read;
+
+		mapped = use_pack(st->u.in_pack.pack, &window,
+				  st->u.in_pack.pos, &st->z.avail_in,
+				  st->z.avail_out * 2 +
+					  GIT_CRYPTO_DECRYPT_BUFFER_SIZE);
+
 		st->z.next_in = mapped;
 		status = git_inflate(&st->z, Z_FINISH);
 
 		st->u.in_pack.pos += st->z.next_in - mapped;
 		total_read = st->z.next_out - (unsigned char *)buf;
 		unuse_pack(&window);
+		if (st->u.in_pack.pack->enc)
+			free(mapped);
 
 		if (status == Z_STREAM_END) {
 			git_inflate_end(&st->z);
