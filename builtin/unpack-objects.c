@@ -19,12 +19,15 @@ static const char unpack_usage[] = "git unpack-objects [-n] [-q] [-r] [--strict]
 
 /* We always read in 4kB chunks. */
 static unsigned char buffer[4096];
+static unsigned char decrypt_buffer[4096];
 static unsigned int offset, len;
 static off_t consumed_bytes;
 static off_t max_input_size;
 static git_hash_ctx ctx;
 static struct fsck_options fsck_options = FSCK_OPTIONS_STRICT;
 static struct progress *progress;
+static struct git_cryptor cryptor_r;
+static int pack_is_encrypted;
 
 /*
  * When running under --strict mode, objects whose reachability are
@@ -59,13 +62,20 @@ static void add_object_buffer(struct object *object, char *buffer, unsigned long
  */
 static void *fill(int min)
 {
-	if (min <= len)
-		return buffer + offset;
+	if (min <= len) {
+		if (pack_is_encrypted)
+			return decrypt_buffer + offset;
+		else
+			return buffer + offset;
+	}
 	if (min > sizeof(buffer))
 		die("cannot fill %d bytes", min);
 	if (offset) {
+		/* Calculate checksum from raw data before decryption. */
 		the_hash_algo->update_fn(&ctx, buffer, offset);
 		memmove(buffer, buffer + offset, len);
+		if (pack_is_encrypted)
+			memmove(decrypt_buffer, decrypt_buffer + offset, len);
 		offset = 0;
 	}
 	do {
@@ -75,9 +85,16 @@ static void *fill(int min)
 				die("early EOF");
 			die_errno("read error on input");
 		}
+		/* Decrypt new raw data from stdin. */
+		if (pack_is_encrypted)
+			cryptor_r.decrypt(&cryptor_r, buffer + len,
+					  decrypt_buffer + len, ret, ret);
 		len += ret;
 	} while (len < min);
-	return buffer;
+	if (pack_is_encrypted)
+		return decrypt_buffer;
+	else
+		return buffer;
 }
 
 static void use(int bytes)
@@ -167,6 +184,61 @@ struct obj_info {
 
 static struct obj_info *obj_list;
 static unsigned nr_objects;
+
+/*
+ * Return plain pack header and try to decrypt remain data in buffer.
+ */
+static void fill_header(void)
+{
+	struct pack_header *hdr;
+	unsigned char *in;
+	int hdr_size = sizeof(struct pack_header);
+	uint32_t hdr_version;
+
+	/* If has option "--pack_header=" in command line, header is already
+	 * given and fill the buffer.
+	 *
+	 * The first time we call fill() will try to read more data to fill
+	 * the whole buffer, which contains not only the plain header, but
+	 * also the un-decrypted data, which should be decrypted if packfile
+	 * is encrypted.
+	 */
+	in = fill(hdr_size);
+	/* 'pack_is_encrypted' should be set here only, */
+	assert(pack_is_encrypted == 0);
+	/* and 'in' should always points to input_buffer. */
+	assert(in == buffer);
+
+	hdr = (struct pack_header *)in;
+	nr_objects = ntohl(hdr->hdr_entries);
+	hdr_version = hdr->hdr_version;
+	if (ntohl(hdr->hdr_signature) != PACK_SIGNATURE)
+		die("bad pack file");
+	if (!pack_version_ok(hdr_version))
+		die("unknown pack file version %"PRIu32,
+			ntohl(hdr_version));
+	use(hdr_size);
+	if (git_crypto_pack_is_encrypt(hdr_version)) {
+		/* Read nonce from raw input. */
+		in = fill(NONCE_LEN);
+		use(NONCE_LEN);
+
+		/* Setup cryptor. */
+		pack_is_encrypted = 1;
+		hdr_size = sizeof(struct pack_header_with_nonce);
+		git_decryptor_init_or_die(&cryptor_r, hdr_version,
+					  in, NONCE_LEN);
+		cryptor_r.byte_counter = hdr_size;
+
+		/* Decrypt buffer follows the header. */
+		if (len)
+			cryptor_r.decrypt(&cryptor_r,
+					  buffer + offset,
+					  decrypt_buffer + offset,
+					  len,
+					  len);
+	}
+}
 
 /*
  * Called only from check_object() after it verified this object
@@ -487,16 +559,8 @@ static void unpack_one(unsigned nr)
 static void unpack_all(void)
 {
 	int i;
-	struct pack_header *hdr = fill(sizeof(struct pack_header));
 
-	nr_objects = ntohl(hdr->hdr_entries);
-
-	if (ntohl(hdr->hdr_signature) != PACK_SIGNATURE)
-		die("bad pack file");
-	if (!pack_version_ok(hdr->hdr_version))
-		die("unknown pack file version %"PRIu32,
-			ntohl(hdr->hdr_version));
-	use(sizeof(struct pack_header));
+	fill_header();
 
 	if (!quiet)
 		progress = start_progress(_("Unpacking objects"), nr_objects);
@@ -548,18 +612,36 @@ int cmd_unpack_objects(int argc, const char **argv, const char *prefix)
 				continue;
 			}
 			if (starts_with(arg, "--pack_header=")) {
-				struct pack_header *hdr;
+				union extend_pack_header *h;
 				char *c;
 
-				hdr = (struct pack_header *)buffer;
-				hdr->hdr_signature = htonl(PACK_SIGNATURE);
-				hdr->hdr_version = htonl(strtoul(arg + 14, &c, 10));
+				h = (union extend_pack_header *)buffer;
+				h->hdr.hdr_signature = htonl(PACK_SIGNATURE);
+				h->hdr.hdr_version = htonl(strtoul(arg + 14, &c, 10));
 				if (*c != ',')
-					die("bad %s", arg);
-				hdr->hdr_entries = htonl(strtoul(c + 1, &c, 10));
-				if (*c)
-					die("bad %s", arg);
-				len = sizeof(*hdr);
+					die(_("bad %s"), arg);
+				h->hdr.hdr_entries = htonl(strtoul(c + 1, &c, 10));
+				if (git_crypto_pack_is_encrypt(h->hdr.hdr_version)) {
+					memset(h->ehdr.nonce, 0, NONCE_LEN);
+					if (*c && *c != ',') {
+						die(_("bad %s"), arg);
+					} else if (!*c) {
+						uint64_t tm = htonll(getnanotime());
+						uint32_t pid = htonl((uint32_t)getpid());
+						memcpy(h->ehdr.nonce, &tm, 8);
+						memcpy(h->ehdr.nonce + NONCE_LEN - 4, &pid, 4);
+					} else if (*++c) {
+						int size = strlen(c);
+						if (size > NONCE_LEN)
+							size = NONCE_LEN;
+						memcpy(h->ehdr.nonce, c, size);
+					}
+					len = sizeof(h->ehdr);
+				} else {
+					if (*c)
+						die(_("bad %s"), arg);
+					len = sizeof(h->hdr);
+				}
 				continue;
 			}
 			if (skip_prefix(arg, "--max-input-size=", &arg)) {
@@ -581,7 +663,11 @@ int cmd_unpack_objects(int argc, const char **argv, const char *prefix)
 		if (fsck_finish(&fsck_options))
 			die(_("fsck error in pack objects"));
 	}
-	if (!hasheq(fill(the_hash_algo->rawsz), oid.hash))
+	fill(the_hash_algo->rawsz);
+	/* The checksum at the end of packfile is unencrypted, but
+	 * after call fill, the return decrypt_buffer is mangled.
+	 */
+	if (!hasheq(buffer + offset, oid.hash))
 		die("final sha1 did not match");
 	use(the_hash_algo->rawsz);
 

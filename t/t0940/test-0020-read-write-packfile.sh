@@ -62,7 +62,7 @@ test_expect_success 'verify-pack on uncrypted packfile' '
 	git -C index-pack.0 verify-pack .git/objects/pack/pack-$pack.pack
 '
 
-test_expect_failure 'unpack-objects on encrypted packfile' '
+test_expect_success 'unpack-objects on encrypted packfile' '
 	git init unpack.1 &&
 	git -C unpack.1 config agit.crypto.enabled 1 &&
 	git -C unpack.1 config agit.crypto.secret nekot-terces &&
