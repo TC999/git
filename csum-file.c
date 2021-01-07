@@ -8,6 +8,7 @@
  * able to verify hasn't been messed with afterwards.
  */
 #include "cache.h"
+#include "crypto.h"
 #include "progress.h"
 #include "csum-file.h"
 
@@ -82,40 +83,74 @@ int finalize_hashfile(struct hashfile *f, unsigned char *result, unsigned int fl
 		if (close(f->check_fd))
 			die_errno("%s: sha1 file error on close", f->name);
 	}
+	if (!(flags & CSUM_CRYPTOR_NO_FREE))
+		free(f->cryptor);
 	free(f);
 	return fd;
 }
 
-void hashwrite(struct hashfile *f, const void *buf, unsigned int count)
+static void do_hashwrite(struct hashfile *f, const void *buf, unsigned int count, int do_encrypt)
 {
+	unsigned int total = count;
+
+	if (do_encrypt && f->cryptor)
+		f->cryptor->byte_counter = f->encrypt_offset;
+
 	while (count) {
 		unsigned offset = f->offset;
 		unsigned left = sizeof(f->buffer) - offset;
 		unsigned nr = count > left ? left : count;
 		const void *data;
 
-		if (f->do_crc)
-			f->crc32 = crc32(f->crc32, buf, nr);
-
+		/* iff offset == 0, and left = nr = sizeof(f->buffer) */
 		if (nr == sizeof(f->buffer)) {
-			/* process full buffer directly without copy */
-			data = buf;
+			if (do_encrypt && f->cryptor) {
+				/* 'buf' maybe a mmap for reused packfile, so
+				 * copy * 'buf' to 'f->buffer' for encrypt.
+				 */
+				f->cryptor->encrypt(f->cryptor, buf, f->buffer, nr);
+				data = f->buffer;
+			} else {
+				/* process full buffer directly without copy */
+				data = buf;
+			}
 		} else {
-			memcpy(f->buffer + offset, buf, nr);
+			if (do_encrypt && f->cryptor) {
+				f->cryptor->encrypt(f->cryptor, buf, f->buffer + offset, nr);
+			} else {
+				memcpy(f->buffer + offset, buf, nr);
+			}
 			data = f->buffer;
 		}
+
+		/* Do crc on encrypted data. */
+		if (f->do_crc)
+			f->crc32 = crc32(f->crc32, (unsigned char *)data + offset, nr);
 
 		count -= nr;
 		offset += nr;
 		buf = (char *) buf + nr;
 		left -= nr;
 		if (!left) {
+			/* Update checksum using encrypted data. */
 			the_hash_algo->update_fn(&f->ctx, data, offset);
 			flush(f, data, offset);
 			offset = 0;
 		}
 		f->offset = offset;
 	}
+	/* No matter do_encrypt or not, set encrypt_offset. */
+	f->encrypt_offset += total;
+}
+
+void hashwrite(struct hashfile *f, const void *buf, unsigned int count)
+{
+	return do_hashwrite(f, buf, count, 0);
+}
+
+void hashwrite_try_encrypt(struct hashfile *f, const void *buf, unsigned int count)
+{
+	return do_hashwrite(f, buf, count, 1);
 }
 
 struct hashfile *hashfd(int fd, const char *name)
@@ -149,6 +184,8 @@ struct hashfile *hashfd_throughput(int fd, const char *name, struct progress *tp
 	f->tp = tp;
 	f->name = name;
 	f->do_crc = 0;
+	f->encrypt_offset = 0;
+	f->cryptor = NULL;
 	the_hash_algo->init_fn(&f->ctx);
 	return f;
 }

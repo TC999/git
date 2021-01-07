@@ -176,15 +176,33 @@ const char *write_idx_file(const char *index_name, struct pack_idx_entry **objec
 	return index_name;
 }
 
-off_t write_pack_header(struct hashfile *f, uint32_t nr_entries)
+static off_t write_pack_header(struct hashfile *f,
+					   uint32_t nr_entries, int try_encrypt)
 {
-	struct pack_header hdr;
+	union extend_pack_header h;
 
-	hdr.hdr_signature = htonl(PACK_SIGNATURE);
-	hdr.hdr_version = htonl(PACK_VERSION);
-	hdr.hdr_entries = htonl(nr_entries);
-	hashwrite(f, &hdr, sizeof(hdr));
-	return sizeof(hdr);
+	h.hdr.hdr_signature = htonl(PACK_SIGNATURE);
+	h.hdr.hdr_entries = htonl(nr_entries);
+	if (f->cryptor && try_encrypt) {
+		h.hdr.hdr_version =
+			htonl(git_encryptor_get_host_pack_version(f->cryptor));
+		memcpy(&h.ehdr.nonce, f->cryptor->nonce, NONCE_LEN);
+		hashwrite(f, &h.ehdr, sizeof(h.ehdr));
+		return sizeof(h.ehdr);
+	}
+	h.hdr.hdr_version = htonl(PACK_VERSION);
+	hashwrite(f, &h.hdr, sizeof(h.hdr));
+	return sizeof(h.hdr);
+}
+
+off_t write_pack_header_no_encrypt(struct hashfile *f, uint32_t nr_entries)
+{
+	return write_pack_header(f, nr_entries, 0);
+}
+
+off_t write_pack_header_try_encrypt(struct hashfile *f, uint32_t nr_entries)
+{
+	return write_pack_header(f, nr_entries, 1);
 }
 
 /*

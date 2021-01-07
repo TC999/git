@@ -2,6 +2,7 @@
 #define CSUM_FILE_H
 
 #include "hash.h"
+#include "crypto.h"
 
 struct progress;
 
@@ -17,6 +18,9 @@ struct hashfile {
 	int do_crc;
 	uint32_t crc32;
 	unsigned char buffer[8192];
+	/* encryptor */
+	off_t encrypt_offset;
+	git_cryptor *cryptor;
 };
 
 /* Checkpoint */
@@ -32,12 +36,14 @@ int hashfile_truncate(struct hashfile *, struct hashfile_checkpoint *);
 #define CSUM_CLOSE		1
 #define CSUM_FSYNC		2
 #define CSUM_HASH_IN_STREAM	4
+#define CSUM_CRYPTOR_NO_FREE	8
 
 struct hashfile *hashfd(int fd, const char *name);
 struct hashfile *hashfd_check(const char *name);
 struct hashfile *hashfd_throughput(int fd, const char *name, struct progress *tp);
 int finalize_hashfile(struct hashfile *, unsigned char *, unsigned int);
 void hashwrite(struct hashfile *, const void *, unsigned int);
+void hashwrite_try_encrypt(struct hashfile *, const void *, unsigned int);
 void hashflush(struct hashfile *f);
 void crc32_begin(struct hashfile *);
 uint32_t crc32_end(struct hashfile *);

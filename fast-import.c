@@ -758,6 +758,7 @@ static void start_packfile(void)
 	p->do_not_close = 1;
 	pack_file = hashfd(pack_fd, p->pack_name);
 
+	/* TODO: change normal pack header to encrypt pack header later. */
 	hdr.hdr_signature = htonl(PACK_SIGNATURE);
 	hdr.hdr_version = htonl(2);
 	hdr.hdr_entries = 0;
