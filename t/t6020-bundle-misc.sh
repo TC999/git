@@ -239,7 +239,15 @@ test_expect_success 'create bundle with --since option' '
 '
 
 test_expect_success 'create bundle 1 - no prerequisites' '
+	# create bundle from args
 	git bundle create 1.bdl topic/1 topic/2 &&
+
+	# create bundle from stdin
+	cat >input <<-\EOF &&
+	topic/1
+	topic/2
+	EOF
+	git bundle create stdin-1.bdl --stdin <input &&
 
 	cat >expect <<-\EOF &&
 	The bundle contains these 2 refs:
@@ -253,16 +261,34 @@ test_expect_success 'create bundle 1 - no prerequisites' '
 		make_user_friendly_and_stable_output >actual &&
 	test_i18ncmp expect actual &&
 
-	test_bundle_object_count 1.bdl 24
+	git bundle verify stdin-1.bdl |
+		make_user_friendly_and_stable_output >actual &&
+	test_i18ncmp expect actual &&
+
+	test_bundle_object_count       1.bdl 24 &&
+	test_bundle_object_count stdin-1.bdl 24
 '
 
 test_expect_success 'create bundle 2 - has prerequisites' '
+	# create bundle from args
 	git bundle create 2.bdl \
 		--ignore-missing \
 		^topic/deleted \
 		^$D \
 		^topic/2 \
 		release &&
+
+	# create bundle from stdin
+	# input has a non-exist reference: "topic/deleted"
+	cat >input <<-EOF &&
+	^topic/deleted
+	^$D
+	^topic/2
+	EOF
+	git bundle create stdin-2.bdl \
+		--ignore-missing \
+		--stdin \
+		release <input &&
 
 	cat >expect <<-\EOF &&
 	The bundle contains this ref:
@@ -277,7 +303,12 @@ test_expect_success 'create bundle 2 - has prerequisites' '
 		make_user_friendly_and_stable_output >actual &&
 	test_i18ncmp expect actual &&
 
-	test_bundle_object_count 2.bdl 16
+	git bundle verify stdin-2.bdl |
+		make_user_friendly_and_stable_output >actual &&
+	test_i18ncmp expect actual &&
+
+	test_bundle_object_count       2.bdl 16 &&
+	test_bundle_object_count stdin-2.bdl 16
 '
 
 test_expect_success 'fail to verify bundle without prerequisites' '
@@ -292,16 +323,31 @@ test_expect_success 'fail to verify bundle without prerequisites' '
 
 	test_must_fail git -C test1.git bundle verify ../2.bdl 2>&1 |
 		make_user_friendly_and_stable_output >actual &&
+	test_i18ncmp expect actual &&
+
+	test_must_fail git -C test1.git bundle verify ../stdin-2.bdl 2>&1 |
+		make_user_friendly_and_stable_output >actual &&
 	test_i18ncmp expect actual
 '
 
 test_expect_success 'create bundle 3 - two refs, same object' '
+	# create bundle from args
 	git bundle create 3.bdl \
 		^release \
 		^topic/1 \
 		^topic/2 \
 		master \
 		HEAD &&
+
+	# create bundle from stdin
+	cat >input <<-\EOF &&
+	^release
+	^topic/1
+	^topic/2
+	EOF
+	git bundle create stdin-3.bdl \
+		--stdin \
+		master HEAD <input &&
 
 	cat >expect <<-\EOF &&
 	The bundle contains these 2 refs:
@@ -316,16 +362,34 @@ test_expect_success 'create bundle 3 - two refs, same object' '
 		make_user_friendly_and_stable_output >actual &&
 	test_i18ncmp expect actual &&
 
-	test_bundle_object_count 3.bdl 4
+	git bundle verify stdin-3.bdl |
+		make_user_friendly_and_stable_output >actual &&
+	test_i18ncmp expect actual &&
+
+	test_bundle_object_count       3.bdl 4 &&
+	test_bundle_object_count stdin-3.bdl 4
 '
 
 test_expect_success 'create bundle 4 - with tags' '
+	# create bundle from args
 	git bundle create 4.bdl \
 		^master \
 		^release \
 		^topic/1 \
 		^topic/2 \
 		--all &&
+
+	# create bundle from stdin
+	cat >input <<-\EOF &&
+	^master
+	^release
+	^topic/1
+	^topic/2
+	EOF
+	git bundle create stdin-4.bdl \
+		--ignore-missing \
+		--stdin \
+		--all <input &&
 
 	cat >expect <<-\EOF &&
 	The bundle contains these 3 refs:
@@ -339,7 +403,12 @@ test_expect_success 'create bundle 4 - with tags' '
 		make_user_friendly_and_stable_output >actual &&
 	test_i18ncmp expect actual &&
 
-	test_bundle_object_count 4.bdl 3
+	git bundle verify stdin-4.bdl |
+		make_user_friendly_and_stable_output >actual &&
+	test_i18ncmp expect actual &&
+
+	test_bundle_object_count       4.bdl 3 &&
+	test_bundle_object_count stdin-4.bdl 3
 '
 
 test_expect_success 'clone from bundle' '
