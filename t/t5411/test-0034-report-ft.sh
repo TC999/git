@@ -28,13 +28,11 @@ test_expect_success "proc-receive: fall throught, let receive-pack to execute ($
 	 * [new reference] <COMMIT-B> -> refs/for/master/topic
 	EOF
 	test_cmp expect actual &&
-	git -C "$upstream" show-ref >out &&
-	make_user_friendly_and_stable_output <out >actual &&
-	cat >expect <<-EOF &&
+
+	test_cmp_refs -C "$upstream" <<-EOF
 	<COMMIT-B> refs/for/master/topic
 	<COMMIT-A> refs/heads/master
 	EOF
-	test_cmp expect actual
 '
 
 # Refs of upstream : master(A)             refs/for/master/topic(A)
