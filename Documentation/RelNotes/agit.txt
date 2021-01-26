@@ -14,12 +14,17 @@ Run the following commands in order:
 	$ git merge --no-edit topic/0060-agit-txn
 	$ git merge --no-edit topic/0070-agit-gc
 	$ git merge --no-edit topic/0999-agit-version
+	$ git merge --no-edit topic/0010-bundle 
 
 	$ git rebase -i $tag
 	$ git quiltexport $tag
 
 AGIT Release Notes
 ==================
+
+v5.4
+-----
+* bundle: support bundle create read from stdin.
 
 v5.4
 -----
