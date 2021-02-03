@@ -17,9 +17,11 @@
 #include "oid-array.h"
 #include "repository.h"
 #include "mem-pool.h"
+#include "crypto.h"
 
 typedef struct git_zstream {
 	z_stream z;
+	git_cryptor *cryptor;
 	unsigned long avail_in;
 	unsigned long avail_out;
 	unsigned long total_in;

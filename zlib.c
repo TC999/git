@@ -110,26 +110,92 @@ void git_inflate_end(git_zstream *strm)
 
 int git_inflate(git_zstream *strm, int flush)
 {
+	unsigned char *phead = strm->next_in;
+	unsigned char decrypt_buf[4096];
+	unsigned long input_remains = strm->avail_in;
+	unsigned long input_decrypted = 0;
+	int orig_flush = flush;
 	int status;
 
 	for (;;) {
+		/* Decrypt before uncompress */
+		if (strm->cryptor && input_remains &&
+		    (!input_decrypted || !strm->avail_in)) {
+			/* if decrypt buffer is bigger than avali_out, avali_out maybe enough */
+			int decrypt_buf_size = strm->avail_out && strm->avail_out < sizeof(decrypt_buf)?
+					      strm->avail_out : sizeof(decrypt_buf);
+
+			if (decrypt_buf_size > input_remains)
+				decrypt_buf_size = input_remains;
+			strm->cryptor->decrypt(strm->cryptor,
+					       phead + input_decrypted,
+					       decrypt_buf,
+					       decrypt_buf_size,
+					       decrypt_buf_size);
+			strm->next_in = decrypt_buf;
+			strm->avail_in = decrypt_buf_size;
+			input_remains -= decrypt_buf_size;
+			input_decrypted += decrypt_buf_size;
+			if (input_remains > 0)
+				flush = 0;
+			else
+				flush = orig_flush;
+		}
+
+		/* Propagate variables from strm to strm->z. */
 		zlib_pre_call(strm);
+
 		/* Never say Z_FINISH unless we are feeding everything */
-		status = inflate(&strm->z,
-				 (strm->z.avail_in != strm->avail_in)
-				 ? 0 : flush);
+		flush = (strm->z.avail_in != strm->avail_in) ? 0 : flush;
+		status = inflate(&strm->z, flush);
 		if (status == Z_MEM_ERROR)
 			die("inflate: out of memory");
+		/* cryptor buffer may bring empty output, fix Z_BUF_ERROR to Z_OK */
+		/* Note that Z_BUF_ERROR is not fatal, and
+		  deflate() can be called again with more input and more output space to
+		  continue compressing. */
+		if (strm->cryptor && flush == orig_flush && !strm->avail_out &&
+		    status == Z_BUF_ERROR)
+			status = Z_OK;
 		zlib_post_call(strm);
 
 		/*
 		 * Let zlib work another round, while we can still
 		 * make progress.
+		 *
+		 * (If strm->avail_out is greater than 1GB (ZLIB_BUF_MAX),
+		 *  strm->z.avail_out will be set to 1GB after calling
+		 *  zlib_pre_call() and will be consumed to 0, but
+		 *  strm->avail_out is left with a number greater than 0.
 		 */
 		if ((strm->avail_out && !strm->z.avail_out) &&
 		    (status == Z_OK || status == Z_BUF_ERROR))
 			continue;
+
+		/* Has more input buffer to decrypt for output. */
+		if (strm->cryptor && input_remains &&
+		    (status == Z_OK || status == Z_BUF_ERROR)) {
+			/* Still has output buffers */
+			if (strm->avail_out)
+				continue;
+			/* Can consume more input data to finish zstream,
+			 * even no output buffer available.
+			 */
+			if (!strm->avail_in)
+				continue;
+		}
+
 		break;
+	}
+
+	/* Fix input for zstream */
+	if (strm->cryptor && strm->avail_in)
+		strm->cryptor->byte_counter -= strm->avail_in;
+	if (strm->cryptor && input_decrypted) {
+		strm->next_in = phead + input_decrypted - strm->avail_in;
+		strm->z.next_in = strm->next_in;
+		strm->avail_in += input_remains;
+		strm->z.avail_in = zlib_buf_cap(strm->avail_in);
 	}
 
 	switch (status) {
@@ -236,6 +302,7 @@ int git_deflate_end_gently(git_zstream *strm)
 int git_deflate(git_zstream *strm, int flush)
 {
 	int status;
+	unsigned char *phead = strm->next_out;
 
 	for (;;) {
 		zlib_pre_call(strm);
@@ -251,6 +318,11 @@ int git_deflate(git_zstream *strm, int flush)
 		/*
 		 * Let zlib work another round, while we can still
 		 * make progress.
+		 *
+		 * (If strm->avail_out is greater than 1GB (ZLIB_BUF_MAX),
+		 *  strm->z.avail_out will be set to 1GB after calling
+		 *  zlib_pre_call() and will be consumed to 0, but
+		 *  strm->avail_out is left with a number greater than 0.
 		 */
 		if ((strm->avail_out && !strm->z.avail_out) &&
 		    (status == Z_OK || status == Z_BUF_ERROR))
@@ -263,11 +335,17 @@ int git_deflate(git_zstream *strm, int flush)
 	case Z_BUF_ERROR:
 	case Z_OK:
 	case Z_STREAM_END:
-		return status;
+		break;
 	default:
+		error("deflate: %s (%s)", zerr_to_string(status),
+		      strm->z.msg ? strm->z.msg : "no message");
 		break;
 	}
-	error("deflate: %s (%s)", zerr_to_string(status),
-	      strm->z.msg ? strm->z.msg : "no message");
+	if (strm->cryptor && strm->next_out > phead) {
+		strm->cryptor->encrypt(strm->cryptor,
+				       phead,
+				       phead,
+				       strm->next_out - phead);
+	}
 	return status;
 }

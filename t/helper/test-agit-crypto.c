@@ -19,7 +19,6 @@ static int do_deflate(int in, int out, size_t total)
 	git_zstream strm;
 	unsigned char *map = NULL;
 	unsigned char buf[4096];
-	unsigned char crypto_buf[4096];
 	ssize_t size;
 	int flush = 0;
 	int ret;
@@ -54,6 +53,9 @@ static int do_deflate(int in, int out, size_t total)
 	strm.avail_in = size;
 	strm.next_out = buf;
 	strm.avail_out = sizeof(buf);
+	if (agit_crypto_enabled)
+		strm.cryptor = &cryptor;
+
 	do {
 		size_t len;
 
@@ -88,18 +90,8 @@ static int do_deflate(int in, int out, size_t total)
 		}
 		len = strm.next_out - buf;
 		if (len > 0) {
-			/* Encrypt: init crypto, and write header */
-			if (agit_crypto_enabled) {
-				cryptor.encrypt(&cryptor,
-					buf,
-					crypto_buf,
-					len);
-				if (write(out, crypto_buf, len) != len)
-					die("unable to write output");
-			} else {
-				if (write(out, buf, len) != len)
-					die("unable to write output");
-			}
+			if (write(out, buf, len) != len)
+				die("unable to write output");
 		}
 		strm.next_out = buf;
 		strm.avail_out = sizeof(buf);
@@ -129,7 +121,6 @@ static int do_inflate(int in, int out, size_t total)
 {
 	git_zstream strm;
 	unsigned char *map = NULL;
-	unsigned char *decrypt_map = NULL;
 	unsigned char buf[4096];
 	ssize_t size;
 	int flush = 0;
@@ -160,35 +151,22 @@ static int do_inflate(int in, int out, size_t total)
 		encrypted = 1;
 		git_decryptor_init_or_die(&cryptor, *(unsigned int *)(map + 4),
 					  map + 8);
-		decrypt_map = malloc(INPUT_BUF_SIZE);
-		if (!decrypt_map)
-			die("fail to allocate decrypt_map");
-	}
-
-	/* Decrypt: decrypt to buffer */
-	if (encrypted) {
-		size -= GIT_CRYPTO_LO_HEADER_SIZE;
-		if (size > INPUT_BUF_SIZE) {
-			size = INPUT_BUF_SIZE;
-			flush = 0;
-		}
-		cryptor.decrypt(&cryptor,
-				map + GIT_CRYPTO_LO_HEADER_SIZE,
-				decrypt_map,
-				size,
-				size);
 	}
 
 	/* Set it up */
 	memset(&strm, 0, sizeof(strm));
-	if (encrypted)
-		strm.next_in = decrypt_map;
-	else
+	if (encrypted) {
+		strm.cryptor = &cryptor;
+		strm.next_in = map + GIT_CRYPTO_LO_HEADER_SIZE;
+		strm.avail_in = size - GIT_CRYPTO_LO_HEADER_SIZE;
+	} else {
 		strm.next_in = map;
-	strm.avail_in = size;
+		strm.avail_in = size;
+	}
 	strm.next_out = buf;
 	strm.avail_out = sizeof(buf);
 	git_inflate_init(&strm);
+
 	do {
 		size_t len;
 		unsigned char *phead = strm.next_out;
@@ -202,53 +180,28 @@ static int do_inflate(int in, int out, size_t total)
 		strm.next_out = buf;
 		strm.avail_out = sizeof(buf);
 
-		if (strm.avail_in == 0) {
-			if (use_mmap) {
-				if (encrypted && strm.total_in < total - GIT_CRYPTO_LO_HEADER_SIZE) {
-					size = total - GIT_CRYPTO_LO_HEADER_SIZE - strm.total_in;
-					if (size > INPUT_BUF_SIZE)
-						size = INPUT_BUF_SIZE;
-					cryptor.decrypt(&cryptor,
-							map + GIT_CRYPTO_LO_HEADER_SIZE + strm.total_in,
-							decrypt_map,
-							size,
-							size);
-					strm.next_in= decrypt_map;
-					strm.avail_in = size;
-				}
+		if (strm.avail_in == 0 && !use_mmap) {
+			size = read(in, map, INPUT_BUF_SIZE);
+			/* EOF */
+			if (size == 0) {
+				flush = Z_FINISH;
+				trace_printf_key(&trace_crypto_key,
+					"debug: inflate set flush to %d"
+					", avail_in: %ld"
+					", avail_out: %ld"
+					", total_in: %ld"
+					", total_out: %ld"
+					"\n",
+					flush,
+					strm.avail_in,
+					strm.avail_out,
+					strm.total_in,
+					strm.total_out);
+			} else if (size < 0) {
+				die("fail to read input file");
 			} else {
-				size = read(in, map, INPUT_BUF_SIZE);
-				/* EOF */
-				if (size == 0) {
-					flush = Z_FINISH;
-					trace_printf_key(&trace_crypto_key,
-						"debug: inflate set flush to %d"
-						", avail_in: %ld"
-						", avail_out: %ld"
-						", total_in: %ld"
-						", total_out: %ld"
-						"\n",
-						flush,
-						strm.avail_in,
-						strm.avail_out,
-						strm.total_in,
-						strm.total_out);
-				} else if (size < 0) {
-					die("fail to read input file");
-				} else {
-					if (encrypted) {
-						cryptor.decrypt(&cryptor,
-								map,
-								decrypt_map,
-								size,
-								size);
-						strm.next_in = decrypt_map;
-						strm.avail_in = size;
-					} else  {
-						strm.next_in = map;
-						strm.avail_in = size;
-					}
-				}
+				strm.next_in = map;
+				strm.avail_in = size;
 			}
 		}
 
@@ -261,12 +214,10 @@ static int do_inflate(int in, int out, size_t total)
 		die("unable to inflate (%d)", ret);
 	git_inflate_end(&strm);
 
-	if (use_mmap) {
+	if (use_mmap)
 		munmap(map, total);
-	} else {
+	else
 		free(map);
-		free(decrypt_map);
-	}
 	return 0;
 }
 
