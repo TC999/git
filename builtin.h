@@ -139,6 +139,7 @@ int cmd_config(int argc, const char **argv, const char *prefix);
 int cmd_count_objects(int argc, const char **argv, const char *prefix);
 int cmd_credential(int argc, const char **argv, const char *prefix);
 int cmd_describe(int argc, const char **argv, const char *prefix);
+int cmd_decrypt(int argc, const char **argv, const char *prefix);
 int cmd_diff_files(int argc, const char **argv, const char *prefix);
 int cmd_diff_index(int argc, const char **argv, const char *prefix);
 int cmd_diff(int argc, const char **argv, const char *prefix);
