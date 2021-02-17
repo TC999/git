@@ -706,6 +706,7 @@ PROGRAMS += $(patsubst %.o,git-%$X,$(PROGRAM_OBJS))
 
 TEST_BUILTINS_OBJS += test-advise.o
 TEST_BUILTINS_OBJS += test-agit-crypto.o
+TEST_BUILTINS_OBJS += test-agit-inspect.o
 TEST_BUILTINS_OBJS += test-agit-od.o
 TEST_BUILTINS_OBJS += test-bitmap.o
 TEST_BUILTINS_OBJS += test-bloom.o

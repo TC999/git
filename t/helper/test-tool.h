@@ -6,6 +6,7 @@
 
 int cmd__advise_if_enabled(int argc, const char **argv);
 int cmd__agit_crypto(int argc, const char **argv);
+int cmd__agit_inspect(int argc, const char **argv);
 int cmd__agit_od(int argc, const char **argv);
 int cmd__bitmap(int argc, const char **argv);
 int cmd__bloom(int argc, const char **argv);

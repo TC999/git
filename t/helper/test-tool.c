@@ -16,6 +16,7 @@ struct test_cmd {
 static struct test_cmd cmds[] = {
 	{ "advise", cmd__advise_if_enabled },
 	{ "agit-crypto", cmd__agit_crypto },
+	{ "agit-inspect", cmd__agit_inspect },
 	{ "agit-od", cmd__agit_od },
 	{ "bitmap", cmd__bitmap },
 	{ "bloom", cmd__bloom },
