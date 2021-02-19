@@ -750,6 +750,7 @@ static void start_packfile(void)
 {
 	struct strbuf tmp_file = STRBUF_INIT;
 	struct packed_git *p;
+	union extend_pack_header hdr;
 	int pack_fd;
 
 	pack_fd = odb_mkstemp(&tmp_file, "pack/tmp_pack_XXXXXX");
@@ -759,9 +760,34 @@ static void start_packfile(void)
 	p->pack_fd = pack_fd;
 	p->do_not_close = 1;
 	pack_file = hashfd(pack_fd, p->pack_name);
+	if (agit_crypto_enabled) {
+		pack_file->cryptor = xmalloc(sizeof(struct git_cryptor));
+		git_encryptor_init_for_packfile(pack_file->cryptor);
+		p->cryptor = xmalloc(sizeof(struct git_cryptor));
+		memcpy(p->cryptor, pack_file->cryptor, sizeof(*p->cryptor));
+	} else {
+		pack_file->cryptor = NULL;
+		p->cryptor = NULL;
+	}
+
+	hdr.hdr.hdr_signature = htonl(PACK_SIGNATURE);
+	hdr.hdr.hdr_entries = 0;
+	if (pack_file->cryptor) {
+		hdr.hdr.hdr_version = htonl(git_encryptor_get_host_pack_version(
+			pack_file->cryptor, hdr.ehdr.nonce));
+		if (crypto_pack_has_longer_nonce_for_version(
+			    hdr.hdr.hdr_version)) {
+			pack_size = sizeof(struct pack_header_with_nonce);
+		} else {
+			pack_size = sizeof(struct pack_header);
+		}
+	} else {
+		hdr.hdr.hdr_version = htonl(PACK_VERSION);
+		pack_size = sizeof(struct pack_header);
+	}
+	hashwrite(pack_file, &hdr, pack_size);
 
 	pack_data = p;
-	pack_size = write_pack_header_no_encrypt(pack_file, 0);
 	object_count = 0;
 
 	REALLOC_ARRAY(all_packs, pack_id + 1);
@@ -1033,23 +1059,23 @@ static int store_object(
 
 		hdrlen = encode_in_pack_object_header(hdr, sizeof(hdr),
 						      OBJ_OFS_DELTA, deltalen);
-		hashwrite(pack_file, hdr, hdrlen);
+		hashwrite_try_encrypt(pack_file, hdr, hdrlen);
 		pack_size += hdrlen;
 
 		hdr[pos] = ofs & 127;
 		while (ofs >>= 7)
 			hdr[--pos] = 128 | (--ofs & 127);
-		hashwrite(pack_file, hdr + pos, sizeof(hdr) - pos);
+		hashwrite_try_encrypt(pack_file, hdr + pos, sizeof(hdr) - pos);
 		pack_size += sizeof(hdr) - pos;
 	} else {
 		e->depth = 0;
 		hdrlen = encode_in_pack_object_header(hdr, sizeof(hdr),
 						      type, dat->len);
-		hashwrite(pack_file, hdr, hdrlen);
+		hashwrite_try_encrypt(pack_file, hdr, hdrlen);
 		pack_size += hdrlen;
 	}
 
-	hashwrite(pack_file, out, s.total_out);
+	hashwrite_try_encrypt(pack_file, out, s.total_out);
 	pack_size += s.total_out;
 
 	e->idx.crc32 = crc32_end(pack_file);
@@ -1129,7 +1155,7 @@ static void stream_blob(uintmax_t len, struct object_id *oidout, uintmax_t mark)
 
 		if (!s.avail_out || status == Z_STREAM_END) {
 			size_t n = s.next_out - out_buf;
-			hashwrite(pack_file, out_buf, n);
+			hashwrite_try_encrypt(pack_file, out_buf, n);
 			pack_size += n;
 			s.next_out = out_buf;
 			s.avail_out = out_sz;
