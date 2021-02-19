@@ -39,7 +39,7 @@ test_expect_success 'fast-import to normal repo' '
 	)
 '
 
-test_expect_success 'fast-import encrypt repo' '
+test_expect_success 'fast-import to encrypt repo' '
 	git init --bare encrypt-loose.git &&
 	(
 		cd encrypt-loose.git &&
@@ -117,7 +117,7 @@ cat >expect_2 <<-EOF &&
 0000016 6f 6d 5f 6e 6f 6e 63 65                            | om_nonce         |
 EOF
 
-test_expect_failure 'after import, packfile is encrypted' '
+test_expect_success 'after import, packfile is encrypted' '
 	head -c 24 encrypt-pack.git/objects/pack/pack-*.pack |
 		test-tool agit-od >actual &&
 	test_cmp expect_${GIT_TEST_CRYPTO_ALGORITHM_TYPE} actual
