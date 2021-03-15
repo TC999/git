@@ -104,7 +104,7 @@ test_expect_success 'encrypt text file using default algorithm (with --mmap)' '
 		test-tool agit-crypto --mmap -z \
 		--secret "{plain}secret-token" \
 		-i text-file -o text-file.z.def &&
-	test_cmp text-file.z.2 text-file.z.def
+	test_cmp text-file.z.65 text-file.z.def
 '
 
 test_expect_success 'will fail with too short secret (with --mmap)' '

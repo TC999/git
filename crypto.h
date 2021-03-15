@@ -56,7 +56,8 @@ enum agit_crypto_algo {
 						     production */
 	GIT_CRYPTO_ALGORITHM_EASY_AES = 65
 };
-#define GIT_CRYPTO_ALGORITHM_DEFAULT GIT_CRYPTO_ALGORITHM_AES
+
+#define GIT_CRYPTO_ALGORITHM_DEFAULT GIT_CRYPTO_ALGORITHM_EASY_AES
 
 /*
  * The 6th and 7th bytes are preserved for later use.
