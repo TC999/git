@@ -101,12 +101,17 @@ static int keepalive_in_sec = 5;
 
 static struct tmp_objdir *tmp_objdir;
 
+struct ref_prefix {
+	char *prefix;
+	struct ref_prefix *next;
+};
+
 static struct proc_receive_ref {
 	unsigned int want_add:1,
 		     want_delete:1,
 		     want_modify:1,
 		     negative_ref:1;
-	char *ref_prefix;
+	struct ref_prefix *ref_prefix;
 	struct proc_receive_ref *next;
 } *proc_receive_ref;
 
@@ -361,10 +366,12 @@ struct command {
 static void proc_receive_ref_append(const char *prefix)
 {
 	struct proc_receive_ref *ref_pattern;
+	struct ref_prefix **ref_pp;
 	char *p;
 	int len;
 
 	CALLOC_ARRAY(ref_pattern, 1);
+	ref_pp = &ref_pattern->ref_prefix;
 	p = strchr(prefix, ':');
 	if (p) {
 		while (prefix < p) {
@@ -379,15 +386,29 @@ static void proc_receive_ref_append(const char *prefix)
 			prefix++;
 		}
 		prefix++;
-	} else {
+	}
+	if (!ref_pattern->want_add &&
+	    !ref_pattern->want_delete &&
+	    !ref_pattern->want_modify) {
 		ref_pattern->want_add = 1;
 		ref_pattern->want_delete = 1;
 		ref_pattern->want_modify = 1;
 	}
-	len = strlen(prefix);
-	while (len && prefix[len - 1] == '/')
-		len--;
-	ref_pattern->ref_prefix = xmemdupz(prefix, len);
+	for (p = strtok((char *)prefix, ","); p; p = strtok(NULL, ",")) {
+		len = strlen(p);
+		while (len && p[len - 1] == '/')
+			len--;
+		if (strncmp(p, "refs/", 5) && strcmp(p, "refs")) {
+			fprintf(stderr, "prefix '%s' not start with 'refs/'", prefix);
+			continue;
+		}
+		*ref_pp = xcalloc(1, sizeof(struct ref_prefix));
+		(*ref_pp)->prefix = xmemdupz(p, len);
+		ref_pp = &(*ref_pp)->next;
+	}
+	if (!ref_pattern->ref_prefix)
+		goto cleanup;
+
 	if (!proc_receive_ref) {
 		proc_receive_ref = ref_pattern;
 	} else {
@@ -398,18 +419,30 @@ static void proc_receive_ref_append(const char *prefix)
 			end = end->next;
 		end->next = ref_pattern;
 	}
+	return;
+
+cleanup:
+	for (ref_pp = &ref_pattern->ref_prefix; *ref_pp;) {
+		struct ref_prefix **pp;
+		pp = &(*ref_pp)->next;
+		free((*ref_pp)->prefix);
+		free((*ref_pp));
+		ref_pp = pp;
+	}
+	free(ref_pattern);
 }
 
 static int proc_receive_ref_matches(struct command *cmd)
 {
 	struct proc_receive_ref *p;
+	struct ref_prefix *ref_prefix;
 
 	if (!proc_receive_ref)
 		return 0;
 
 	for (p = proc_receive_ref; p; p = p->next) {
-		const char *match = p->ref_prefix;
 		const char *remains;
+		int match = 0;
 
 		if (!p->want_add && is_null_oid(&cmd->old_oid))
 			continue;
@@ -420,13 +453,19 @@ static int proc_receive_ref_matches(struct command *cmd)
 			 !is_null_oid(&cmd->new_oid))
 			continue;
 
-		if (skip_prefix(cmd->ref_name, match, &remains) &&
-		    (!*remains || *remains == '/')) {
-			if (!p->negative_ref)
-				return 1;
-		} else if (p->negative_ref) {
-			return 1;
+		for (ref_prefix = p->ref_prefix; ref_prefix;
+		     ref_prefix = ref_prefix->next) {
+			if (skip_prefix(cmd->ref_name, ref_prefix->prefix,
+					&remains) &&
+			    (!*remains || *remains == '/')) {
+				match = 1;
+				break;
+			}
 		}
+		if (match && !p->negative_ref)
+			return 1;
+		else if (!match && p->negative_ref)
+			return 1;
 	}
 	return 0;
 }
