@@ -49,6 +49,7 @@ enum agit_crypto_algo {
 	GIT_CRYPTO_ALGORITHM_BENCHMARK = 1, /* test only, do not use in
 					       production */
 	GIT_CRYPTO_ALGORITHM_AES = 2,
+	GIT_CRYPTO_ALGORITHM_AES_X4 = 3,
 
 	/* Algorithm 64 - 95 (10x xxxx), which used normal header,
 	 * and the 6/7th bytes are used as 2-byte salt. */
@@ -79,7 +80,7 @@ typedef struct git_cryptor {
 	/* Must allocate secret_sequence longer enough for HASH function.
 	 * SHA256 hash needs 32 bytes.
 	 */
-	unsigned char secret_sequence[32];
+	unsigned char secret_sequence[64];
 	uint32_t pos_n_last;
 	EVP_CIPHER_CTX *ctx;
 

@@ -72,6 +72,24 @@ test_expect_success 'encrypt text file using algorithm 2 (with --mmap)' '
 	test_cmp expect-z-2 actual
 '
 
+test_expect_success 'encrypt text file using algorithm 3 (with --mmap)' '
+	cat >expect-z-3 <<-\EOF &&
+	0000000 45 4e 43 00 83 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
+	0000016 6f 6e 63 65 f2 8b 41 c2 6a 6e 6e 70 9e e7 00 e0    | once..A.jnnp.... |
+	0000032 bf 3c 94 77 b5 94 52 b1 b0                         | .<.w..R..        |
+	EOF
+
+	GIT_TEST_CRYPTO_ALGORITHM_TYPE=3 GIT_TRACE_CRYPTO=1 \
+		test-tool agit-crypto --mmap -z \
+		--secret c2VjcmV0LXRva2Vu \
+		-i text-file -o text-file.z.3 &&
+	test-tool agit-od <text-file.z.3 >actual &&
+
+	! test_cmp expect-z-2 actual &&
+
+	test_cmp expect-z-3 actual
+'
+
 test_expect_success 'encrypt text file using algorithm 64 (with --mmap)' '
 	show_lo_header <expect-z-1 >expect-z-64 &&
 	printf c0 >>expect-z-64 &&
@@ -255,6 +273,15 @@ test_expect_success 'decrypt text-file.z.2 (with --mmap)' '
 	test_cmp text-file text-file.x.2
 '
 
+test_expect_success 'decrypt text-file.z.3 (with --mmap)' '
+	GIT_TRACE_CRYPTO=1 \
+		test-tool agit-crypto --mmap -x \
+		--secret c2VjcmV0LXRva2VuAAA= \
+		-i text-file.z.3 -o text-file.x.3 &&
+
+	test_cmp text-file text-file.x.3
+'
+
 test_expect_success 'decrypt text-file.z.64 (with --mmap)' '
 	GIT_TRACE_CRYPTO=1 \
 		test-tool agit-crypto --mmap -x \
@@ -354,6 +381,19 @@ test_expect_success NEED_GNU_DD 'encrypt large binary (algo 2, with --mmap)' '
 	show_lo_header <bin-file.z.2 | test-tool agit-od >actual &&
 	cat >expect <<-\EOF &&
 	0000000 45 4e 43 00 82 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
+	0000016 6f 6e 63 65                                        | once             |
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_success NEED_GNU_DD 'encrypt large binary (algo 3, with --mmap)' '
+	GIT_TEST_CRYPTO_ALGORITHM_TYPE=3 GIT_TRACE_CRYPTO=1 \
+		test-tool agit-crypto --mmap -z \
+		--secret c2VjcmV0LXRva2VuAA== \
+		-i bin-file -o bin-file.z.3 &&
+	show_lo_header <bin-file.z.3 | test-tool agit-od >actual &&
+	cat >expect <<-\EOF &&
+	0000000 45 4e 43 00 83 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
 	0000016 6f 6e 63 65                                        | once             |
 	EOF
 	test_cmp expect actual

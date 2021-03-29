@@ -58,6 +58,8 @@ static enum agit_crypto_algo crypto_new_algorithim(enum agit_crypto_algo algo)
 		/* fallthrough */
 	case GIT_CRYPTO_ALGORITHM_AES:
 		/* fallthrough */
+	case GIT_CRYPTO_ALGORITHM_AES_X4:
+		/* fallthrough */
 	case GIT_CRYPTO_ALGORITHM_EASY_BENCHMARK:
 		/* fallthrough */
 	case GIT_CRYPTO_ALGORITHM_EASY_AES:
@@ -80,7 +82,7 @@ static int gen_sec_sequence_benchmark(git_cryptor *cryptor, unsigned char *seq,
 	/* mix test writes 16 bytes */
 	assert(len >= ret);
 
-	if (pos_n != 0 && pos_n == cryptor->pos_n_last)
+	if (pos_n && pos_n == cryptor->pos_n_last)
 		return ret;
 	else
 		cryptor->pos_n_last = pos_n;
@@ -103,7 +105,7 @@ static int gen_sec_sequence_aes(git_cryptor *cryptor, unsigned char *seq,
 	/* aes writes 16 bytes */
 	assert(len >= ret);
 
-	if (pos_n != 0 && pos_n == cryptor->pos_n_last)
+	if (pos_n && pos_n == cryptor->pos_n_last)
 		return ret;
 	else
 		cryptor->pos_n_last = pos_n;
@@ -114,6 +116,38 @@ static int gen_sec_sequence_aes(git_cryptor *cryptor, unsigned char *seq,
 				   (const unsigned char *)cryptor->nonce, ret))
 		die("aes encrypt nonce failed");
 	assert(ciphertext_len == ret);
+	return ret;
+}
+
+/*
+ * Setup secret sequence for each block, and returns length of
+ * sequence generated.
+ */
+static int gen_sec_sequence_aes_x4(git_cryptor *cryptor,
+					 unsigned char *seq, uint32_t len)
+{
+	/* pos = cryptor->byte_counter / 64 */
+	uint32_t pos_n = htonl(cryptor->byte_counter >> 6);
+	int ret = 64, ciphertext_len, i, j;
+	unsigned char cipher[16];
+	/* aes mix writes 64 bytes */
+	assert(len >= ret);
+
+	if (pos_n && pos_n == cryptor->pos_n_last)
+		return ret;
+	else
+		cryptor->pos_n_last = pos_n;
+
+	memcpy(cryptor->nonce + NONCE_LEN, &pos_n, sizeof(uint32_t));
+
+	if (1 != EVP_EncryptUpdate(cryptor->ctx, cipher, &ciphertext_len,
+				   (const unsigned char *)cryptor->nonce, sizeof(cipher)))
+		die("aes encrypt nonce failed");
+	assert(ciphertext_len == sizeof(cipher));
+	for (i = 0; i < sizeof(cipher); i ++) {
+		j = i << 2;
+		seq[j] = seq[j + 1] = seq[j + 2] = seq[j + 3] = cipher[i];
+	}
 	return ret;
 }
 
@@ -130,20 +164,18 @@ static void git_decrypt(git_cryptor *cryptor, const unsigned char *in,
 				sizeof(cryptor->secret_sequence));
 			pos = cryptor->byte_counter & (sec_seq_len - 1);
 			sec_seq_init = 1;
-		} else if (pos == 0)
+		} else
 			sec_seq_len = cryptor->gen_sec_sequence(
 				cryptor, cryptor->secret_sequence,
 				sizeof(cryptor->secret_sequence));
 
 		post_avail = (sec_seq_len - pos) < avail ? sec_seq_len - pos :
 							   avail;
-
 		for (i = 0; i < post_avail; i++) {
 			/* encrypt one byte */
 			*out++ = *in++ ^ cryptor->secret_sequence[
 				pos++ & (sec_seq_len - 1)];
 		}
-
 		pos = 0;
 		cryptor->byte_counter += i;
 		avail -= i;
@@ -202,6 +234,26 @@ static int git_crypto_get_secret(unsigned char **secret)
 	return len;
 }
 
+static void git_crypto_init_aes(git_cryptor *cryptor, unsigned char *secret, int secret_len)
+{
+	if (!(cryptor->ctx = EVP_CIPHER_CTX_new()))
+		die("new aes ctx failed");
+
+	if (secret_len >= 32) {
+		if (!(EVP_EncryptInit_ex(cryptor->ctx, EVP_aes_256_ecb(), NULL,
+					 secret, NULL)))
+			die("setup aes256 encrypt key failed");
+	} else if (secret_len >= 24) {
+		if (!(EVP_EncryptInit_ex(cryptor->ctx, EVP_aes_192_ecb(), NULL,
+					 secret, NULL)))
+			die("setup aes192 encrypt key failed");
+	} else {
+		if (!(EVP_EncryptInit_ex(cryptor->ctx, EVP_aes_128_ecb(), NULL,
+					 secret, NULL)))
+			die("setup aes128 encrypt key failed");
+	}
+}
+
 /* set up crypto method */
 static void git_crypto_setup(git_cryptor *cryptor)
 {
@@ -227,27 +279,15 @@ static void git_crypto_setup(git_cryptor *cryptor)
 	case GIT_CRYPTO_ALGORITHM_AES:
 	case GIT_CRYPTO_ALGORITHM_EASY_AES:
 		{
-		if (!(cryptor->ctx = EVP_CIPHER_CTX_new()))
-			die("new aes ctx failed");
-
-		if (secret_len >= 32) {
-			if (!(EVP_EncryptInit_ex(cryptor->ctx,
-						 EVP_aes_256_ecb(), NULL,
-						 secret, NULL)))
-				die("setup aes256 encrypt key failed");
-		} else if (secret_len >= 24) {
-			if (!(EVP_EncryptInit_ex(cryptor->ctx,
-						 EVP_aes_192_ecb(), NULL,
-						 secret, NULL)))
-				die("setup aes192 encrypt key failed");
-		} else {
-			if (!(EVP_EncryptInit_ex(cryptor->ctx,
-						 EVP_aes_128_ecb(), NULL,
-						 secret, NULL)))
-				die("setup aes128 encrypt key failed");
-		}
-
+		git_crypto_init_aes(cryptor, secret, secret_len);
 		cryptor->gen_sec_sequence = &gen_sec_sequence_aes;
+		}
+		break;
+	case GIT_CRYPTO_ALGORITHM_AES_X4:
+		{
+		memset(cryptor->secret_sequence, 0, sizeof(cryptor->secret_sequence));
+		git_crypto_init_aes(cryptor, secret, secret_len);
+		cryptor->gen_sec_sequence = &gen_sec_sequence_aes_x4;
 		}
 		break;
 	default:
