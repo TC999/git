@@ -47,13 +47,24 @@ create_commits_in () {
 		else
 			oid=$(echo $name | git -C "$repo" commit-tree -p $parent $T)
 		fi &&
-		suffix=${oid#???????} &&
-		eval $name=${oid%$suffix} &&
+		eval $name=$oid &&
 		parent=$oid &&
 		shift ||
 		return 1
 	done &&
 	git -C "$repo" update-ref refs/heads/main $oid
+}
+
+get_abbrev_oid () {
+	oid=$1 &&
+	suffix=${oid#???????} &&
+	oid=${oid%$suffix} &&
+	if test -n "$oid"
+	then
+		echo "$oid"
+	else
+		echo "undefined-oid"
+	fi
 }
 
 # Format the output of git-push, git-show-ref and other commands to make a
@@ -65,22 +76,14 @@ create_commits_in () {
 # redundant to the more machine-readable output the tests already assert.
 make_user_friendly_and_stable_output () {
 	sed \
-		-e "s/${A:-undef_rev}[0-9a-f]*/<COMMIT-A>/g" \
-		-e "s/${B:-undef_rev}[0-9a-f]*/<COMMIT-B>/g" \
-		-e "s/${C:-undef_rev}[0-9a-f]*/<COMMIT-C>/g"
+		-e "s/$(get_abbrev_oid $A)[0-9a-f]*/<COMMIT-A>/g" \
+		-e "s/$(get_abbrev_oid $B)[0-9a-f]*/<COMMIT-B>/g" \
+		-e "s/$(get_abbrev_oid $C)[0-9a-f]*/<COMMIT-C>/g"
 }
-
-rev_parse_abbrev_oid () {
-	repo=$1
-	rev=$2
-	oid=$(git -C "$repo" rev-parse $rev) &&
-	suffix=${oid#???????} &&
-	echo ${oid%$suffix}
-}
-
 
 test_expect_success setup '
 	create_bare_repo "$bare" &&
+	git -C "$bare" config agit.loadavgEnabled 1 &&
 	git clone --no-local $bare workcopy &&
 	create_commits_in workcopy A B C
 '
@@ -88,7 +91,7 @@ test_expect_success setup '
 test_expect_success "push ok without rate limit" '
 	rm -r "$bare" &&
 	create_bare_repo "$bare" &&
-	git -C "$bare" config agit.loadAvgConnectionLimit 1 &&
+	git -C "$bare" config agit.loadavgEnabled 1 &&
 	(
 		cd workcopy &&
 		env \
@@ -126,7 +129,7 @@ test_expect_success "push ok without rate limit" '
 test_expect_success "push failed: hard limit" '
 	rm -r "$bare" &&
 	create_bare_repo "$bare" &&
-	git -C "$bare" config agit.loadAvgConnectionLimit 1 &&
+	git -C "$bare" config agit.loadavgEnabled 1 &&
 	(
 		cd workcopy &&
 		test_must_fail env \
@@ -163,7 +166,7 @@ test_expect_success "push failed: hard limit" '
 test_expect_success "push fail: all soft limit" '
 	rm -r "$bare" &&
 	create_bare_repo "$bare" &&
-	git -C "$bare" config agit.loadAvgConnectionLimit 1 &&
+	git -C "$bare" config agit.loadavgEnabled 1 &&
 	(
 		cd workcopy &&
 		test_must_fail env \
@@ -202,7 +205,7 @@ test_expect_success "push fail: all soft limit" '
 test_expect_success "push ok: 3 soft limit, and ok" '
 	rm -r "$bare" &&
 	create_bare_repo "$bare" &&
-	git -C "$bare" config agit.loadAvgConnectionLimit 1 &&
+	git -C "$bare" config agit.loadavgEnabled 1 &&
 	(
 		cd workcopy &&
 		env \

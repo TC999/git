@@ -21,6 +21,7 @@
 #include "run-command.h"
 #include "pkt-line.h"
 #include "sideband.h"
+#include "config.h"
 
 #ifdef __APPLE__
   #include <sys/sysctl.h>
@@ -30,19 +31,70 @@
   #include <Psapi.h>
 #endif
 
-static int getenv_int(char *env, int value)
+/* Disable loadavg connection limit by default. */
+static int load_avg_enabled;
+
+static int load_avg_soft_limit;
+static int load_avg_hard_limit;
+static int load_avg_sleep_min;
+static int load_avg_sleep_max;
+static int load_avg_retry;
+
+static void get_load_avg_settings_from_env(void)
 {
-	char *p = getenv(env);
+	load_avg_enabled = git_env_bool(ENV_LOADAVG_ENABLED,
+					load_avg_enabled);
+	load_avg_soft_limit = (int)git_env_ulong(ENV_LOADAVG_SOFT_LIMIT,
+						 DEFAULT_LOADAVG_SOFT_LIMIT);
+	load_avg_hard_limit = (int)git_env_ulong(ENV_LOADAVG_HARD_LIMIT,
+						 DEFAULT_LOADAVG_HARD_LIMIT);
+	load_avg_sleep_min = (int)git_env_ulong(ENV_LOADAVG_SLEEP_MIN,
+						DEFAULT_LOADAVG_SLEEP_MIN);
+	load_avg_sleep_max = (int)git_env_ulong(ENV_LOADAVG_SLEEP_MAX,
+						DEFAULT_LOADAVG_SLEEP_MAX);
+	load_avg_retry = (int)git_env_ulong(ENV_LOADAVG_RETRY,
+					    DEFAULT_LOADAVG_RETRY);
+}
 
-	if (!p)
-		return value;
-
-	if (!strcmp(p, "yes") || !strcmp(p, "y") || !strcmp(p, "true") || !strcmp(p, "t"))
-		return 1;
-	else if (!strcmp(p, "no") || !strcmp(p, "n") || !strcmp(p, "false") || !strcmp(p, "f"))
+static int load_avg_config(const char *var, const char *value, void *cb)
+{
+	if (strcmp(var, "agit.loadavgenabled") == 0) {
+		load_avg_enabled = git_config_bool(var, value);
 		return 0;
+	}
 
-	return atoi(p);
+	if (strcmp(var, "agit.loadavgsoftlimit") == 0) {
+		load_avg_soft_limit = git_config_int(var, value);
+		return 0;
+	}
+
+	if (strcmp(var, "agit.loadavghardlimit") == 0) {
+		load_avg_hard_limit = git_config_int(var, value);
+		return 0;
+	}
+
+	if (strcmp(var, "agit.loadavgsleepmin") == 0) {
+		load_avg_sleep_min = git_config_int(var, value);
+		return 0;
+	}
+
+	if (strcmp(var, "agit.loadavgsleepmax") == 0) {
+		load_avg_sleep_max = git_config_int(var, value);
+		return 0;
+	}
+
+	if (strcmp(var, "agit.loadavgretry") == 0) {
+		load_avg_retry = git_config_int(var, value);
+		return 0;
+	}
+
+	return git_default_config(var, value, cb);
+}
+
+static void get_load_avg_settings(void)
+{
+	get_load_avg_settings_from_env();
+	git_config(load_avg_config, NULL);
 }
 
 static int loadavg_test_dryrun(void)
@@ -50,7 +102,7 @@ static int loadavg_test_dryrun(void)
 	static int n = -1;
 
 	if (n == -1)
-		n = getenv_int(ENV_LOADAVG_TEST_DRYRUN, 0);
+		n = git_env_bool(ENV_LOADAVG_TEST_DRYRUN, 0);
 	return n;
 }
 
@@ -68,56 +120,6 @@ static int loadavg_test_mock(struct string_list *loadavg_list)
 	for (item = strtok(p, ","); item; item = strtok(NULL, ","))
 		string_list_append(loadavg_list, item);
 	return 1;
-}
-
-static int get_loadavg_soft_limit(void)
-{
-	static int n = -1;
-
-	if (n == -1)
-		n = getenv_int(ENV_LOADAVG_SOFT_LIMIT,
-				 DEFAULT_LOADAVG_SOFT_LIMIT);
-	return n;
-}
-
-static int get_loadavg_hard_limit(void)
-{
-	static int n = -1;
-
-	if (n == -1)
-		n = getenv_int(ENV_LOADAVG_HARD_LIMIT,
-				 DEFAULT_LOADAVG_HARD_LIMIT);
-	return n;
-}
-
-static int get_loadavg_sleep_min(void)
-{
-	static int n = -1;
-
-	if (n == -1)
-		n = getenv_int(ENV_LOADAVG_SLEEP_MIN,
-				 DEFAULT_LOADAVG_SLEEP_MIN);
-	return n;
-}
-
-static int get_loadavg_sleep_max(void)
-{
-	static int n = -1;
-
-	if (n == -1)
-		n = getenv_int(ENV_LOADAVG_SLEEP_MAX,
-				 DEFAULT_LOADAVG_SLEEP_MAX);
-	return n;
-}
-
-static int get_loadavg_retry(void)
-{
-	static int n = -1;
-
-	if (n == -1)
-		n = getenv_int(ENV_LOADAVG_RETRY,
-				 DEFAULT_LOADAVG_RETRY);
-	return n;
 }
 
 static int get_loadavg(void)
@@ -209,15 +211,14 @@ static int get_loadavg(void)
 	return percent;
 }
 
-
 static int load_is_above_soft_limit(int load)
 {
-	return load >= get_loadavg_soft_limit();
+	return load >= load_avg_soft_limit;
 }
 
 static int load_is_above_hard_limit(int load)
 {
-	return load >= get_loadavg_hard_limit();
+	return load >= load_avg_hard_limit;
 }
 
 /* sideband: 2 - progress, 3- error */
@@ -256,13 +257,18 @@ int wait_for_avail_loadavg(int use_sideband)
 	int sleep_secs;
 	int band = 0;
 
+	get_load_avg_settings();
+
+	if (!load_avg_enabled)
+		return 0;
+
 	while ((loadavg = get_loadavg())) {
 		if (!load_is_above_soft_limit(loadavg)) {
 			break;
-		} else if (retries > get_loadavg_retry() || load_is_above_hard_limit(loadavg)) {
+		} else if (retries > load_avg_retry || load_is_above_hard_limit(loadavg)) {
 			if (use_sideband)
 				band = 3;
-			if (retries > get_loadavg_retry())
+			if (retries > load_avg_retry)
 				sideband_printf(band,
 						"Server load (%d%%) is still high, quilt",
 						loadavg);
@@ -273,9 +279,9 @@ int wait_for_avail_loadavg(int use_sideband)
 			return 1;
 		} else {
 			srand(time(NULL));
-			sleep_secs = get_loadavg_sleep_min() + rand() % (
-					get_loadavg_sleep_max() -
-					get_loadavg_sleep_min() +
+			sleep_secs = load_avg_sleep_min + rand() % (
+					load_avg_sleep_max -
+					load_avg_sleep_min +
 					1);
 			if (use_sideband)
 				band = 2;
@@ -284,7 +290,7 @@ int wait_for_avail_loadavg(int use_sideband)
 					loadavg,
 					sleep_secs,
 					retries,
-					get_loadavg_retry());
+					load_avg_retry);
 			if (loadavg_test_dryrun())
 				sideband_printf(band, "Will sleep %d seconds...", sleep_secs);
 			else

@@ -47,14 +47,24 @@ create_commits_in () {
 		else
 			oid=$(echo $name | git -C "$repo" commit-tree -p $parent $T)
 		fi &&
-		suffix=${oid#???????} &&
-		eval $name=${oid%$suffix} &&
+		eval $name=$oid &&
 		parent=$oid &&
 		shift ||
 		return 1
 	done &&
-	git -C "$repo" config agit.loadAvgConnectionLimit 1 &&
 	git -C "$repo" update-ref refs/heads/main $oid
+}
+
+get_abbrev_oid () {
+	oid=$1 &&
+	suffix=${oid#???????} &&
+	oid=${oid%$suffix} &&
+	if test -n "$oid"
+	then
+		echo "$oid"
+	else
+		echo "undefined-oid"
+	fi
 }
 
 # Format the output of git-push, git-show-ref and other commands to make a
@@ -66,22 +76,15 @@ create_commits_in () {
 # redundant to the more machine-readable output the tests already assert.
 make_user_friendly_and_stable_output () {
 	sed \
-		-e "s/${A:-undef_rev}[0-9a-f]*/<COMMIT-A>/g" \
-		-e "s/${B:-undef_rev}[0-9a-f]*/<COMMIT-B>/g" \
-		-e "s/${C:-undef_rev}[0-9a-f]*/<COMMIT-C>/g"
-}
-
-rev_parse_abbrev_oid () {
-	repo=$1
-	rev=$2
-	oid=$(git -C "$repo" rev-parse $rev) &&
-	suffix=${oid#???????} &&
-	echo ${oid%$suffix}
+		-e "s/$(get_abbrev_oid $A)[0-9a-f]*/<COMMIT-A>/g" \
+		-e "s/$(get_abbrev_oid $B)[0-9a-f]*/<COMMIT-B>/g" \
+		-e "s/$(get_abbrev_oid $C)[0-9a-f]*/<COMMIT-C>/g"
 }
 
 test_expect_success setup '
 	create_bare_repo "$bare" &&
 	git -C "$bare" config core.abbrev 7 &&
+	git -C "$bare" config agit.loadavgEnabled 1 &&
 	create_commits_in "$bare" A B C
 '
 
@@ -116,7 +119,7 @@ test_expect_success "clone failed: hard limit" '
 		AGIT_LOADAVG_RETRY=3 \
 		AGIT_LOADAVG_TEST_DRYRUN=1 \
 		AGIT_LOADAVG_TEST_MOCK=220,350,500 \
-		git clone --no-local $bare workcopy >out 2>&1 &&
+		git -c agit.loadavgEnabled=false clone --no-local $bare workcopy >out 2>&1 &&
 	sed -e "s/[0-9][0-9]* seconds/xx seconds/g" -e "s/  *$//g" < out >actual &&
 
 	grep "^remote:" actual >actual.1 &&
