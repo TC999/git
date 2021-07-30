@@ -1231,6 +1231,24 @@ static int have_duplicate_entry(const struct object_id *oid,
 	return 1;
 }
 
+static int match_packfile_uri_exclusions(struct configured_exclusion *ex)
+{
+	int i;
+	const char *p;
+
+	if (ex) {
+		for (i = 0; i < uri_protocols.nr; i++) {
+			if (skip_prefix(ex->uri,
+					uri_protocols.items[i].string,
+					&p) &&
+			    *p == ':')
+				return 1;
+
+		}
+	}
+	return 0;
+}
+
 static int want_found_object(const struct object_id *oid, int exclude,
 			     struct packed_git *p)
 {
@@ -1378,19 +1396,10 @@ static int want_object_in_pack(const struct object_id *oid,
 	if (uri_protocols.nr) {
 		struct configured_exclusion *ex =
 			oidmap_get(&configured_exclusions, oid);
-		int i;
-		const char *p;
 
-		if (ex) {
-			for (i = 0; i < uri_protocols.nr; i++) {
-				if (skip_prefix(ex->uri,
-						uri_protocols.items[i].string,
-						&p) &&
-				    *p == ':') {
-					oidset_insert(&excluded_by_config, oid);
-					return 0;
-				}
-			}
+		if (ex && match_packfile_uri_exclusions(ex)) {
+			oidset_insert(&excluded_by_config, oid);
+			return 0;
 		}
 	}
 
