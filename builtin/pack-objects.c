@@ -3106,13 +3106,13 @@ static int add_object_entry_from_pack(const struct object_id *oid,
 	return 0;
 }
 
-static void show_commit_pack_hint(struct commit *commit, void *_data)
+static void show_commit_pack_hint(struct commit *commit, struct show_info *info)
 {
 	/* nothing to do; commits don't have a namehash */
 }
 
 static void show_object_pack_hint(struct object *object, const char *name,
-				  void *_data)
+				  struct show_info *info)
 {
 	struct object_entry *oe = packlist_find(&to_pack, &object->oid);
 	if (!oe)
@@ -3284,7 +3284,7 @@ static void read_object_list_from_stdin(void)
 /* Remember to update object flag allocation in object.h */
 #define OBJECT_ADDED (1u<<20)
 
-static void show_commit(struct commit *commit, void *data)
+static void show_commit(struct commit *commit, struct show_info *info)
 {
 	add_object_entry(&commit->object.oid, OBJ_COMMIT, NULL, 0);
 	commit->object.flags |= OBJECT_ADDED;
@@ -3296,7 +3296,8 @@ static void show_commit(struct commit *commit, void *data)
 		propagate_island_marks(commit);
 }
 
-static void show_object(struct object *obj, const char *name, void *data)
+static void show_object(struct object *obj, const char *name,
+			struct show_info *info)
 {
 	add_preferred_base_object(name);
 	add_object_entry(&obj->oid, obj->type, name, 0);
@@ -3318,7 +3319,8 @@ static void show_object(struct object *obj, const char *name, void *data)
 	}
 }
 
-static void show_object__ma_allow_any(struct object *obj, const char *name, void *data)
+static void show_object__ma_allow_any(struct object *obj, const char *name,
+				      struct show_info *info)
 {
 	assert(arg_missing_action == MA_ALLOW_ANY);
 
@@ -3329,10 +3331,11 @@ static void show_object__ma_allow_any(struct object *obj, const char *name, void
 	if (!has_object(the_repository, &obj->oid, 0))
 		return;
 
-	show_object(obj, name, data);
+	show_object(obj, name, info);
 }
 
-static void show_object__ma_allow_promisor(struct object *obj, const char *name, void *data)
+static void show_object__ma_allow_promisor(struct object *obj, const char *name,
+					   struct show_info *info)
 {
 	assert(arg_missing_action == MA_ALLOW_PROMISOR);
 
@@ -3343,7 +3346,7 @@ static void show_object__ma_allow_promisor(struct object *obj, const char *name,
 	if (!has_object(the_repository, &obj->oid, 0) && is_promisor_object(&obj->oid))
 		return;
 
-	show_object(obj, name, data);
+	show_object(obj, name, info);
 }
 
 static int option_parse_missing_action(const struct option *opt,
@@ -3591,12 +3594,12 @@ static int get_object_list_from_bitmap(struct rev_info *revs)
 
 static void record_recent_object(struct object *obj,
 				 const char *name,
-				 void *data)
+				 struct show_info *info)
 {
 	oid_array_append(&recent_objects, &obj->oid);
 }
 
-static void record_recent_commit(struct commit *commit, void *data)
+static void record_recent_commit(struct commit *commit, struct show_info *info)
 {
 	oid_array_append(&recent_objects, &commit->object.oid);
 }

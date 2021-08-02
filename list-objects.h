@@ -5,9 +5,14 @@ struct commit;
 struct object;
 struct rev_info;
 
-typedef void (*show_commit_fn)(struct commit *, void *);
-typedef void (*show_object_fn)(struct object *, const char *, void *);
-void traverse_commit_list(struct rev_info *, show_commit_fn, show_object_fn, void *);
+struct show_info {
+    void *show_data; /* the data necessary for showing the object */
+    void *show_cache; /* the cache ownership relationship data for showing the object */
+};
+
+typedef void (*show_commit_fn)(struct commit *, struct show_info *);
+typedef void (*show_object_fn)(struct object *, const char *, struct show_info *);
+void traverse_commit_list(struct rev_info *, show_commit_fn, show_object_fn, void *show_data);
 
 typedef void (*show_edge_fn)(struct commit *);
 void mark_edges_uninteresting(struct rev_info *revs,

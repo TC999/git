@@ -459,9 +459,10 @@ struct bitmap_show_data {
 	struct bitmap *base;
 };
 
-static void show_object(struct object *object, const char *name, void *data_)
+static void show_object(struct object *object, const char *name,
+			struct show_info *info)
 {
-	struct bitmap_show_data *data = data_;
+	struct bitmap_show_data *data = info->show_data;
 	int bitmap_pos;
 
 	bitmap_pos = bitmap_position(data->bitmap_git, &object->oid);
@@ -473,7 +474,7 @@ static void show_object(struct object *object, const char *name, void *data_)
 	bitmap_set(data->base, bitmap_pos);
 }
 
-static void show_commit(struct commit *commit, void *data)
+static void show_commit(struct commit *commit, struct show_info *info)
 {
 }
 
@@ -627,6 +628,7 @@ static struct bitmap *find_objects(struct bitmap_index *bitmap_git,
 
 		show_data.bitmap_git = bitmap_git;
 		show_data.base = base;
+
 
 		traverse_commit_list_filtered(filter, revs,
 					      show_commit, show_object,
@@ -1268,9 +1270,9 @@ struct bitmap_test_data {
 };
 
 static void test_show_object(struct object *object, const char *name,
-			     void *data)
+			     struct show_info *info)
 {
-	struct bitmap_test_data *tdata = data;
+	struct bitmap_test_data *tdata = info->show_data;
 	int bitmap_pos;
 
 	bitmap_pos = bitmap_position(tdata->bitmap_git, &object->oid);
@@ -1281,9 +1283,9 @@ static void test_show_object(struct object *object, const char *name,
 	display_progress(tdata->prg, ++tdata->seen);
 }
 
-static void test_show_commit(struct commit *commit, void *data)
+static void test_show_commit(struct commit *commit, struct show_info *info)
 {
-	struct bitmap_test_data *tdata = data;
+	struct bitmap_test_data *tdata = info->show_data;
 	int bitmap_pos;
 
 	bitmap_pos = bitmap_position(tdata->bitmap_git,

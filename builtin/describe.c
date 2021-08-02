@@ -479,15 +479,16 @@ struct process_commit_data {
 	struct rev_info *revs;
 };
 
-static void process_commit(struct commit *commit, void *data)
+static void process_commit(struct commit *commit, struct show_info *info)
 {
-	struct process_commit_data *pcd = data;
+	struct process_commit_data *pcd = info->show_data;
 	pcd->current_commit = commit->object.oid;
 }
 
-static void process_object(struct object *obj, const char *path, void *data)
+static void process_object(struct object *obj, const char *path,
+			   struct show_info *info)
 {
-	struct process_commit_data *pcd = data;
+	struct process_commit_data *pcd = info->show_data;
 
 	if (oideq(&pcd->looking_for, &obj->oid) && !pcd->dst->len) {
 		reset_revision_walk();

@@ -185,9 +185,9 @@ struct commit_list *get_shallow_commits(struct object_array *heads, int depth,
 	return result;
 }
 
-static void show_commit(struct commit *commit, void *data)
+static void show_commit(struct commit *commit, struct show_info *info)
 {
-	commit_list_insert(commit, data);
+	commit_list_insert(commit, info->show_data);
 }
 
 /*

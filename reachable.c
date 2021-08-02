@@ -47,14 +47,15 @@ static int add_one_ref(const char *path, const struct object_id *oid,
  * The traversal will have already marked us as SEEN, so we
  * only need to handle any progress reporting here.
  */
-static void mark_object(struct object *obj, const char *name, void *data)
+static void mark_object(struct object *obj, const char *name,
+			struct show_info *info)
 {
-	update_progress(data);
+	update_progress(info->show_data);
 }
 
-static void mark_commit(struct commit *c, void *data)
+static void mark_commit(struct commit *c, struct show_info *info)
 {
-	mark_object(&c->object, NULL, data);
+	mark_object(&c->object, NULL, info);
 }
 
 struct recent_data {
@@ -230,6 +231,7 @@ void mark_reachable_objects(struct rev_info *revs, int mark_reflog,
 		return;
 	}
 
+
 	/*
 	 * Set up the revision walk - this will move all commits
 	 * from the pending list to the commit walking list.
@@ -244,6 +246,7 @@ void mark_reachable_objects(struct rev_info *revs, int mark_reflog,
 			die("unable to mark recent objects");
 		if (prepare_revision_walk(revs))
 			die("revision walk setup failed");
+
 		traverse_commit_list(revs, mark_commit, mark_object, &cp);
 	}
 

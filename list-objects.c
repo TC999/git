@@ -29,6 +29,10 @@ static void process_blob(struct traversal_context *ctx,
 	struct object *obj = &blob->object;
 	size_t pathlen;
 	enum list_objects_filter_result r;
+	struct show_info show_info;
+
+	show_info.show_data = ctx->show_data;
+	show_info.show_cache = NULL;
 
 	if (!ctx->revs->blob_objects)
 		return;
@@ -60,7 +64,7 @@ static void process_blob(struct traversal_context *ctx,
 	if (r & LOFR_MARK_SEEN)
 		obj->flags |= SEEN;
 	if (r & LOFR_DO_SHOW)
-		ctx->show_object(obj, path->buf, ctx->show_data);
+		ctx->show_object(obj, path->buf, &show_info);
 	strbuf_setlen(path, pathlen);
 }
 
@@ -154,9 +158,13 @@ static void process_tree(struct traversal_context *ctx,
 {
 	struct object *obj = &tree->object;
 	struct rev_info *revs = ctx->revs;
+	struct show_info show_info;
 	int baselen = base->len;
 	enum list_objects_filter_result r;
 	int failed_parse;
+
+	show_info.show_data = ctx->show_data;
+	show_info.show_cache = NULL;
 
 	if (!revs->tree_objects)
 		return;
@@ -191,7 +199,7 @@ static void process_tree(struct traversal_context *ctx,
 	if (r & LOFR_MARK_SEEN)
 		obj->flags |= SEEN;
 	if (r & LOFR_DO_SHOW)
-		ctx->show_object(obj, base->buf, ctx->show_data);
+		ctx->show_object(obj, base->buf, &show_info);
 	if (base->len)
 		strbuf_addch(base, '/');
 
@@ -207,8 +215,7 @@ static void process_tree(struct traversal_context *ctx,
 	if (r & LOFR_MARK_SEEN)
 		obj->flags |= SEEN;
 	if (r & LOFR_DO_SHOW)
-		ctx->show_object(obj, base->buf, ctx->show_data);
-
+		ctx->show_object(obj, base->buf, &show_info);
 	strbuf_setlen(base, baselen);
 	free_tree_buffer(tree);
 }
@@ -322,7 +329,11 @@ static void add_pending_tree(struct rev_info *revs, struct tree *tree)
 static void traverse_trees_and_blobs(struct traversal_context *ctx,
 				     struct strbuf *base)
 {
+	struct show_info show_info;
 	int i;
+
+	show_info.show_data = ctx->show_data;
+	show_info.show_cache = NULL;
 
 	assert(base->len == 0);
 
@@ -335,7 +346,7 @@ static void traverse_trees_and_blobs(struct traversal_context *ctx,
 			continue;
 		if (obj->type == OBJ_TAG) {
 			obj->flags |= SEEN;
-			ctx->show_object(obj, name, ctx->show_data);
+			ctx->show_object(obj, name, &show_info);
 			continue;
 		}
 		if (!path)
@@ -358,7 +369,12 @@ static void do_traverse(struct traversal_context *ctx)
 {
 	struct commit *commit;
 	struct strbuf csp; /* callee's scratch pad */
+	struct show_info show_info;
 	strbuf_init(&csp, PATH_MAX);
+
+
+	show_info.show_data = ctx->show_data;
+	show_info.show_cache = NULL;
 
 	while ((commit = get_revision(ctx->revs)) != NULL) {
 		/*
@@ -375,7 +391,8 @@ static void do_traverse(struct traversal_context *ctx)
 			die(_("unable to load root tree for commit %s"),
 			      oid_to_hex(&commit->object.oid));
 		}
-		ctx->show_commit(commit, ctx->show_data);
+
+		ctx->show_commit(commit, &show_info);
 
 		if (ctx->revs->tree_blobs_in_commit_order)
 			/*
