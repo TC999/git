@@ -1755,11 +1755,14 @@ static void fetch_pack_config(void)
 	git_config_get_bool("transfer.fsckobjects", &transfer_fsck_objects);
 	git_config_get_bool("transfer.advertisesid", &advertise_sid);
 	if (!uri_protocols.nr) {
-		char *str;
+		const char *value;
 
-		if (!git_config_get_string("fetch.uriprotocols", &str) && str) {
-			string_list_split(&uri_protocols, str, ',', -1);
-			free(str);
+		if (!git_config_get_value("fetch.uriprotocols", &value)) {
+			if (!value || !strcmp(value, "")) {
+				string_list_append(&uri_protocols, "http");
+				string_list_append(&uri_protocols, "https");
+			} else
+				string_list_split(&uri_protocols, value, ',', -1);
 		}
 	}
 

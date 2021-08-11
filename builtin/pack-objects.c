@@ -3892,6 +3892,18 @@ static int option_parse_unpack_unreachable(const struct option *opt,
 	return 0;
 }
 
+static int option_parse_uri_protocol(const struct option *opt,
+				      const char *arg, int unset)
+{
+	if (!arg) {
+		string_list_append(&uri_protocols, "http");
+		string_list_append(&uri_protocols, "https");
+	} else {
+		string_list_append(&uri_protocols, arg);
+	}
+	return 0;
+}
+
 int cmd_pack_objects(int argc, const char **argv, const char *prefix)
 {
 	int use_internal_rev_list = 0;
@@ -3995,9 +4007,9 @@ int cmd_pack_objects(int argc, const char **argv, const char *prefix)
 			 N_("do not pack objects in promisor packfiles")),
 		OPT_BOOL(0, "delta-islands", &use_delta_islands,
 			 N_("respect islands during delta compression")),
-		OPT_STRING_LIST(0, "uri-protocol", &uri_protocols,
-				N_("protocol"),
-				N_("exclude any configured uploadpack.blobpackfileuri with this protocol")),
+		OPT_CALLBACK_F(0, "uri-protocol", NULL, N_("protocol"),
+			       N_("exclude any configured uploadpack.blobpackfileuri with this protocol"),
+			       PARSE_OPT_OPTARG, option_parse_uri_protocol),
 		OPT_END(),
 	};
 
