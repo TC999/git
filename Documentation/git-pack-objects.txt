@@ -313,6 +313,14 @@ raise an error.
 --unpack-unreachable::
 	Keep unreachable objects in loose form. This implies `--revs`.
 
+--uri-protocol::
+	Exclude objects which hit the KEY (the object hash) of
+	`uploadpack.excludeobject` or `uploadpack.blobpackfileuri`
+	config (See linkgit:packfile-uri[1]) in repository and the
+	VALUE (the packfile uri) matches the given option parameter.
+	If this option is set, but without a value, it defaults to
+	the value will be "http" and "https".
+
 --delta-islands::
 	Restrict delta matches based on "islands". See DELTA ISLANDS
 	below.
@@ -426,6 +434,7 @@ SEE ALSO
 linkgit:git-rev-list[1]
 linkgit:git-repack[1]
 linkgit:git-prune-packed[1]
+linkgit:packfile-uri[1]
 
 GIT
 ---
