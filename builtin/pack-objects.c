@@ -127,9 +127,52 @@ enum missing_action {
 };
 static enum missing_action arg_missing_action;
 static show_object_fn fn_show_object;
+/*
+ * exclude_level defines how to make the exclusion when the object matches
+ * a packfile-uri (uploadpack.excludeobject or uploadpack.blobpackfileuri)
+ * configuration.
+ *
+ * - ET_SELF;
+ *   This type means only the object itself will be excluded, and all other
+ *   objects it includes or reachable will not. For example, if object type is:
+ *   	- BLOB:  The blob object will be excluded
+ *   	- TREE:  The tree object will be excluded, the sub-trees and blobs it
+ *   	  includes will not be excluded.
+ *   	- COMMIT: The commit object will be excluded, all the trees and blobs
+ *   	  that be included in its top-level tree will not be excluded.
+ *   	- TAG: TAG object will be excluded, the referrenced commit object will
+ *   	  not be excluded.
+ * - ET_INCLUDE;
+ *   This type means that not only the object itself will be excluded, but
+ *   also the objects it includes. For example, if object type is:
+ *   	- BLOB:  Same with 'ET_SELF'
+ *   	- TREE:  The tree object, and also the sub-trees and blobs that
+ *   	  the object includes will be excluded.
+ *   	- COMMIT: The commit object, and also all the trees and blobs
+ *   	  contained in its top-level tree will be excluded.
+ *   	- TAG: The TAG object will be excluded, and also the referrenced
+ *   	  commit will be excluded (the referrenced commit exclusion will
+ *   	  treat as a 'ET_INCLUDE' way).
+ * - ET_REACHABLE;
+ *   This type means that not only the object and all the objects it includes
+ *   will be excluded, but also the reachable objects. For exmple, if object
+ *   type is:
+ *   	- BLOB:  Same with 'ET_INCLUDE'
+ *   	- TREE:  Same with 'ET_INCLUDE'
+ *   	- COMMIT: The Objects in the case of 'ET_INCLUDE' will be excluded,
+ *   	  and also the ancestors of the commit will be excluded.
+ *   	- TAG: The Objects in the case of 'ET_INCLUDE' will be excluded, and
+ *   	  also the ancestors of the referrenced commit will be excluded.
+ */
 
+enum exclude_level {
+    ET_SELF,
+    ET_INCLUDE,
+    ET_REACHABLE,
+};
 struct configured_exclusion {
 	struct oidmap_entry e;
+	int level;
 	char *pack_hash_hex;
 	char *uri;
 };
@@ -3003,6 +3046,7 @@ static int git_pack_config(const char *k, const char *v, void *cb)
 		if (oidmap_get(&configured_exclusions, &ex->e.oid))
 			die(_("object already configured in another "
 			      "uploadpack.blobpackfileuri (got '%s')"), v);
+		ex->level = ET_SELF;
 		ex->pack_hash_hex = xcalloc(1, pack_end - oid_end);
 		memcpy(ex->pack_hash_hex, oid_end + 1, pack_end - oid_end - 1);
 		ex->uri = xstrdup(pack_end + 1);
