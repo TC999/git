@@ -3061,6 +3061,36 @@ static int git_pack_config(const char *k, const char *v, void *cb)
 		ex->uri = xstrdup(pack_end + 1);
 		oidmap_put(&configured_exclusions, ex);
 	}
+	if (!strcmp(k, "uploadpack.excludeobject")) {
+		struct configured_exclusion *ex = xmalloc(sizeof(*ex));
+		const char *oid_end, *pack_end, *type_end;
+		struct object_id pack_hash;
+		char type[2];
+		int level;
+
+		if (parse_oid_hex(v, &ex->e.oid, &oid_end) ||
+		    *oid_end != ' ' ||
+		    !strlcpy(type, oid_end + 1, sizeof(type)) ||
+		    parse_oid_hex(oid_end + 3, &pack_hash, &pack_end) ||
+		    *pack_end != ' ')
+			die(_("value of uploadpack.excludeobject must be "
+			      "of the form '<object-hash> <level> <pack-hash> <uri>' (got '%s')"), v);
+		if (oidmap_get(&configured_exclusions, &ex->e.oid))
+			die(_("object already configured by an earlier "
+			      "uploadpack.excludeobject (got '%s')"), v);
+
+		level = atoi(type);
+		if (level < ET_SELF || level > ET_REACHABLE) {
+			die(_("value of <level> must be 0 or 1 or 2 (got '%s')"), v);
+		}
+		ex->level = level;
+		type_end = oid_end + 2;
+		ex->pack_hash_hex = xcalloc(1, pack_end - type_end);
+		memcpy(ex->pack_hash_hex, type_end + 1, pack_end - type_end - 1);
+		ex->uri = xstrdup(pack_end + 1);
+		oidmap_put(&configured_exclusions, ex);
+	}
+
 	return git_default_config(k, v, cb);
 }
 
@@ -3887,7 +3917,8 @@ int cmd_pack_objects(int argc, const char **argv, const char *prefix)
 			 N_("respect islands during delta compression")),
 		OPT_STRING_LIST(0, "uri-protocol", &uri_protocols,
 				N_("protocol"),
-				N_("exclude any configured uploadpack.blobpackfileuri with this protocol")),
+				N_("exclude any configured uploadpack.excludeobject or "
+					    "uploadpack.blobpackfileuri with this protocol")),
 		OPT_END(),
 	};
 
