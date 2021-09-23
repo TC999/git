@@ -1250,6 +1250,21 @@ static int match_packfile_uri_exclusions(struct configured_exclusion *ex)
 	return 0;
 }
 
+static int want_exclude_object(struct object_list *objects)
+{
+	struct object_list *p;
+	struct configured_exclusion *ex;
+
+	if (!objects)
+		return 0;
+	for (p = objects; p; p = p->next) {
+		ex = oidmap_get(&configured_exclusions, &p->item->oid);
+		if (match_packfile_uri_exclusions(ex) && ex->level > ET_SELF)
+			return 1;
+	}
+	return 0;
+}
+
 static int want_found_object(const struct object_id *oid, int exclude,
 			     struct packed_git *p)
 {
@@ -1400,11 +1415,14 @@ static int want_object_in_pack(const struct object_id *oid,
 	if (uri_protocols.nr) {
 		if (referred_objs) {
 			struct commit *commit = referred_objs->commit;
+			struct object_list *trees = referred_objs->trees;
 			if (commit) {
 				commit_ex = oidmap_get(&configured_exclusions, &commit->object.oid);
 				if (match_packfile_uri_exclusions(commit_ex) && commit_ex->level > ET_SELF)
 					return 0;
 			}
+			if (want_exclude_object(trees))
+				return 0;
 		}
 
 		ex = oidmap_get(&configured_exclusions, oid);

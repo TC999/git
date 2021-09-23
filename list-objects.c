@@ -114,8 +114,11 @@ static void process_tree_contents(struct traversal_context *ctx,
 	struct name_entry entry;
 	enum interesting match = ctx->revs->diffopt.pathspec.nr == 0 ?
 		all_entries_interesting : entry_not_interesting;
+	struct referred_objects *referred_buf;
 
 	init_tree_desc(&desc, tree->buffer, tree->size);
+	referred_buf = xmemdupz(referred_objs, sizeof(struct referred_objects));
+	object_list_insert(&tree->object, &referred_buf->trees);
 
 	while (tree_entry(&desc, &entry)) {
 		if (match != all_entries_interesting) {
@@ -136,7 +139,7 @@ static void process_tree_contents(struct traversal_context *ctx,
 				    entry.path, oid_to_hex(&tree->object.oid));
 			}
 			t->object.flags |= NOT_USER_GIVEN;
-			process_tree(ctx, t, base, entry.path, referred_objs);
+			process_tree(ctx, t, base, entry.path, referred_buf);
 		}
 		else if (S_ISGITLINK(entry.mode))
 			process_gitlink(ctx, entry.oid.hash,
@@ -149,9 +152,10 @@ static void process_tree_contents(struct traversal_context *ctx,
 				    entry.path, oid_to_hex(&tree->object.oid));
 			}
 			b->object.flags |= NOT_USER_GIVEN;
-			process_blob(ctx, b, base, entry.path, referred_objs);
+			process_blob(ctx, b, base, entry.path, referred_buf);
 		}
 	}
+	free(referred_buf);
 }
 
 static void process_tree(struct traversal_context *ctx,

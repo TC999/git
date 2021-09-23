@@ -65,6 +65,7 @@ struct object_array {
 
 struct referred_objects{
     struct commit *commit;
+    struct object_list *trees;
 };
 #define OBJECT_ARRAY_INIT { 0, 0, NULL }
 

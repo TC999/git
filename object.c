@@ -334,6 +334,7 @@ void add_object_array_with_path_and_referred_commit(struct object *obj, const ch
 	struct referred_objects *referred_objs;
 	referred_objs = xmalloc(sizeof(struct referred_objects));
 	referred_objs->commit = referred_commit;
+	referred_objs->trees = NULL;
 
 	if (nr >= alloc) {
 		alloc = (alloc + 32) * 2;
