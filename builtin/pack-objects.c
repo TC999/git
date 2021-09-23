@@ -36,6 +36,7 @@
 #include "trace2.h"
 #include "shallow.h"
 #include "promisor-remote.h"
+#include "commit-reach.h"
 
 #define IN_PACK(obj) oe_in_pack(&to_pack, obj)
 #define SIZE(obj) oe_size(&to_pack, obj)
@@ -1354,11 +1355,14 @@ static int want_object_in_pack_one(struct packed_git *p,
 static int want_object_in_pack(const struct object_id *oid,
 			       int exclude,
 			       struct packed_git **found_pack,
-			       off_t *found_offset)
+			       off_t *found_offset,
+			       struct referred_objects *referred_objs)
 {
 	int want;
 	struct list_head *pos;
 	struct multi_pack_index *m;
+	struct configured_exclusion *ex;
+	struct configured_exclusion *commit_ex;
 
 	if (!exclude && local && has_loose_object_nonlocal(oid))
 		return 0;
@@ -1394,9 +1398,16 @@ static int want_object_in_pack(const struct object_id *oid,
 	}
 
 	if (uri_protocols.nr) {
-		struct configured_exclusion *ex =
-			oidmap_get(&configured_exclusions, oid);
+		if (referred_objs) {
+			struct commit *commit = referred_objs->commit;
+			if (commit) {
+				commit_ex = oidmap_get(&configured_exclusions, &commit->object.oid);
+				if (match_packfile_uri_exclusions(commit_ex) && commit_ex->level > ET_SELF)
+					return 0;
+			}
+		}
 
+		ex = oidmap_get(&configured_exclusions, oid);
 		if (ex && match_packfile_uri_exclusions(ex)) {
 			oidset_insert(&excluded_by_config, oid);
 			return 0;
@@ -1436,7 +1447,8 @@ static const char no_closure_warning[] = N_(
 );
 
 static int add_object_entry(const struct object_id *oid, enum object_type type,
-			    const char *name, int exclude)
+			    const char *name, int exclude,
+			    struct referred_objects *referred_objs)
 {
 	struct packed_git *found_pack = NULL;
 	off_t found_offset = 0;
@@ -1446,7 +1458,7 @@ static int add_object_entry(const struct object_id *oid, enum object_type type,
 	if (have_duplicate_entry(oid, exclude))
 		return 0;
 
-	if (!want_object_in_pack(oid, exclude, &found_pack, &found_offset)) {
+	if (!want_object_in_pack(oid, exclude, &found_pack, &found_offset, referred_objs)) {
 		/* The pack is missing an object, so it will not have closure */
 		if (write_bitmap_index) {
 			if (write_bitmap_index != WRITE_BITMAP_QUIET)
@@ -1472,7 +1484,7 @@ static int add_object_entry_from_bitmap(const struct object_id *oid,
 	if (have_duplicate_entry(oid, 0))
 		return 0;
 
-	if (!want_object_in_pack(oid, 0, &pack, &offset))
+	if (!want_object_in_pack(oid, 0, &pack, &offset, NULL))
 		return 0;
 
 	create_object_entry(oid, type, name_hash, 0, 0, pack, offset);
@@ -1612,7 +1624,7 @@ static void add_pbase_object(struct tree_desc *tree,
 		if (name[cmplen] != '/') {
 			add_object_entry(&entry.oid,
 					 object_type(entry.mode),
-					 fullname, 1);
+					 fullname, 1, NULL);
 			return;
 		}
 		if (S_ISDIR(entry.mode)) {
@@ -1680,7 +1692,7 @@ static void add_preferred_base_object(const char *name)
 	cmplen = name_cmp_len(name);
 	for (it = pbase_tree; it; it = it->next) {
 		if (cmplen == 0) {
-			add_object_entry(&it->pcache.oid, OBJ_TREE, NULL, 1);
+			add_object_entry(&it->pcache.oid, OBJ_TREE, NULL, 1, NULL);
 		}
 		else {
 			struct tree_desc tree;
@@ -2882,7 +2894,7 @@ static void add_tag_chain(const struct object_id *oid)
 			die(_("unable to pack objects reachable from tag %s"),
 			    oid_to_hex(oid));
 
-		add_object_entry(&tag->object.oid, OBJ_TAG, NULL, 0);
+		add_object_entry(&tag->object.oid, OBJ_TAG, NULL, 0, NULL);
 
 		if (tag->tagged->type != OBJ_TAG)
 			return;
@@ -3050,8 +3062,6 @@ static int git_pack_config(const char *k, const char *v, void *cb)
 		    *oid_end != ' ' ||
 		    parse_oid_hex(oid_end + 1, &pack_hash, &pack_end) ||
 		    *pack_end != ' ')
-			die(_("value of uploadpack.blobpackfileuri must be "
-			      "of the form '<object-hash> <pack-hash> <uri>' (got '%s')"), v);
 		if (oidmap_get(&configured_exclusions, &ex->e.oid))
 			die(_("object already configured in another "
 			      "uploadpack.blobpackfileuri (got '%s')"), v);
@@ -3114,7 +3124,7 @@ static int add_object_entry_from_pack(const struct object_id *oid,
 		return 0;
 
 	ofs = nth_packed_object_offset(p, pos);
-	if (!want_object_in_pack(oid, 0, &p, &ofs))
+	if (!want_object_in_pack(oid, 0, &p, &ofs, NULL))
 		return 0;
 
 	oi.typep = &type;
@@ -3307,7 +3317,7 @@ static void read_object_list_from_stdin(void)
 			die(_("expected object ID, got garbage:\n %s"), line);
 
 		add_preferred_base_object(p + 1);
-		add_object_entry(&oid, OBJ_NONE, p + 1, 0);
+		add_object_entry(&oid, OBJ_NONE, p + 1, 0, NULL);
 	}
 }
 
@@ -3316,7 +3326,7 @@ static void read_object_list_from_stdin(void)
 
 static void show_commit(struct commit *commit, struct show_info *info)
 {
-	add_object_entry(&commit->object.oid, OBJ_COMMIT, NULL, 0);
+	add_object_entry(&commit->object.oid, OBJ_COMMIT, NULL, 0, NULL);
 	commit->object.flags |= OBJECT_ADDED;
 
 	if (write_bitmap_index)
@@ -3329,8 +3339,9 @@ static void show_commit(struct commit *commit, struct show_info *info)
 static void show_object(struct object *obj, const char *name,
 			struct show_info *info)
 {
+	struct referred_objects *referred_objs = info->show_cache;
 	add_preferred_base_object(name);
-	add_object_entry(&obj->oid, obj->type, name, 0);
+	add_object_entry(&obj->oid, obj->type, name, 0, referred_objs);
 	obj->flags |= OBJECT_ADDED;
 
 	if (use_delta_islands) {
@@ -3483,7 +3494,7 @@ static void add_objects_in_unpacked_packs(void)
 		QSORT(in_pack.array, in_pack.nr, ofscmp);
 		for (i = 0; i < in_pack.nr; i++) {
 			struct object *o = in_pack.array[i].object;
-			add_object_entry(&o->oid, o->type, "", 0);
+			add_object_entry(&o->oid, o->type, "", 0, NULL);
 		}
 	}
 	free(in_pack.array);
@@ -3499,7 +3510,7 @@ static int add_loose_object(const struct object_id *oid, const char *path,
 		return 0;
 	}
 
-	add_object_entry(oid, type, "", 0);
+	add_object_entry(oid, type, "", 0, NULL);
 	return 0;
 }
 
@@ -3665,6 +3676,42 @@ static void mark_bitmap_preferred_tips(void)
 	}
 }
 
+static void reuse_exclusion_packfile(struct rev_info *revs)
+{
+	struct commit *commit;
+	struct oidmap_iter iter;
+	struct configured_exclusion *ex;
+	struct object_id ex_oid;
+	struct commit *ex_commit;
+	struct commit_list *list = revs->commits;
+	struct commit_list *newlist = NULL;
+	struct commit_list **p = &newlist;
+
+	if (revs->limited)
+		return;
+	while (list) {
+		commit = pop_commit(&list);
+		if (commit_list_contains(commit, newlist)) {
+			continue;
+		}
+		p = commit_list_append(commit, p);
+		oidmap_iter_init(&configured_exclusions, &iter);
+		while ((ex = oidmap_iter_next(&iter)) && ex->level == ET_REACHABLE) {
+			ex_oid = ex->e.oid;
+			ex_commit = lookup_commit_reference(the_repository, &ex_oid);
+			if (!ex_commit)
+				die("Not a valid commit name %s", oid_to_hex(&ex_oid));
+			if (!in_merge_bases(ex_commit, commit))
+				continue;
+			oidset_insert(&excluded_by_config, &ex_oid);
+			ex_commit->object.flags |= UNINTERESTING;
+			p = commit_list_append(ex_commit, p);
+			break;
+		}
+	}
+	revs->commits = newlist;
+}
+
 static void get_object_list(int ac, const char **av)
 {
 	struct rev_info revs;
@@ -3725,6 +3772,8 @@ static void get_object_list(int ac, const char **av)
 	if (prepare_revision_walk(&revs))
 		die(_("revision walk setup failed"));
 	mark_edges_uninteresting(&revs, show_edge, sparse);
+
+	reuse_exclusion_packfile(&revs);
 
 	if (!fn_show_object)
 		fn_show_object = show_object;

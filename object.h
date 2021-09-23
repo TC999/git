@@ -52,9 +52,20 @@ struct object_array {
 		char *name;
 		char *path;
 		unsigned mode;
+		/*
+		* referred_objects or NULL.  If non-NULL, it will
+		* temporary storage the referred objects when
+		* traversing the specified object. Space for time,
+		* reduce related computing costs (such as packfile-uri
+		* exclusion), clean up when the traversal is over.
+		*/
+		struct referred_objects *referred_objects;
 	} *objects;
 };
 
+struct referred_objects{
+    struct commit *commit;
+};
 #define OBJECT_ARRAY_INIT { 0, 0, NULL }
 
 /*
@@ -157,7 +168,8 @@ void object_list_free(struct object_list **list);
 /* Object array handling .. */
 void add_object_array(struct object *obj, const char *name, struct object_array *array);
 void add_object_array_with_path(struct object *obj, const char *name, struct object_array *array, unsigned mode, const char *path);
-
+void add_object_array_with_path_and_referred_commit(struct object *obj, const char *name, struct object_array *array,
+						    unsigned mode, const char *path, struct commit *referred_commit);
 /*
  * Returns NULL if the array is empty. Otherwise, returns the last object
  * after removing its entry from the array. Other resources associated

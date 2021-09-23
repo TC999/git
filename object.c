@@ -322,14 +322,18 @@ void object_list_free(struct object_list **list)
  */
 static char object_array_slopbuf[1];
 
-void add_object_array_with_path(struct object *obj, const char *name,
-				struct object_array *array,
-				unsigned mode, const char *path)
+void add_object_array_with_path_and_referred_commit(struct object *obj, const char *name,
+						    struct object_array *array,
+						    unsigned mode, const char *path,
+						    struct commit *referred_commit)
 {
 	unsigned nr = array->nr;
 	unsigned alloc = array->alloc;
 	struct object_array_entry *objects = array->objects;
 	struct object_array_entry *entry;
+	struct referred_objects *referred_objs;
+	referred_objs = xmalloc(sizeof(struct referred_objects));
+	referred_objs->commit = referred_commit;
 
 	if (nr >= alloc) {
 		alloc = (alloc + 32) * 2;
@@ -339,6 +343,7 @@ void add_object_array_with_path(struct object *obj, const char *name,
 	}
 	entry = &objects[nr];
 	entry->item = obj;
+	entry->referred_objects = referred_objs;
 	if (!name)
 		entry->name = NULL;
 	else if (!*name)
@@ -352,6 +357,13 @@ void add_object_array_with_path(struct object *obj, const char *name,
 	else
 		entry->path = NULL;
 	array->nr = ++nr;
+}
+
+void add_object_array_with_path(struct object *obj, const char *name,
+				struct object_array *array,
+				unsigned mode, const char *path)
+{
+	add_object_array_with_path_and_referred_commit(obj, name, array, mode, path, NULL);
 }
 
 void add_object_array(struct object *obj, const char *name, struct object_array *array)
@@ -368,6 +380,7 @@ static void object_array_release_entry(struct object_array_entry *ent)
 	if (ent->name != object_array_slopbuf)
 		free(ent->name);
 	free(ent->path);
+	free(ent->referred_objects);
 }
 
 struct object *object_array_pop(struct object_array *array)
