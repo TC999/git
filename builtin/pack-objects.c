@@ -415,8 +415,6 @@ static void copy_pack_data(struct hashfile *f,
 	unsigned long avail;
 	unsigned char decrypt_buffer[4096];
 
-	if (p->cryptor)
-		p->cryptor->byte_counter = offset;
 	while (len) {
 		in = use_pack(p, w_curs, offset, &avail);
 		if (avail > len)
@@ -425,6 +423,7 @@ static void copy_pack_data(struct hashfile *f,
 			hashwrite_try_encrypt(f, in, avail);
 		} else {
 			unsigned long remains = avail;
+			p->cryptor->byte_counter = offset;
 			while (remains) {
 				unsigned long decrypt_size =
 					sizeof(decrypt_buffer);
