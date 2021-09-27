@@ -1416,6 +1416,9 @@ static int want_object_in_pack(const struct object_id *oid,
 		if (referred_objs) {
 			struct commit *commit = referred_objs->commit;
 			struct object_list *trees = referred_objs->trees;
+			struct object_list *tags = referred_objs->tags;
+			if (want_exclude_object(tags))
+				return 0;
 			if (commit) {
 				commit_ex = oidmap_get(&configured_exclusions, &commit->object.oid);
 				if (match_packfile_uri_exclusions(commit_ex) && commit_ex->level > ET_SELF)
@@ -3344,7 +3347,8 @@ static void read_object_list_from_stdin(void)
 
 static void show_commit(struct commit *commit, struct show_info *info)
 {
-	add_object_entry(&commit->object.oid, OBJ_COMMIT, NULL, 0, NULL);
+	struct referred_objects *referred_objs = info->show_cache;
+	add_object_entry(&commit->object.oid, OBJ_COMMIT, NULL, 0, referred_objs);
 	commit->object.flags |= OBJECT_ADDED;
 
 	if (write_bitmap_index)

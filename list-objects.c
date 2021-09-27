@@ -348,9 +348,10 @@ static void traverse_trees_and_blobs(struct traversal_context *ctx,
 	for (i = 0; i < ctx->revs->pending.nr; i++) {
 		struct object_array_entry *pending = ctx->revs->pending.objects + i;
 		struct object *obj = pending->item;
-		struct referred_objects *referred_objs = pending->referred_objects;
 		const char *name = pending->name;
 		const char *path = pending->path;
+		struct referred_objects *referred_objs = pending->referred_objects;
+		struct commit_wraps_entry *cw_entry = NULL;
 		if (obj->flags & (UNINTERESTING | SEEN))
 			continue;
 		if (obj->type == OBJ_TAG) {
@@ -358,6 +359,10 @@ static void traverse_trees_and_blobs(struct traversal_context *ctx,
 			ctx->show_object(obj, name, &show_info);
 			continue;
 		}
+		if (referred_objs->commit)
+			cw_entry = oidmap_get(ctx->revs->commit_wraps, &referred_objs->commit->object.oid);
+		if (cw_entry)
+			referred_objs->tags = cw_entry->wraps;
 		if (!path)
 			path = "";
 		if (obj->type == OBJ_TREE) {
@@ -378,12 +383,14 @@ static void do_traverse(struct traversal_context *ctx)
 {
 	struct commit *commit;
 	struct strbuf csp; /* callee's scratch pad */
-	struct show_info show_info;
+	struct commit_wraps_entry *entry;
+	struct oidmap *commit_wraps = ctx->revs->commit_wraps;
+	struct referred_objects referred_objs = { NULL, NULL, NULL };
+	struct show_info show_info = { ctx->show_data , NULL };
 	strbuf_init(&csp, PATH_MAX);
 
-
 	show_info.show_data = ctx->show_data;
-	show_info.show_cache = NULL;
+	show_info.show_cache = &referred_objs;
 
 	while ((commit = get_revision(ctx->revs)) != NULL) {
 		/*
@@ -399,6 +406,11 @@ static void do_traverse(struct traversal_context *ctx)
 		} else if (commit->object.parsed) {
 			die(_("unable to load root tree for commit %s"),
 			      oid_to_hex(&commit->object.oid));
+		}
+
+		if (commit_wraps) {
+			entry = oidmap_get(commit_wraps, &commit->object.oid);
+			referred_objs.tags = entry ? entry->wraps : NULL;
 		}
 
 		ctx->show_commit(commit, &show_info);

@@ -8,6 +8,7 @@
 #include "pretty.h"
 #include "diff.h"
 #include "commit-slab-decl.h"
+#include "oidmap.h"
 
 /**
  * The revision walking API offers functions to build a list of revisions
@@ -63,6 +64,11 @@ struct saved_parents;
 struct bloom_key;
 struct bloom_filter_settings;
 define_shared_commit_slab(revision_sources, char *);
+
+struct commit_wraps_entry {
+    struct oidmap_entry e;
+    struct object_list *wraps;
+};
 
 struct rev_cmdline_info {
 	unsigned int nr;
@@ -321,6 +327,9 @@ struct rev_info {
 
 	/* misc. flags related to '--no-kept-objects' */
 	unsigned keep_pack_cache_flags;
+
+	/* The commit_wraps caches the referred wrapped objects(such as tags) of a commit */
+	struct oidmap *commit_wraps;
 };
 
 int ref_excluded(struct string_list *, const char *path);

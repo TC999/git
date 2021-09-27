@@ -416,14 +416,17 @@ static struct commit *handle_commit(struct rev_info *revs,
 	const char *path = entry->path;
 	unsigned int mode = entry->mode;
 	unsigned long flags = object->flags;
+	struct object_list *wraps = NULL;
 
 	/*
 	 * Tag object? Look what it points to..
 	 */
 	while (object->type == OBJ_TAG) {
 		struct tag *tag = (struct tag *) object;
-		if (revs->tag_objects && !(flags & UNINTERESTING))
+		if (revs->tag_objects && !(flags & UNINTERESTING)) {
 			add_pending_object(revs, object, tag->tag);
+			object_list_insert(object, &wraps);
+		}
 		object = parse_object(revs->repo, get_tagged_oid(tag));
 		if (!object) {
 			if (revs->ignore_missing_links || (flags & UNINTERESTING))
@@ -449,6 +452,14 @@ static struct commit *handle_commit(struct rev_info *revs,
 	 */
 	if (object->type == OBJ_COMMIT) {
 		struct commit *commit = (struct commit *)object;
+		struct oidmap *commit_wraps = malloc(sizeof(struct oidmap));
+		struct commit_wraps_entry *cw_entry = xmalloc(sizeof(struct commit_wraps_entry));
+
+		oidmap_init(commit_wraps, 0);
+		cw_entry->e.oid = object->oid;
+		cw_entry->wraps = wraps;
+		oidmap_put(commit_wraps, cw_entry);
+		revs->commit_wraps = commit_wraps;
 
 		if (repo_parse_commit(revs->repo, commit) < 0)
 			die("unable to parse commit %s", name);
