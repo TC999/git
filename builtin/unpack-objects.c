@@ -23,6 +23,8 @@ static unsigned char decrypt_buffer[4096];
 static unsigned int offset, len;
 static off_t consumed_bytes;
 static off_t max_input_size;
+static off_t max_input_object_size;
+static off_t max_input_blob_size;
 static git_hash_ctx ctx;
 static struct fsck_options fsck_options = FSCK_OPTIONS_STRICT;
 static struct progress *progress;
@@ -605,6 +607,25 @@ static void unpack_delta_entry(enum object_type type, unsigned long delta_size,
 	free(base);
 }
 
+static void check_input_object(const char *type_name, unsigned long size)
+{
+	if (max_input_object_size && size > max_input_object_size)
+		die(_("%s exceeds maximum allowed size %ld over %"PRIuMAX),
+		    type_name, size, (uintmax_t)max_input_object_size);
+}
+
+static void check_input_blob(unsigned long size)
+{
+	/* use blob size limit for delta */
+	if (max_input_blob_size) {
+		if (size > max_input_blob_size)
+			die(_("object exceeds maximum allowed size %ld over %"PRIuMAX),
+			    size, (uintmax_t)max_input_blob_size);
+	} else {
+		check_input_object("object", size);
+	}
+}
+
 static void unpack_one(unsigned nr)
 {
 	unsigned shift;
@@ -629,14 +650,20 @@ static void unpack_one(unsigned nr)
 	}
 
 	switch (type) {
+	case OBJ_BLOB:
+		check_input_blob(size);
+		unpack_non_delta_entry(type, size, nr);
+		return;
 	case OBJ_COMMIT:
 	case OBJ_TREE:
-	case OBJ_BLOB:
 	case OBJ_TAG:
+		check_input_object(type_name(type), size);
 		unpack_non_delta_entry(type, size, nr);
 		return;
 	case OBJ_REF_DELTA:
 	case OBJ_OFS_DELTA:
+		/* use blob size limit for delta */
+		check_input_blob(size);
 		unpack_delta_entry(type, size, nr);
 		return;
 	default:
@@ -720,6 +747,14 @@ int cmd_unpack_objects(int argc, const char **argv, const char *prefix)
 			}
 			if (skip_prefix(arg, "--max-input-size=", &arg)) {
 				max_input_size = strtoumax(arg, NULL, 10);
+				continue;
+			}
+			if (skip_prefix(arg, "--max-input-blob-size=", &arg)) {
+				max_input_blob_size = strtoumax(arg, NULL, 10);
+				continue;
+			}
+			if (skip_prefix(arg, "--max-input-object-size=", &arg)) {
+				max_input_object_size = strtoumax(arg, NULL, 10);
 				continue;
 			}
 			usage(unpack_usage);

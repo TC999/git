@@ -59,6 +59,8 @@ static int advertise_push_options;
 static int advertise_sid;
 static int unpack_limit = 100;
 static off_t max_input_size;
+static off_t max_input_blob_size;
+static off_t max_input_object_size;
 static int report_status;
 static int report_status_v2;
 static int use_sideband;
@@ -308,6 +310,16 @@ static int receive_pack_config(const char *var, const char *value, void *cb)
 
 	if (strcmp(var, "receive.maxinputsize") == 0) {
 		max_input_size = git_config_int64(var, value);
+		return 0;
+	}
+
+	if (strcmp(var, "receive.maxinputblobsize") == 0) {
+		max_input_blob_size = git_config_int64(var, value);
+		return 0;
+	}
+
+	if (strcmp(var, "receive.maxinputobjectsize") == 0) {
+		max_input_object_size = git_config_int64(var, value);
 		return 0;
 	}
 
@@ -2522,6 +2534,12 @@ static const char *unpack(int err_fd, struct shallow_info *si)
 		if (max_input_size)
 			strvec_pushf(&child.args, "--max-input-size=%"PRIuMAX,
 				     (uintmax_t)max_input_size);
+		if (max_input_object_size)
+			strvec_pushf(&child.args, "--max-input-object-size=%"PRIuMAX,
+				     (uintmax_t)max_input_object_size);
+		if (max_input_blob_size)
+			strvec_pushf(&child.args, "--max-input-blob-size=%"PRIuMAX,
+				     (uintmax_t)max_input_blob_size);
 		child.no_stdout = 1;
 		child.err = err_fd;
 		child.git_cmd = 1;
@@ -2553,6 +2571,12 @@ static const char *unpack(int err_fd, struct shallow_info *si)
 		if (max_input_size)
 			strvec_pushf(&child.args, "--max-input-size=%"PRIuMAX,
 				     (uintmax_t)max_input_size);
+		if (max_input_object_size)
+			strvec_pushf(&child.args, "--max-input-object-size=%"PRIuMAX,
+				     (uintmax_t)max_input_object_size);
+		if (max_input_blob_size)
+			strvec_pushf(&child.args, "--max-input-blob-size=%"PRIuMAX,
+				     (uintmax_t)max_input_blob_size);
 		child.out = -1;
 		child.err = err_fd;
 		child.git_cmd = 1;

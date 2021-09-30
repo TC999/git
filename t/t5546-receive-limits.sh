@@ -1,6 +1,10 @@
 #!/bin/sh
 
 test_description='check receive input limits'
+
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+
 . ./test-lib.sh
 
 # Let's run tests with different unpack limits: 1 and 10000
@@ -39,6 +43,31 @@ test_pack_input_limit () {
 
 	test_expect_success 'lifting the limit allows push' '
 		git --git-dir=dest config receive.maxInputSize 0 &&
+		git push dest HEAD
+	'
+
+	test_expect_success 'prepare destination repository (test for large object)' '
+		rm -fr dest &&
+		git --bare init dest
+	'
+
+	test_expect_success 'setting receive.maxInputObjectSize to 512 rejects push large object' '
+		git -C dest config receive.maxInputObjectSize 512 &&
+		test_must_fail git push dest HEAD
+	'
+
+	test_expect_success 'bumping limit to 2k allows push large object' '
+		git -C dest config receive.maxInputObjectSize 2k &&
+		git push dest HEAD
+	'
+
+	test_expect_success 'prepare destination repository (test for large object,again)' '
+		rm -fr dest &&
+		git --bare init dest
+	'
+
+	test_expect_success 'lifting the limit allows push' '
+		git -C dest config receive.maxInputObjectSize 0 &&
 		git push dest HEAD
 	'
 }

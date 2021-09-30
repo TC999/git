@@ -74,6 +74,18 @@ receive.maxInputSize::
 	accepting the pack file. If not set or set to 0, then the size
 	is unlimited.
 
+receive.maxInputBlobSize::
+	If one of the blobs in the incoming pack stream is larger than
+	this limit, then git-receive-pack will error out, instead of
+	accepting the pack file. If not set or set to 0, then the size
+	will use receive.maxInputObjectSize instead or be unlimited.
+
+receive.maxInputObjectSize::
+	If one of the objects in the incoming pack stream is larger than
+	this limit, then git-receive-pack will error out, instead of
+	accepting the pack file. If not set or set to 0, then the size
+	is unlimited.
+
 receive.denyDeletes::
 	If set to true, git-receive-pack will deny a ref update that deletes
 	the ref. Use this to prevent such a ref deletion via a push.
