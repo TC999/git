@@ -15,6 +15,7 @@
 #include "list-objects-filter.h"
 #include "list-objects-filter-options.h"
 #include "run-command.h"
+#include "hook.h"
 #include "connect.h"
 #include "sigchain.h"
 #include "version.h"
@@ -272,6 +273,44 @@ static int relay_pack_data(int pack_objects_out, struct output_state *os,
 	return readsz;
 }
 
+static int run_pre_send_pack_hook(struct upload_pack_data *pack_data)
+{
+
+	struct child_process proc = CHILD_PROCESS_INIT;
+	const char *hook;
+	char data[128];
+
+	hook = find_hook("pre-send-pack");
+	if (!hook)
+		return 0;
+
+	strvec_push(&proc.args, hook);
+	strvec_pushf(&proc.args, "--have=%d", pack_data->have_obj.nr);
+	strvec_pushf(&proc.args, "--filter=%" PRIuMAX,
+		     (uintmax_t)pack_data->filter_options.filter_spec.nr);
+	strvec_pushf(&proc.args, "--depth=%d", pack_data->depth);
+
+	proc.stdout_to_stderr = 1;
+	proc.no_stdin = 1;
+	proc.trace2_hook_name = "pre-send-pack";
+	proc.err = -1;
+
+	if (start_command(&proc))
+		error(_("run pre-send-pack hook failed"));
+
+	while (1) {
+		ssize_t sz;
+		sz = xread(proc.err, data, sizeof(data));
+		if (sz <= 0)
+			break;
+		send_sideband(1, 2, data, sz, pack_data->use_sideband);
+	}
+
+	close(proc.err);
+
+	return finish_command(&proc);
+}
+
 static void create_pack_file(struct upload_pack_data *pack_data,
 			     const struct string_list *uri_protocols)
 {
@@ -329,6 +368,9 @@ static void create_pack_file(struct upload_pack_data *pack_data,
 	pack_objects.out = -1;
 	pack_objects.err = -1;
 	pack_objects.clean_on_exit = 1;
+
+	/* Run pre-send-pack hook to show notifications. */
+	run_pre_send_pack_hook(pack_data);
 
 	if (start_command(&pack_objects))
 		die("git upload-pack: unable to fork git-pack-objects");
