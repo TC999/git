@@ -967,6 +967,306 @@ test_expect_success 'blob-exclusion (using uploadpack.excludeobject): packfile U
 	blobpackfileuri_fetch new
 '
 
+test_expect_success 'commit-exclusion(excluding_type=ET_SELF): part of packfile response provided as URI' '
+	P="$HTTPD_DOCUMENT_ROOT_PATH/http_parent" &&
+	test_when_finished "rm -rf \"$P\" http_child log *found" &&
+	excluding_type="0" &&
+	git init "$P" &&
+	git -C "$P" config "uploadpack.allowsidebandall" "true" &&
+	mkdir "$P"/my-tree  &&
+	echo my-blob >"$P"/my-tree/my-blob &&
+	git -C "$P" add my-tree &&
+	mkdir "$P"/my-tree/sub-tree &&
+	echo sub-blob >"$P"/my-tree/sub-tree/sub-blob &&
+	git -C "$P" add my-tree &&
+	test_commit -C "$P" A &&
+ 	commith=$(git -C "$P" rev-parse A) &&
+ 	roottreeh=$(git -C "$P" rev-parse A:) &&
+	mytreeh=$(git -C "$P" ls-tree HEAD my-tree | sed -ne "s/.*\($OID_REGEX\).*/\1/p") &&
+	subtreeh=$(git -C "$P" ls-tree HEAD my-tree/sub-tree | sed -ne "s/.*\($OID_REGEX\).*/\1/p") &&
+	ah=$(git -C "$P" hash-object A.t) &&
+	myblobh=$(git -C "$P" hash-object my-tree/my-blob) &&
+	subblobh=$(git -C "$P" hash-object my-tree/sub-tree/sub-blob) &&
+	configure_exclusion commit "$P" "$commith" new "$excluding_type" >h &&
+	GIT_TRACE=1 GIT_TRACE_PACKET="$(pwd)/log" GIT_TEST_SIDEBAND_ALL=1 \
+	git -c protocol.version=2 \
+		-c fetch.uriprotocols=http,https \
+		clone "$HTTPD_URL/smart/http_parent" http_child
+'
+
+test_expect_success 'commit-exclusion(excluding_type=ET_INCLUDE): part of packfile response provided as URI' '
+	P="$HTTPD_DOCUMENT_ROOT_PATH/http_parent" &&
+	test_when_finished "rm -rf \"$P\" http_child log *found" &&
+	excluding_type="1" &&
+	git init "$P" &&
+	git -C "$P" config "uploadpack.allowsidebandall" "true" &&
+	mkdir "$P"/my-tree  &&
+	echo my-blob >"$P"/my-tree/my-blob &&
+	git -C "$P" add my-tree &&
+	mkdir "$P"/my-tree/sub-tree &&
+	echo sub-blob >"$P"/my-tree/sub-tree/sub-blob &&
+	git -C "$P" add my-tree &&
+	test_commit -C "$P" A &&
+ 	commith=$(git -C "$P" rev-parse A) &&
+ 	roottreeh=$(git -C "$P" rev-parse A:) &&
+	mytreeh=$(git -C "$P" ls-tree HEAD my-tree | sed -ne "s/.*\($OID_REGEX\).*/\1/p") &&
+	subtreeh=$(git -C "$P" ls-tree HEAD my-tree/sub-tree | sed -ne "s/.*\($OID_REGEX\).*/\1/p") &&
+	ah=$(git -C "$P" hash-object A.t) &&
+	myblobh=$(git -C "$P" hash-object my-tree/my-blob) &&
+	subblobh=$(git -C "$P" hash-object my-tree/sub-tree/sub-blob) &&
+	configure_exclusion commit "$P" "$commith" new "$excluding_type" >h &&
+	GIT_TRACE=1 GIT_TRACE_PACKET="$(pwd)/log" GIT_TEST_SIDEBAND_ALL=1 \
+	git -c protocol.version=2 \
+		-c fetch.uriprotocols=http,https \
+		clone "$HTTPD_URL/smart/http_parent" http_child &&
+	for idx in http_child/.git/objects/pack/*.idx
+	do
+		git verify-pack --object-format=$(test_oid algo) --verbose $idx >out &&
+		{
+			grep "^[0-9a-f]\{16,\} " out || :
+		} >out.objectlist &&
+		if test_line_count = 7 out.objectlist
+		then
+			if grep $commith out
+			then
+				>commithfound
+			fi &&
+			if grep $roottreeh out
+			then
+				>roottreehfound
+			fi &&
+			if grep $ah out
+			then
+				>ahfound
+			fi &&
+			if grep $mytreeh out
+			then
+				>mytreehfound
+			fi &&
+			if grep $myblobh out
+			then
+				>myblobhfound
+			fi &&
+			if grep $subtreeh out
+			then
+				>subtreehfound
+			fi &&
+			if grep $subblobh out
+			then
+				>subblobhfound
+			fi
+		fi
+	done &&
+	test -f mytreehfound &&
+	test -f myblobhfound &&
+	test -f subtreehfound &&
+	test -f subblobhfound &&
+	test -f commithfound &&
+	test -f roottreehfound &&
+	test -f ahfound &&
+	# Ensure that there are exactly 2 packfiles with associated .idx
+	ls http_child/.git/objects/pack/*.pack \
+		http_child/.git/objects/pack/*.idx >filelist &&
+	test_line_count = 4 filelist
+'
+
+test_expect_success 'commit-exclusion(excluding_type=ET_REACHABLE):  hitten a full packfile response provided as URI' '
+	P="$HTTPD_DOCUMENT_ROOT_PATH/http_parent" &&
+ 	test_when_finished "rm -rf \"$P\" http_child log *found" &&
+	excluding_type="2" &&
+	git init "$P" &&
+	git -C "$P" config "uploadpack.allowsidebandall" "true" &&
+	mkdir "$P"/my-tree  &&
+	echo my-blob >"$P"/my-tree/my-blob &&
+	git -C "$P" add my-tree &&
+	test_commit -C "$P" A &&
+ 	commith=$(git -C "$P" rev-parse A) &&
+  	roottreeh=$(git -C "$P" rev-parse A:) &&
+ 	mytreeh=$(git -C "$P" ls-tree HEAD my-tree | sed -ne "s/.*\($OID_REGEX\).*/\1/p") &&
+ 	ah=$(git -C "$P" hash-object A.t) &&
+ 	myblobh=$(git -C "$P" hash-object my-tree/my-blob) &&
+	configure_exclusion commit "$P" "$commith" new "$excluding_type" >h &&
+	GIT_TRACE=1 GIT_TRACE_PACKET="$(pwd)/log" GIT_TEST_SIDEBAND_ALL=1 \
+	git -c protocol.version=2 \
+		-c fetch.uriprotocols=http,https \
+		clone "$HTTPD_URL/smart/http_parent" http_child &&
+	for idx in http_child/.git/objects/pack/*.idx
+	do
+		git verify-pack --object-format=$(test_oid algo) --verbose $idx >out &&
+		{
+			grep "^[0-9a-f]\{16,\} " out || :
+		} >out.objectlist &&
+		if test_line_count = 5 out.objectlist
+		then
+			if grep $commith out
+			then
+				>commithfound
+			fi &&
+			if grep $roottreeh out
+			then
+				>roottreehfound
+			fi &&
+			if grep $mytreeh out
+			then
+				>mytreehfound
+			fi &&
+			if grep $ah out
+			then
+				>ahfound
+			fi &&
+			if grep $myblobh out
+			then
+				>myblobhfound
+			fi
+		elif test_line_count = 0 out.objectlist
+		then
+				>emptypackfound
+		fi
+	done &&
+	test -f emptypackfound &&
+	test -f mytreehfound &&
+	test -f myblobhfound &&
+	test -f commithfound &&
+	test -f roottreehfound &&
+	test -f ahfound &&
+	# Ensure that there are exactly 2 packfiles with associated .idx
+	ls http_child/.git/objects/pack/*.pack \
+		http_child/.git/objects/pack/*.idx >filelist &&
+	test_line_count = 4 filelist
+'
+
+test_expect_success 'commit-exclusion(excluding_type=ET_REACHABLE): part of packfile response provided as URI' '
+	P="$HTTPD_DOCUMENT_ROOT_PATH/http_parent" &&
+ 	test_when_finished "rm -rf \"$P\" http_child log *found" &&
+	excluding_type="2" &&
+	git init "$P" &&
+	git -C "$P" config "uploadpack.allowsidebandall" "true" &&
+	mkdir "$P"/my-tree  &&
+	echo my-blob >"$P"/my-tree/my-blob &&
+	git -C "$P" add my-tree &&
+	test_commit -C "$P" A &&
+	mkdir "$P"/other-tree  &&
+	echo other-blob >"$P"/other-tree/other-blob &&
+	git -C "$P" add other-tree &&
+	test_commit -C "$P" B &&
+    ah=$(git -C "$P" hash-object A.t) &&
+    bh=$(git -C "$P" hash-object B.t) &&
+	myblobh=$(git -C "$P" hash-object my-tree/my-blob) &&
+	otherblobh=$(git -C "$P" hash-object other-tree/other-blob) &&
+	rm -rf "$P"/my-tree "$P"/other-tree "$P"/A.t "$P"/B.t &&
+	mkdir "$P"/another-tree  &&
+	echo another-blob >"$P"/another-tree/another-blob &&
+	git -C "$P" add . &&
+	test_commit -C "$P" C &&
+ 	commitAh=$(git -C "$P" rev-parse A) &&
+ 	commitBh=$(git -C "$P" rev-parse B) &&
+ 	commitCh=$(git -C "$P" rev-parse C) &&
+ 	roottreeAh=$(git -C "$P" rev-parse A:) &&
+ 	roottreeBh=$(git -C "$P" rev-parse B:) &&
+ 	roottreeCh=$(git -C "$P" rev-parse C:) &&
+    mytreeh=$(git -C "$P" ls-tree A my-tree | sed -ne "s/.*\($OID_REGEX\).*/\1/p") &&
+    othertreeh=$(git -C "$P" ls-tree B other-tree | sed -ne "s/.*\($OID_REGEX\).*/\1/p") &&
+    anothertreeh=$(git -C "$P" ls-tree C another-tree | sed -ne "s/.*\($OID_REGEX\).*/\1/p") &&
+    ch=$(git -C "$P" hash-object C.t) &&
+	anotherblobh=$(git -C "$P" hash-object another-tree/another-blob) &&
+	configure_exclusion commit "$P" "$commitBh" new "$excluding_type" >h &&
+	GIT_TRACE=1 GIT_TRACE_PACKET="$(pwd)/log" GIT_TEST_SIDEBAND_ALL=1 \
+	git -c protocol.version=2 \
+		-c fetch.uriprotocols=http,https \
+		clone "$HTTPD_URL/smart/http_parent" http_child &&
+	for idx in http_child/.git/objects/pack/*.idx
+	do
+		git verify-pack --object-format=$(test_oid algo) --verbose $idx >out &&
+		{
+			grep "^[0-9a-f]\{16,\} " out || :
+		} >out.objectlist &&
+		if test_line_count = 5 out.objectlist
+		then
+			if grep $commitCh out
+			then
+				>commitChfound
+			fi &&
+			if grep $roottreeCh out
+			then
+				>roottreeChfound
+			fi &&
+			if grep $anothertreeh out
+			then
+				>anothertreehfound
+			fi &&
+			if grep $anotherblobh out
+			then
+				>anotherblobhfound
+			fi &&
+			if grep $ch out
+			then
+				>chfound
+			fi
+		elif test_line_count = 10 out.objectlist
+		then
+			if grep $commitAh out
+			then
+				>commitAhfound
+			fi &&
+			if grep $commitBh out
+			then
+				>commitBhfound
+			fi &&
+			if grep $roottreeAh out
+			then
+				>roottreeAhfound
+			fi &&
+			if grep $roottreeBh out
+			then
+				>roottreeBhfound
+			fi &&
+			if grep $mytreeh out
+			then
+				>mytreehfound
+			fi &&
+			if grep $othertreeh out
+			then
+				>othertreehfound
+			fi &&
+			if grep $myblobh out
+			then
+				>myblobhfound
+			fi &&
+			if grep $otherblobh out
+			then
+				>otherblobhfound
+			fi &&
+			if grep $ah out
+			then
+				>ahfound
+			fi &&
+			if grep $bh out
+			then
+				>bhfound
+			fi
+		fi
+	done &&
+	test -f commitChfound &&
+	test -f roottreeChfound &&
+	test -f anothertreehfound &&
+	test -f anotherblobhfound &&
+	test -f chfound &&
+	test -f commitAhfound &&
+	test -f commitBhfound &&
+	test -f roottreeAhfound &&
+	test -f roottreeBhfound &&
+	test -f mytreehfound &&
+	test -f othertreehfound &&
+	test -f myblobhfound &&
+	test -f otherblobhfound &&
+	test -f ahfound &&
+	test -f bhfound &&
+	# Ensure that there are exactly 2 packfiles with associated .idx
+	ls http_child/.git/objects/pack/*.pack \
+		http_child/.git/objects/pack/*.idx >filelist &&
+	test_line_count = 4 filelist
+'
+
 test_expect_success 'fetching with valid packfile URI but invalid hash fails' '
 	P="$HTTPD_DOCUMENT_ROOT_PATH/http_parent" &&
 	test_when_finished "rm -rf \"$P\" http_child log" &&
