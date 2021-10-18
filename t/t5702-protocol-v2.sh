@@ -1480,6 +1480,203 @@ test_expect_success 'tree-exclusion(excluding_type=ET_INCLUDE), part of packfile
 	test_line_count = 6 filelist
 '
 
+test_expect_success 'tag-exclusion(excluding_type=ET_SELF): part of packfile response provided as URI' '
+  	test_when_finished "rm -rf \"$P\" http_child log" &&
+	P="$HTTPD_DOCUMENT_ROOT_PATH/http_parent" &&
+	git init "$P" &&
+	git -C "$P" config "uploadpack.allowsidebandall" "true" &&
+	echo my-blob >"$P/my-blob" &&
+	git -C "$P" add my-blob &&
+	test_commit -C "$P" A &&
+	git -C "$P" tag -a -m "annotated_tag" tagA &&
+
+	tagh=$(git -C "$P" rev-parse tagA) &&
+	commith=$(git -C "$P" rev-parse A) &&
+	roottreeh=$(git -C "$P" rev-parse A:) &&
+	ah=$(git -C "$P" hash-object A.t) &&
+	myblobh=$(git -C "$P" hash-object my-blob) &&
+
+	configure_exclusion tag "$P" "$tagh" new 0 >h2 &&
+	git init http_child &&
+	GIT_TRACE=1 GIT_TRACE_PACKET=`pwd`/log GIT_TEST_SIDEBAND_ALL=1 \
+	git -C http_child \
+		-c protocol.version=2 \
+		-c fetch.uriprotocols=http,https \
+		fetch --tags "$HTTPD_URL/smart/http_parent" &&
+
+	# Ensure that my-tree and other-tree and theirs complementary set are in separate packfiles.
+	for idx in http_child/.git/objects/pack/*.idx
+	do
+		git verify-pack --object-format=$(test_oid algo) --verbose $idx >out &&
+		{
+			grep "^[0-9a-f]\{16,\} " out || :
+		} >out.objectlist &&
+		if test_line_count = 1 out.objectlist
+		then
+			if grep $tagh out
+			then
+				>taghfound
+			fi
+
+		elif test_line_count = 4 out.objectlist
+		then
+			if grep $commith out
+			then
+				>commithfound
+			fi &&
+			if grep $roottreeh out
+			then
+				>roottreehfound
+			fi &&
+			if grep $ah out
+			then
+				>ahfound
+			fi &&
+			if grep $myblobh out
+			then
+				>myblobhfound
+			fi
+		fi
+	done &&
+	test -f myblobhfound &&
+	test -f commithfound &&
+	test -f roottreehfound &&
+	test -f ahfound &&
+	test -f taghfound &&
+	# Ensure that there are exactly 3 packfiles with associated .idx
+	ls http_child/.git/objects/pack/*.pack \
+		http_child/.git/objects/pack/*.idx >filelist &&
+	test_line_count = 4 filelist
+'
+
+test_expect_success 'tag-exclusion(excluding_type=ET_INCLUDE): part of packfile response provided as URI' '
+	P="$HTTPD_DOCUMENT_ROOT_PATH/http_parent" &&
+ 	test_when_finished "rm -rf \"$P\" http_child log" &&
+	git init "$P" &&
+	git -C "$P" config "uploadpack.allowsidebandall" "true" &&
+	echo my-blob >"$P/my-blob" &&
+	git -C "$P" add my-blob &&
+	test_commit -C "$P" A &&
+	git -C "$P" tag -a -m "annotated_tag" tagA &&
+
+	tagh=$(git -C "$P" rev-parse tagA) &&
+	commith=$(git -C "$P" rev-parse A) &&
+	roottreeh=$(git -C "$P" rev-parse A:) &&
+	ah=$(git -C "$P" hash-object A.t) &&
+	myblobh=$(git -C "$P" hash-object my-blob) &&
+
+	configure_exclusion tag "$P" "$tagh" new 1 >h2 &&
+
+	git init http_child &&
+	GIT_TRACE=1 GIT_TRACE_PACKET=`pwd`/log GIT_TEST_SIDEBAND_ALL=1 \
+	git -C http_child \
+		-c protocol.version=2 \
+		-c fetch.uriprotocols=http,https \
+		fetch --tags "$HTTPD_URL/smart/http_parent" &&
+
+	# Ensure that my-tree and other-tree and theirs complementary set are in separate packfiles.
+	for idx in http_child/.git/objects/pack/*.idx
+	do
+		git verify-pack --object-format=$(test_oid algo) --verbose $idx >out &&
+		{
+			grep "^[0-9a-f]\{16,\} " out || :
+		} >out.objectlist &&
+		if test_line_count = 5 out.objectlist
+		then
+			if grep $tagh out
+			then
+				>taghfound
+			fi &&
+			if grep $commith out
+			then
+				>commithfound
+			fi &&
+			if grep $roottreeh out
+			then
+				>roottreehfound
+			fi &&
+			if grep $ah out
+			then
+				>ahfound
+			fi &&
+			if grep $myblobh out
+			then
+				>myblobhfound
+			fi
+		fi
+	done &&
+	test -f myblobhfound &&
+	test -f commithfound &&
+	test -f roottreehfound &&
+	test -f ahfound &&
+	test -f taghfound &&
+	# Ensure that there are exactly 3 packfiles with associated .idx
+	ls http_child/.git/objects/pack/*.pack \
+		http_child/.git/objects/pack/*.idx >filelist &&
+	test_line_count = 4 filelist
+'
+
+test_expect_success 'tag-exclusion(excluding_type=ET_REACHABLE): part of packfile response provided as URI' '
+	P="$HTTPD_DOCUMENT_ROOT_PATH/http_parent" &&
+ 	test_when_finished "rm -rf \"$P\" http_child log" &&
+	git init "$P" &&
+	git -C "$P" config "uploadpack.allowsidebandall" "true" &&
+
+
+	mkdir "$P"/my-tree  &&
+	echo my-blob >"$P"/my-tree/my-blob &&
+	git -C "$P" add my-tree &&
+	test_commit -C "$P" A &&
+
+	mkdir "$P"/other-tree &&
+	echo other-blob >"$P"/other-tree/other-blob &&
+	git -C "$P" add other-tree &&
+	test_commit -C "$P" B &&
+
+	git -C "$P" tag -a -m "tag X" tagX &&
+
+	tagh=$(git -C "$P" rev-parse tagX) &&
+ 	commitAh=$(git -C "$P" rev-parse A) &&
+ 	commitBh=$(git -C "$P" rev-parse B) &&
+ 	roottreeAh=$(git -C "$P" rev-parse A:) &&
+	roottreeBh=$(git -C "$P" rev-parse B:) &&
+	mytreeh=$(git -C "$P" ls-tree HEAD my-tree | sed -ne "s/.*\($OID_REGEX\).*/\1/p") &&
+	othertreeh=$(git -C "$P" ls-tree HEAD other-tree | sed -ne "s/.*\($OID_REGEX\).*/\1/p") &&
+	ah=$(git -C "$P" hash-object A.t) &&
+	bh=$(git -C "$P" hash-object B.t) &&
+	myblobh=$(git -C "$P" hash-object my-tree/my-blob) &&
+	otherblobh=$(git -C "$P" hash-object other-tree/other-blob) &&
+
+	configure_exclusion tag "$P" "$tagh" new 2 >h &&
+
+	GIT_TRACE=1 GIT_TRACE_PACKET="$(pwd)/log" GIT_TEST_SIDEBAND_ALL=1 \
+	git -c protocol.version=2 \
+		-c fetch.uriprotocols=http,https \
+		clone "$HTTPD_URL/smart/http_parent" http_child &&
+
+	# Ensure that my-tree and other-tree and theirs complementary set are in separate packfiles.
+    	for idx in http_child/.git/objects/pack/*.idx
+    	do
+    		git verify-pack --object-format=$(test_oid algo) --verbose $idx >out &&
+    		{
+    			grep "^[0-9a-f]\{16,\} " out || :
+    		} >out.objectlist &&
+    		if test_line_count = 11 out.objectlist
+    		then
+    				>fullpackfound
+    		elif test_line_count = 0 out.objectlist
+    		then
+					>emptypackfound
+    		fi
+    	done &&
+    	test -f fullpackfound &&
+    	test -f emptypackfound &&
+    	# Ensure that there are exactly 3 packfiles with associated .idx
+    	ls http_child/.git/objects/pack/*.pack \
+    		http_child/.git/objects/pack/*.idx >filelist &&
+    	test_line_count = 4 filelist
+'
+
 test_expect_success 'fetching with valid packfile URI but invalid hash fails' '
 	P="$HTTPD_DOCUMENT_ROOT_PATH/http_parent" &&
 	test_when_finished "rm -rf \"$P\" http_child log" &&
