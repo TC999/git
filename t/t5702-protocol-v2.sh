@@ -824,17 +824,63 @@ test_expect_success 'when server does not send "ready", expect FLUSH' '
 '
 
 configure_exclusion () {
-	git -C "$1" hash-object "$2" >objh &&
-	git -C "$1" pack-objects "$HTTPD_DOCUMENT_ROOT_PATH/mypack" <objh >packh &&
-	git -C "$1" config --add \
-		"uploadpack.blobpackfileuri" \
-		"$(cat objh) $(cat packh) $HTTPD_URL/dumb/mypack-$(cat packh).pack" &&
-	cat objh
+	objt="$1"
+	P="$2"
+	oid="$3"
+	version="$4"
+	excluding_type="$5"
+
+	oldc="uploadpack.blobpackfileuri"
+	newc="uploadpack.excludeobject"
+	configkey=""
+
+	if test "$version" = "old"
+	then
+		configkey="$oldc"
+	else
+		configkey="$newc"
+	fi
+
+	if test "$objt" = "blob"
+	then
+		excluding_type="0"
+		git -C "$P" hash-object "$oid" >objh &&
+		git -C "$P" pack-objects "$HTTPD_DOCUMENT_ROOT_PATH/mypack" <objh >packh &&
+		if test "$version" = "old"
+		then
+			git -C "$P" config --add \
+            			"$configkey" \
+            			"$(cat objh) $(cat packh) $HTTPD_URL/dumb/mypack-$(cat packh).pack"
+        else
+        	git -C "$P" config --add \
+						"$configkey" \
+						"$(cat objh) $excluding_type $(cat packh) $HTTPD_URL/dumb/mypack-$(cat packh).pack"
+		fi &&
+		cat objh
+	elif test "$objt" = "commit" || test "$objt" = "tree" || test "$objt" = "tag"
+	then
+		echo "$oid" >objh &&
+		if test "$excluding_type" = "0"
+		then
+			git -C "$P" pack-objects  "$HTTPD_DOCUMENT_ROOT_PATH/mypack" <objh >packh
+		else
+			git -C "$P" pack-objects --revs "$HTTPD_DOCUMENT_ROOT_PATH/mypack" <objh >packh
+		fi &&
+
+		git -C "$P" config --add \
+        			"$configkey" \
+        			"$(cat objh) $excluding_type $(cat packh) $HTTPD_URL/dumb/mypack-$(cat packh).pack" &&
+		cat objh
+	else
+		echo "unsupported object type in configure_exclusion (got $objt)"
+	fi
 }
 
-test_expect_success 'part of packfile response provided as URI' '
+part_of_packfile_response_verify() {
+
+	config="$1" &&
 	P="$HTTPD_DOCUMENT_ROOT_PATH/http_parent" &&
-	rm -rf "$P" http_child log &&
+	test_when_finished "rm -rf \"$P\" http_child log *found" &&
 
 	git init "$P" &&
 	git -C "$P" config "uploadpack.allowsidebandall" "true" &&
@@ -843,10 +889,10 @@ test_expect_success 'part of packfile response provided as URI' '
 	git -C "$P" add my-blob &&
 	echo other-blob >"$P/other-blob" &&
 	git -C "$P" add other-blob &&
-	git -C "$P" commit -m x &&
+	test_commit -C "$P" A &&
 
-	configure_exclusion "$P" my-blob >h &&
-	configure_exclusion "$P" other-blob >h2 &&
+	configure_exclusion blob "$P" my-blob "$config" >h &&
+	configure_exclusion blob "$P" other-blob "$config" >h2 &&
 
 	GIT_TRACE=1 GIT_TRACE_PACKET="$(pwd)/log" GIT_TEST_SIDEBAND_ALL=1 \
 	git -c protocol.version=2 \
@@ -879,20 +925,22 @@ test_expect_success 'part of packfile response provided as URI' '
 	ls http_child/.git/objects/pack/*.pack \
 	    http_child/.git/objects/pack/*.idx >filelist &&
 	test_line_count = 6 filelist
-'
+}
 
-test_expect_success 'packfile URIs with fetch instead of clone' '
+blobpackfileuri_fetch () {
+	config="$1"
+
 	P="$HTTPD_DOCUMENT_ROOT_PATH/http_parent" &&
-	rm -rf "$P" http_child log &&
+	test_when_finished "rm -rf \"$P\" http_child log" &&
 
 	git init "$P" &&
 	git -C "$P" config "uploadpack.allowsidebandall" "true" &&
 
 	echo my-blob >"$P/my-blob" &&
 	git -C "$P" add my-blob &&
-	git -C "$P" commit -m x &&
+	test_commit -C "$P" A &&
 
-	configure_exclusion "$P" my-blob >h &&
+	configure_exclusion blob "$P" my-blob $config >h &&
 
 	git init http_child &&
 
@@ -900,12 +948,28 @@ test_expect_success 'packfile URIs with fetch instead of clone' '
 	git -C http_child -c protocol.version=2 \
 		-c fetch.uriprotocols=http,https \
 		fetch "$HTTPD_URL/smart/http_parent"
+}
+
+test_expect_success 'blob-exclusion (using uploadpack.blobpackfileuri): part of packfile response provided as URI' '
+	rm -rf "$HTTPD_DOCUMENT_ROOT_PATH/http_parent" http_child log &&
+	part_of_packfile_response_verify old
+'
+
+test_expect_success 'blob-exclusion (using uploadpack.excludeobject): part of packfile response provided as URI' '
+	part_of_packfile_response_verify new
+'
+
+test_expect_success 'blob-exclusion (using uploadpack.blobpackfileuri): packfile URIs with fetch instead of clone' '
+	blobpackfileuri_fetch old
+'
+
+test_expect_success 'blob-exclusion (using uploadpack.excludeobject): packfile URIs with fetch instead of clone' '
+	blobpackfileuri_fetch new
 '
 
 test_expect_success 'fetching with valid packfile URI but invalid hash fails' '
 	P="$HTTPD_DOCUMENT_ROOT_PATH/http_parent" &&
-	rm -rf "$P" http_child log &&
-
+	test_when_finished "rm -rf \"$P\" http_child log" &&
 	git init "$P" &&
 	git -C "$P" config "uploadpack.allowsidebandall" "true" &&
 
@@ -913,9 +977,8 @@ test_expect_success 'fetching with valid packfile URI but invalid hash fails' '
 	git -C "$P" add my-blob &&
 	echo other-blob >"$P/other-blob" &&
 	git -C "$P" add other-blob &&
-	git -C "$P" commit -m x &&
-
-	configure_exclusion "$P" my-blob >h &&
+	test_commit -C "$P" A &&
+	configure_exclusion blob "$P" my-blob >h &&
 	# Configure a URL for other-blob. Just reuse the hash of the object as
 	# the hash of the packfile, since the hash does not matter for this
 	# test as long as it is not the hash of the pack, and it is of the
@@ -923,9 +986,8 @@ test_expect_success 'fetching with valid packfile URI but invalid hash fails' '
 	git -C "$P" hash-object other-blob >objh &&
 	git -C "$P" pack-objects "$HTTPD_DOCUMENT_ROOT_PATH/mypack" <objh >packh &&
 	git -C "$P" config --add \
-		"uploadpack.blobpackfileuri" \
-		"$(cat objh) $(cat objh) $HTTPD_URL/dumb/mypack-$(cat packh).pack" &&
-
+		"uploadpack.excludeobject" \
+		"$(cat objh) 0 $(cat objh) $HTTPD_URL/dumb/mypack-$(cat packh).pack" &&
 	test_must_fail env GIT_TEST_SIDEBAND_ALL=1 \
 		git -c protocol.version=2 \
 		-c fetch.uriprotocols=http,https \
@@ -935,17 +997,14 @@ test_expect_success 'fetching with valid packfile URI but invalid hash fails' '
 
 test_expect_success 'packfile-uri with transfer.fsckobjects' '
 	P="$HTTPD_DOCUMENT_ROOT_PATH/http_parent" &&
-	rm -rf "$P" http_child log &&
-
+	test_when_finished "rm -rf \"$P\" http_child log" &&
 	git init "$P" &&
 	git -C "$P" config "uploadpack.allowsidebandall" "true" &&
 
 	echo my-blob >"$P/my-blob" &&
 	git -C "$P" add my-blob &&
-	git -C "$P" commit -m x &&
-
-	configure_exclusion "$P" my-blob >h &&
-
+	test_commit -C "$P" A &&
+	configure_exclusion blob "$P" my-blob >h &&
 	sane_unset GIT_TEST_SIDEBAND_ALL &&
 	git -c protocol.version=2 -c transfer.fsckobjects=1 \
 		-c fetch.uriprotocols=http,https \
@@ -959,8 +1018,7 @@ test_expect_success 'packfile-uri with transfer.fsckobjects' '
 
 test_expect_success 'packfile-uri with transfer.fsckobjects fails on bad object' '
 	P="$HTTPD_DOCUMENT_ROOT_PATH/http_parent" &&
-	rm -rf "$P" http_child log &&
-
+	test_when_finished "rm -rf \"$P\" http_child log" &&
 	git init "$P" &&
 	git -C "$P" config "uploadpack.allowsidebandall" "true" &&
 
@@ -976,10 +1034,8 @@ test_expect_success 'packfile-uri with transfer.fsckobjects fails on bad object'
 
 	echo my-blob >"$P/my-blob" &&
 	git -C "$P" add my-blob &&
-	git -C "$P" commit -m x &&
-
-	configure_exclusion "$P" my-blob >h &&
-
+	test_commit -C "$P" A &&
+	configure_exclusion blob "$P" my-blob >h &&
 	sane_unset GIT_TEST_SIDEBAND_ALL &&
 	test_must_fail git -c protocol.version=2 -c transfer.fsckobjects=1 \
 		-c fetch.uriprotocols=http,https \
@@ -989,8 +1045,7 @@ test_expect_success 'packfile-uri with transfer.fsckobjects fails on bad object'
 
 test_expect_success 'packfile-uri with transfer.fsckobjects succeeds when .gitmodules is separate from tree' '
 	P="$HTTPD_DOCUMENT_ROOT_PATH/http_parent" &&
-	rm -rf "$P" http_child &&
-
+	test_when_finished "rm -rf \"$P\" http_child" &&
 	git init "$P" &&
 	git -C "$P" config "uploadpack.allowsidebandall" "true" &&
 
@@ -999,9 +1054,7 @@ test_expect_success 'packfile-uri with transfer.fsckobjects succeeds when .gitmo
 	echo "url = git://example.com/git/lib.git" >>"$P/.gitmodules" &&
 	git -C "$P" add .gitmodules &&
 	git -C "$P" commit -m x &&
-
-	configure_exclusion "$P" .gitmodules >h &&
-
+	configure_exclusion blob "$P" .gitmodules >h &&
 	sane_unset GIT_TEST_SIDEBAND_ALL &&
 	git -c protocol.version=2 -c transfer.fsckobjects=1 \
 		-c fetch.uriprotocols=http,https \
@@ -1015,8 +1068,7 @@ test_expect_success 'packfile-uri with transfer.fsckobjects succeeds when .gitmo
 
 test_expect_success 'packfile-uri with transfer.fsckobjects fails when .gitmodules separate from tree is invalid' '
 	P="$HTTPD_DOCUMENT_ROOT_PATH/http_parent" &&
-	rm -rf "$P" http_child err &&
-
+	test_when_finished "rm -rf \"$P\" http_child err" &&
 	git init "$P" &&
 	git -C "$P" config "uploadpack.allowsidebandall" "true" &&
 
@@ -1024,10 +1076,8 @@ test_expect_success 'packfile-uri with transfer.fsckobjects fails when .gitmodul
 	echo "path = include/foo" >>"$P/.gitmodules" &&
 	echo "url = git://example.com/git/lib.git" >>"$P/.gitmodules" &&
 	git -C "$P" add .gitmodules &&
-	git -C "$P" commit -m x &&
-
-	configure_exclusion "$P" .gitmodules >h &&
-
+	test_commit -C "$P" A &&
+	configure_exclusion blob "$P" .gitmodules >h &&
 	sane_unset GIT_TEST_SIDEBAND_ALL &&
 	test_must_fail git -c protocol.version=2 -c transfer.fsckobjects=1 \
 		-c fetch.uriprotocols=http,https \
