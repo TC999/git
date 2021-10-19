@@ -34,14 +34,69 @@ having it advertise `packfile-uris`, tolerating the client sending
 include some sort of non-trivial implementation in the Minimum Viable Product,
 at least so that we can test the client.
 
-This is the implementation: a feature, marked experimental, that allows the
-server to be configured by one or more `uploadpack.blobPackfileUri=<sha1>
-<uri>` entries. Whenever the list of objects to be sent is assembled, all such
-blobs are excluded, replaced with URIs. As noted in "Future work" below, the
-server can evolve in the future to support excluding other objects (or other
-implementations of servers could be made that support excluding other objects)
-without needing a protocol change, so clients should not expect that packfiles
-downloaded in this way only contain single blobs.
+This is the implementation: a feature, marked experimental, that allows
+the server to be configured by one or more entries with the format:
+
+    uploadpack.excludeobject=<object-hash> <level> <pack-hash> <uri>
+
+Value `<object-hash>` is the key of entry, and the object type can be
+blob, tree, commit, or tag. Value of entry has three parts,
+`<pack-hash>` is used to identify the packfile which contains the given
+`<object-hash>` object, and `<uri>` is the URI to download the packfile by
+client. For example, When a blob is configured with `uploadpack.excludeobject`
+that means whenever the blob to be send is assembled, the object will
+be excluded.
+
+In addition to excluding a single object like blob, sometimes it's
+hoped to exclude not only the object itself, but also all the related
+objects with it, like all the objects a tree contains or the ancestors
+that a commit can reach. In these cases, the `<level>` is designed to
+distinguish the scope of exclusion, it supports three levels:
+
+- Level 0: Excluding a single object itself, without any objects that
+  have a relationship with it. 
+
+- Level 1: Excluding object itself, and objects it contains.
+
+- Level 2: Excluding object itself, the objects it contains, and the
+  ancestors it can reach.
+
+If `<level>` is configured as 0, only the object itself will be
+excluded, no matter what the object type is. It is a common scenario
+for large size blobs, but it does much not sense for other object types
+(e.g. download a singe commit without downloading the blobs and tree
+in it).
+
+If `<level>` is configured as 1, not only the single object but also all
+the objects in it will be excluded. This applies to scenarios where
+it's wanted to exclude a specified non-blob object that includes some
+lage size objects.
+
+- If <object-hash> is a blob, the result is the same as level 0, because blob
+contains nothing just itself.
+
+- If <object-hash> is a tree, the tree itself, and all blobs and trees
+  in it will be excluded.
+
+- If <object-hash> is a commit, the commit itself, the referenced
+  root-tree, and all blobs and trees in the root-tree will be excluded.
+
+- If <object-hash> is a tag, the tag itself, the dereferenced commit
+  and all trees and blobs contained in its root-tree will be excluded.
+
+If `<level>` is configured as 2, not only the objects in the scope of
+level 1 , but also the reachable ancestors will be excluded if
+`<object-hash>` is commit or tag.
+
+Configuration compatibility
+---------------------------
+
+The old configuration of packfile-uri:
+
+    uploadpack.blobPackfileUri=<object-hash> <pack-hash> <uri>
+
+For the old configuration is compatible with the new one, but it only
+supports the exclusion of blob objects.
 
 Client design
 -------------
@@ -65,9 +120,6 @@ The protocol design allows some evolution of the server and client without any
 need for protocol changes, so only a small-scoped design is included here to
 form the MVP. For example, the following can be done:
 
- * On the server, more sophisticated means of excluding objects (e.g. by
-   specifying a commit to represent that commit and all objects that it
-   references).
  * On the client, resumption of clone. If a clone is interrupted, information
    could be recorded in the repository's config and a "clone-resume" command
    can resume the clone in progress. (Resumption of subsequent fetches is more
