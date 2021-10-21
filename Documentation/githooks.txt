@@ -249,6 +249,25 @@ If this hook exits with a non-zero status, `git push` will abort without
 pushing anything.  Information about why the push is rejected may be sent
 to the user by writing to standard error.
 
+[[pre-send-pack]]
+pre-send-pack
+~~~~~~~~~~~~~
+
+This hook is invoked( unless `-q` option is set ) by linkgit:git-upload-pack[1] just before it start
+creating the packfile. It takes 3 parameters temporary in key=value format.
+
+ - --have=<NUM>: The number of have objects of the client.
+ - --filter=<NUM>: The number of filters the client sent.
+ - --depth=<NUM>: The depth the client sent when using shallow clone.
+
+This hook is used to generate the custom message sending to the client during
+a git clone command. It shall write its output to the stdout and error to
+the stderr if any. The output and error will then be sent to the client
+through the sideband2.
+
+If this hook exit with a non-zero code, no extra message will be sent, while
+the packfile will be sent as usual.
+
 [[pre-receive]]
 pre-receive
 ~~~~~~~~~~~
