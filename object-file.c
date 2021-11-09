@@ -2019,7 +2019,12 @@ static int write_loose_object(const struct object_id *oid, char *hdr,
 	the_hash_algo->update_fn(&c, hdr, hdrlen);
 
 	/* Then the data itself.. */
-	stream.next_in = (void *)buf;
+	if (flags & HASH_STREAM) {
+		struct input_stream *in_stream = (struct input_stream *)buf;
+		stream.next_in = (void *)in_stream->read(in_stream, &len);
+	} else {
+		stream.next_in = (void *)buf;
+	}
 	stream.avail_in = len;
 	do {
 		unsigned char *in0 = stream.next_in;
