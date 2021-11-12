@@ -1985,7 +1985,7 @@ static int write_loose_object(struct object_id *oid, char *hdr,
 			      int hdrlen, const void *buf, unsigned long len,
 			      time_t mtime, unsigned flags)
 {
-	int fd, ret;
+	int fd, ret, flush = 0;
 	unsigned char compressed[4096];
 	git_zstream stream;
 	git_hash_ctx c;
@@ -2043,22 +2043,34 @@ static int write_loose_object(struct object_id *oid, char *hdr,
 	the_hash_algo->update_fn(&c, hdr, hdrlen);
 
 	/* Then the data itself.. */
-	if (flags & HASH_STREAM) {
-		struct input_stream *in_stream = (struct input_stream *)buf;
-		stream.next_in = (void *)in_stream->read(in_stream, &len);
-	} else {
+	if (!(flags & HASH_STREAM)) {
 		stream.next_in = (void *)buf;
+		stream.avail_in = len;
+		flush = Z_FINISH;
 	}
-	stream.avail_in = len;
 	do {
 		unsigned char *in0 = stream.next_in;
-		ret = git_deflate(&stream, Z_FINISH);
+		if (flags & HASH_STREAM) {
+			struct input_stream *in_stream =
+				(struct input_stream *)buf;
+			if (!stream.avail_in &&
+			    in_stream->has_next(in_stream)) {
+				const void *in = in_stream->read(
+					in_stream, &stream.avail_in);
+				stream.next_in = (void *)in;
+				in0 = (unsigned char *)in;
+				/* All data has been read. */
+				if (!in_stream->has_next(in_stream))
+					flush = Z_FINISH;
+			}
+		}
+		ret = git_deflate(&stream, flush);
 		the_hash_algo->update_fn(&c, in0, stream.next_in - in0);
 		if (write_buffer(fd, compressed, stream.next_out - compressed) < 0)
 			die(_("unable to write loose object file"));
 		stream.next_out = compressed;
 		stream.avail_out = sizeof(compressed);
-	} while (ret == Z_OK);
+	} while (ret == Z_OK || ret == Z_BUF_ERROR);
 
 	if (ret != Z_STREAM_END)
 		die(_("unable to deflate new object %s (%d)"), oid_to_hex(oid),
