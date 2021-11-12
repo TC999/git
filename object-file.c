@@ -1963,7 +1963,25 @@ static int create_tmpfile(struct strbuf *tmp, const char *filename)
 	return fd;
 }
 
-static int write_loose_object(const struct object_id *oid, char *hdr,
+static int freshen_loose_object(const struct object_id *oid)
+{
+	return check_and_freshen(oid, 1);
+}
+
+static int freshen_packed_object(const struct object_id *oid)
+{
+	struct pack_entry e;
+	if (!find_pack_entry(the_repository, oid, &e))
+		return 0;
+	if (e.p->freshened)
+		return 1;
+	if (!freshen_file(e.p->pack_name))
+		return 0;
+	e.p->freshened = 1;
+	return 1;
+}
+
+static int write_loose_object(struct object_id *oid, char *hdr,
 			      int hdrlen, const void *buf, unsigned long len,
 			      time_t mtime, unsigned flags)
 {
@@ -1981,7 +1999,13 @@ static int write_loose_object(const struct object_id *oid, char *hdr,
 	if (agit_crypto_enabled && len < big_file_no_encrypt_threshold)
 		do_encrypt = 1;
 
-	loose_object_path(the_repository, &filename, oid);
+	if (flags & HASH_STREAM) {
+		/* When oid is not determined, save tmp file to odb path. */
+		strbuf_reset(&filename);
+		strbuf_addf(&filename, "%s/", the_repository->objects->odb->path);
+	} else {
+		loose_object_path(the_repository, &filename, oid);
+	}
 
 	fd = create_tmpfile(&tmp_file, filename.buf);
 	if (fd < 0) {
@@ -2044,11 +2068,35 @@ static int write_loose_object(const struct object_id *oid, char *hdr,
 		die(_("deflateEnd on object %s failed (%d)"), oid_to_hex(oid),
 		    ret);
 	the_hash_algo->final_oid_fn(&parano_oid, &c);
-	if (!oideq(oid, &parano_oid))
+	if (!(flags & HASH_STREAM) && !oideq(oid, &parano_oid))
 		die(_("confused by unstable object source data for %s"),
 		    oid_to_hex(oid));
 
 	close_loose_object(fd, tmp_file.buf);
+
+	if (flags & HASH_STREAM) {
+		int dirlen;
+
+		oidcpy(oid, &parano_oid);
+		if (freshen_packed_object(oid) || freshen_loose_object(oid)) {
+			unlink_or_warn(tmp_file.buf);
+			return 0;
+		}
+		loose_object_path(the_repository, &filename, oid);
+
+		/* We finally know the object path, and create the missing dir. */
+		dirlen = directory_size(filename.buf);
+		if (dirlen) {
+			struct strbuf dir = STRBUF_INIT;
+			strbuf_add(&dir, filename.buf, dirlen - 1);
+			if (mkdir_in_gitdir(dir.buf) && errno != EEXIST) {
+				ret = error_errno(_("unable to create dir %s"), dir.buf);
+				strbuf_release(&dir);
+				return ret;
+			}
+			strbuf_release(&dir);
+		}
+	}
 
 	if (mtime) {
 		struct utimbuf utb;
@@ -2060,24 +2108,6 @@ static int write_loose_object(const struct object_id *oid, char *hdr,
 	}
 
 	return finalize_object_file(tmp_file.buf, filename.buf);
-}
-
-static int freshen_loose_object(const struct object_id *oid)
-{
-	return check_and_freshen(oid, 1);
-}
-
-static int freshen_packed_object(const struct object_id *oid)
-{
-	struct pack_entry e;
-	if (!find_pack_entry(the_repository, oid, &e))
-		return 0;
-	if (e.p->freshened)
-		return 1;
-	if (!freshen_file(e.p->pack_name))
-		return 0;
-	e.p->freshened = 1;
-	return 1;
 }
 
 int write_object_file_flags(const void *buf, unsigned long len,
@@ -2136,7 +2166,7 @@ int force_object_loose(const struct object_id *oid, time_t mtime)
 	if (!buf)
 		return error(_("cannot read object for %s"), oid_to_hex(oid));
 	hdrlen = format_object_header(hdr, sizeof(hdr), type, len);
-	ret = write_loose_object(oid, hdr, hdrlen, buf, len, mtime, 0);
+	ret = write_loose_object((struct object_id*) oid, hdr, hdrlen, buf, len, mtime, 0);
 	free(buf);
 
 	return ret;
