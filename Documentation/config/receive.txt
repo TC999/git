@@ -49,6 +49,11 @@ receive.fsck.skipList::
 	linkgit:git-fsck[1]. See the `fsck.skipList` documentation for
 	details.
 
+receive.largeblobsinfo::
+	When it is set to true, git-receive-pack will run with
+	"--info-large-blobs" and save large blob oids to
+	"objects/info/large-blobs".
+
 receive.keepAlive::
 	After receiving the pack from the client, `receive-pack` may
 	produce no output (if `--quiet` was specified) while processing

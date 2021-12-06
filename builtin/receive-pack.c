@@ -70,6 +70,7 @@ static int quiet;
 static int prefer_ofs_delta = 1;
 static int auto_update_server_info;
 static int auto_gc = 1;
+static int info_large_blobs;
 static int reject_thin;
 static int stateless_rpc;
 /* If agit_txn mode is enabled, our proxy server (galileo) will write
@@ -277,6 +278,11 @@ static int receive_pack_config(const char *var, const char *value, void *cb)
 
 	if (strcmp(var, "receive.autogc") == 0) {
 		auto_gc = git_config_bool(var, value);
+		return 0;
+	}
+
+	if (strcmp(var, "receive.largeblobsinfo") == 0) {
+		info_large_blobs = git_config_bool(var, value);
 		return 0;
 	}
 
@@ -2526,6 +2532,8 @@ static const char *unpack(int err_fd, struct shallow_info *si)
 	if (ntohl(hdr.hdr_entries) < unpack_limit) {
 		strvec_push(&child.args, "unpack-objects");
 		push_header_arg(&child.args, &hdr);
+		if (info_large_blobs)
+			strvec_push(&child.args, "--info-large-blobs");
 		if (quiet)
 			strvec_push(&child.args, "-q");
 		if (fsck_objects)
@@ -2559,6 +2567,8 @@ static const char *unpack(int err_fd, struct shallow_info *si)
 			     (uintmax_t)getpid(),
 			     hostname);
 
+		if (info_large_blobs)
+			strvec_push(&child.args, "--info-large-blobs");
 		if (!quiet && err_fd)
 			strvec_push(&child.args, "--show-resolving-progress");
 		if (use_sideband)

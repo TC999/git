@@ -1,5 +1,7 @@
 #include "builtin.h"
 #include "config.h"
+#include "lockfile.h"
+#include "info-files.h"
 #include "delta.h"
 #include "pack.h"
 #include "csum-file.h"
@@ -602,6 +604,24 @@ static int is_delta_type(enum object_type type)
 	return (type == OBJ_REF_DELTA || type == OBJ_OFS_DELTA);
 }
 
+static void save_receive_pack_infos(struct object_id *oid,
+				    enum object_type type, unsigned long size)
+{
+	switch (type) {
+	case OBJ_BLOB:
+		if (info_large_blobs_fd && size > big_file_threshold) {
+			struct strbuf buf = STRBUF_INIT;
+			strbuf_addf(&buf, "%s %"PRIuMAX"\n",
+				    oid_to_hex(oid), (uintmax_t)size);
+			xwrite(info_large_blobs_fd, buf.buf, buf.len);
+			strbuf_release(&buf);
+		}
+		return;
+	default:
+		return;
+	}
+}
+
 static void *unpack_entry_data(off_t offset, unsigned long size,
 			       enum object_type type, struct object_id *oid)
 {
@@ -645,8 +665,10 @@ static void *unpack_entry_data(off_t offset, unsigned long size,
 	if (stream.total_out != size || status != Z_STREAM_END)
 		bad_object(offset, _("inflate returned %d"), status);
 	git_inflate_end(&stream);
-	if (oid)
+	if (oid) {
 		the_hash_algo->final_oid_fn(oid, &c);
+		save_receive_pack_infos(oid, type, size);
+	}
 	return buf == fixed_buf ? NULL : buf;
 }
 
@@ -1186,6 +1208,8 @@ static struct base_data *resolve_delta(struct object_entry *delta_obj,
 		bad_object(delta_obj->idx.offset, _("failed to apply delta"));
 	hash_object_file(the_hash_algo, result_data, result_size,
 			 delta_obj->real_type, &delta_obj->idx.oid);
+	save_receive_pack_infos(&delta_obj->idx.oid, delta_obj->real_type,
+				result_size);
 	sha1_object(result_data, NULL, result_size, delta_obj->real_type,
 		    &delta_obj->idx.oid);
 
@@ -1954,6 +1978,7 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
 	struct strbuf rev_index_name_buf = STRBUF_INIT;
 	struct pack_idx_entry **idx_objects;
 	struct pack_idx_option opts;
+	struct lock_file info_large_blobs = LOCK_INIT;
 	unsigned char pack_hash[GIT_MAX_RAWSZ];
 	unsigned foreign_nr = 1;	/* zero is a "good" value, assume bad */
 	int report_end_of_input = 0;
@@ -2084,6 +2109,8 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
 				rev_index = 1;
 			} else if (!strcmp(arg, "--no-rev-index")) {
 				rev_index = 0;
+			} else if (!strcmp(arg, "--info-large-blobs")) {
+				info_large_blobs_fd = create_info_file(&info_large_blobs, "large-blobs");
 			} else
 				usage(index_pack_usage);
 			continue;
@@ -2154,6 +2181,8 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
 		write_in_full(2, "\0", 1);
 	resolve_deltas();
 	conclude_pack(fix_thin_pack, curr_pack, pack_hash);
+	if (info_large_blobs_fd && commit_lock_file(&info_large_blobs))
+		die_errno(_("cannot create 'info/large-blobs'"));
 	free(ofs_deltas);
 	free(ref_deltas);
 	if (strict)

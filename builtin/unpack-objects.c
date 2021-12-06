@@ -1,5 +1,7 @@
 #include "builtin.h"
 #include "cache.h"
+#include "lockfile.h"
+#include "info-files.h"
 #include "config.h"
 #include "object-store.h"
 #include "object.h"
@@ -455,7 +457,7 @@ static void write_stream_blob(unsigned nr, unsigned long size)
 	git_inflate_init(&zstream);
 
 	if (write_object_file_flags(&in_stream, size,
-				    type_name(OBJ_BLOB),
+				    OBJ_BLOB,
 				    &obj_list[nr].oid,
 				    HASH_STREAM))
 		die(_("failed to write object in stream"));
@@ -698,6 +700,7 @@ int cmd_unpack_objects(int argc, const char **argv, const char *prefix)
 {
 	int i;
 	struct object_id oid;
+	struct lock_file info_large_blobs = LOCK_INIT;
 
 	read_replace_refs = 0;
 
@@ -757,6 +760,10 @@ int cmd_unpack_objects(int argc, const char **argv, const char *prefix)
 				max_input_object_size = strtoumax(arg, NULL, 10);
 				continue;
 			}
+			if (!strcmp(arg, "--info-large-blobs")) {
+				info_large_blobs_fd = create_info_file(&info_large_blobs, "large-blobs");
+				continue;
+			}
 			usage(unpack_usage);
 		}
 
@@ -765,6 +772,8 @@ int cmd_unpack_objects(int argc, const char **argv, const char *prefix)
 	}
 	the_hash_algo->init_fn(&ctx);
 	unpack_all();
+	if (info_large_blobs_fd && commit_lock_file(&info_large_blobs))
+		die_errno(_("cannot create 'info/large-blobs'"));
 	the_hash_algo->update_fn(&ctx, buffer, offset);
 	the_hash_algo->final_oid_fn(&oid, &ctx);
 	if (strict) {

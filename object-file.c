@@ -1981,6 +1981,21 @@ static int freshen_packed_object(const struct object_id *oid)
 	return 1;
 }
 
+static void save_receive_pack_infos(struct object_id *oid, char *hdr,
+				    unsigned long size)
+{
+	if (!strncmp(hdr, "blob", 4)) {
+		if (info_large_blobs_fd && size > big_file_threshold) {
+			struct strbuf buf = STRBUF_INIT;
+			strbuf_addf(&buf, "%s %"PRIuMAX"\n",
+				    oid_to_hex(oid), (uintmax_t)size);
+			xwrite(info_large_blobs_fd, buf.buf, buf.len);
+			strbuf_release(&buf);
+		}
+		return;
+	}
+}
+
 static int write_loose_object(struct object_id *oid, char *hdr,
 			      int hdrlen, const void *buf, unsigned long len,
 			      time_t mtime, unsigned flags)
@@ -2118,6 +2133,8 @@ static int write_loose_object(struct object_id *oid, char *hdr,
 			warning_errno(_("failed utime() on %s"), tmp_file.buf);
 	}
 
+	save_receive_pack_infos(oid, hdr, len);
+
 	return finalize_object_file(tmp_file.buf, filename.buf);
 }
 
@@ -2129,7 +2146,8 @@ int write_object_file_flags(const void *buf, unsigned long len,
 	int hdrlen = sizeof(hdr);
 	if (flags & HASH_STREAM) {
 		/* Generate the header */
-		hdrlen = xsnprintf(hdr, hdrlen, "%s %"PRIuMAX , type, (uintmax_t)len)+1;
+		hdrlen = format_object_header(hdr, hdrlen, type, len);
+
 		return write_loose_object(oid, hdr, hdrlen, buf, len, 0, flags);
 	}
 
