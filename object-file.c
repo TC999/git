@@ -2053,14 +2053,13 @@ static int write_loose_object(struct object_id *oid, char *hdr,
 		if (flags & HASH_STREAM) {
 			struct input_stream *in_stream =
 				(struct input_stream *)buf;
-			if (!stream.avail_in &&
-			    in_stream->has_next(in_stream)) {
+			if (!stream.avail_in && !in_stream->is_finished) {
 				const void *in = in_stream->read(
 					in_stream, &stream.avail_in);
 				stream.next_in = (void *)in;
 				in0 = (unsigned char *)in;
 				/* All data has been read. */
-				if (!in_stream->has_next(in_stream))
+				if (in_stream->is_finished)
 					flush = Z_FINISH;
 			}
 		}
@@ -2128,6 +2127,11 @@ int write_object_file_flags(const void *buf, unsigned long len,
 {
 	char hdr[MAX_HEADER_LEN];
 	int hdrlen = sizeof(hdr);
+	if (flags & HASH_STREAM) {
+		/* Generate the header */
+		hdrlen = xsnprintf(hdr, hdrlen, "%s %"PRIuMAX , type, (uintmax_t)len)+1;
+		return write_loose_object(oid, hdr, hdrlen, buf, len, 0, flags);
+	}
 
 	/* Normally if we have it in the pack then we do not bother writing
 	 * it out into .git/objects/??/?{38} file.
