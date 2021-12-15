@@ -1994,6 +1994,24 @@ static void save_receive_pack_infos(struct object_id *oid, char *hdr,
 		}
 		return;
 	}
+	if (!strncmp(hdr, "commit", 6)) {
+		if (info_commits_fd) {
+			struct strbuf buf = STRBUF_INIT;
+			strbuf_addf(&buf, "%s\n", oid_to_hex(oid));
+			xwrite(info_commits_fd, buf.buf, buf.len);
+			strbuf_release(&buf);
+		}
+		return;
+	}
+	if (!strncmp(hdr, "tree", 4)) {
+		if (info_trees_fd) {
+			struct strbuf buf = STRBUF_INIT;
+			strbuf_addf(&buf, "%s\n", oid_to_hex(oid));
+			xwrite(info_trees_fd, buf.buf, buf.len);
+			strbuf_release(&buf);
+		}
+		return;
+	}
 }
 
 static int write_loose_object(struct object_id *oid, char *hdr,

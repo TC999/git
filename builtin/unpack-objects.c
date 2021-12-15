@@ -701,6 +701,8 @@ int cmd_unpack_objects(int argc, const char **argv, const char *prefix)
 	int i;
 	struct object_id oid;
 	struct lock_file info_large_blobs = LOCK_INIT;
+	struct lock_file info_commits = LOCK_INIT;
+	struct lock_file info_trees = LOCK_INIT;
 
 	read_replace_refs = 0;
 
@@ -764,6 +766,14 @@ int cmd_unpack_objects(int argc, const char **argv, const char *prefix)
 				info_large_blobs_fd = create_info_file(&info_large_blobs, "large-blobs");
 				continue;
 			}
+			if (!strcmp(arg, "--info-commits")) {
+				info_commits_fd = create_info_file(&info_commits, "commits");
+				continue;
+			}
+			if (!strcmp(arg, "--info-trees")) {
+				info_trees_fd = create_info_file(&info_trees, "trees");
+				continue;
+			}
 			usage(unpack_usage);
 		}
 
@@ -774,6 +784,10 @@ int cmd_unpack_objects(int argc, const char **argv, const char *prefix)
 	unpack_all();
 	if (info_large_blobs_fd && commit_lock_file(&info_large_blobs))
 		die_errno(_("cannot create 'info/large-blobs'"));
+	if (info_commits_fd && commit_lock_file(&info_commits))
+		die_errno(_("cannot create 'info/commits'"));
+	if (info_trees_fd && commit_lock_file(&info_trees))
+		die_errno(_("cannot create 'info/trees'"));
 	the_hash_algo->update_fn(&ctx, buffer, offset);
 	the_hash_algo->final_oid_fn(&oid, &ctx);
 	if (strict) {

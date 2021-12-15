@@ -54,6 +54,14 @@ receive.largeblobsinfo::
 	"--info-large-blobs" and save large blob oids to
 	"objects/info/large-blobs".
 
+receive.commitsinfo::
+	When it is set to true, git-receive-pack will run with
+	"--info-commits" and save commit oids to "objects/info/commits".
+
+receive.treesinfo::
+	When it is set to true, git-receive-pack will run with
+	"--info-trees" and save tree oids to "objects/info/trees".
+
 receive.keepAlive::
 	After receiving the pack from the client, `receive-pack` may
 	produce no output (if `--quiet` was specified) while processing

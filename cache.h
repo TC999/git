@@ -970,6 +970,8 @@ extern char *apply_default_ignorewhitespace;
 extern const char *git_attributes_file;
 extern const char *git_hooks_path;
 extern int info_large_blobs_fd;
+extern int info_commits_fd;
+extern int info_trees_fd;
 extern int zlib_compression_level;
 extern int pack_compression_level;
 extern size_t packed_git_window_size;

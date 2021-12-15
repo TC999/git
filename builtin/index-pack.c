@@ -617,6 +617,22 @@ static void save_receive_pack_infos(struct object_id *oid,
 			strbuf_release(&buf);
 		}
 		return;
+	case OBJ_COMMIT:
+		if (info_commits_fd) {
+			struct strbuf buf = STRBUF_INIT;
+			strbuf_addf(&buf, "%s\n", oid_to_hex(oid));
+			xwrite(info_commits_fd, buf.buf, buf.len);
+			strbuf_release(&buf);
+		}
+		return;
+	case OBJ_TREE:
+		if (info_trees_fd) {
+			struct strbuf buf = STRBUF_INIT;
+			strbuf_addf(&buf, "%s\n", oid_to_hex(oid));
+			xwrite(info_trees_fd, buf.buf, buf.len);
+			strbuf_release(&buf);
+		}
+		return;
 	default:
 		return;
 	}
@@ -1979,6 +1995,8 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
 	struct pack_idx_entry **idx_objects;
 	struct pack_idx_option opts;
 	struct lock_file info_large_blobs = LOCK_INIT;
+	struct lock_file info_commits = LOCK_INIT;
+	struct lock_file info_trees = LOCK_INIT;
 	unsigned char pack_hash[GIT_MAX_RAWSZ];
 	unsigned foreign_nr = 1;	/* zero is a "good" value, assume bad */
 	int report_end_of_input = 0;
@@ -2111,6 +2129,10 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
 				rev_index = 0;
 			} else if (!strcmp(arg, "--info-large-blobs")) {
 				info_large_blobs_fd = create_info_file(&info_large_blobs, "large-blobs");
+			} else if (!strcmp(arg, "--info-commits")) {
+				info_commits_fd = create_info_file(&info_commits, "commits");
+			} else if (!strcmp(arg, "--info-trees")) {
+				info_trees_fd = create_info_file(&info_trees, "trees");
 			} else
 				usage(index_pack_usage);
 			continue;
@@ -2183,6 +2205,10 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
 	conclude_pack(fix_thin_pack, curr_pack, pack_hash);
 	if (info_large_blobs_fd && commit_lock_file(&info_large_blobs))
 		die_errno(_("cannot create 'info/large-blobs'"));
+	if (info_commits_fd && commit_lock_file(&info_commits))
+		die_errno(_("cannot create 'info/commits'"));
+	if (info_trees_fd && commit_lock_file(&info_trees))
+		die_errno(_("cannot create 'info/trees'"));
 	free(ofs_deltas);
 	free(ref_deltas);
 	if (strict)

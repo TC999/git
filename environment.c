@@ -41,6 +41,8 @@ char *apply_default_ignorewhitespace;
 const char *git_attributes_file;
 const char *git_hooks_path;
 int info_large_blobs_fd = 0;
+int info_commits_fd = 0;
+int info_trees_fd = 0;
 int zlib_compression_level = Z_BEST_SPEED;
 int pack_compression_level = Z_DEFAULT_COMPRESSION;
 int fsync_object_files = -1;
