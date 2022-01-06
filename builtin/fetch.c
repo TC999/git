@@ -90,6 +90,7 @@ static struct list_objects_filter_options filter_options;
 static struct string_list server_options = STRING_LIST_INIT_DUP;
 static struct string_list negotiation_tip = STRING_LIST_INIT_NODUP;
 static int fetch_write_commit_graph = -1;
+static int fetch_write_packed_refs;
 static int stdin_refspecs = 0;
 static int negotiate_only;
 
@@ -102,6 +103,11 @@ static int git_fetch_config(const char *k, const char *v, void *cb)
 
 	if (!strcmp(k, "fetch.prunetags")) {
 		fetch_prune_tags_config = git_config_bool(k, v);
+		return 0;
+	}
+
+	if (!strcmp(k, "fetch.writepackedrefs")) {
+		fetch_write_packed_refs = git_config_bool(k, v);
 		return 0;
 	}
 
@@ -232,6 +238,8 @@ static struct option builtin_fetch_options[] = {
 		 N_("check for forced-updates on all updated branches")),
 	OPT_BOOL(0, "write-commit-graph", &fetch_write_commit_graph,
 		 N_("write the commit-graph after fetching")),
+	OPT_BOOL(0, "write-packed-refs", &fetch_write_packed_refs,
+		 N_("write packed-refs when fetching")),
 	OPT_BOOL(0, "stdin", &stdin_refspecs,
 		 N_("accept refspecs from stdin")),
 	OPT_END()
@@ -725,6 +733,7 @@ static int s_update_ref(const char *action,
 	}
 
 	if (our_transaction) {
+		/* No atomic fetch, write directly to loose ref. */
 		switch (ref_transaction_commit(our_transaction, &err)) {
 		case 0:
 			break;
@@ -1732,7 +1741,8 @@ static int do_fetch(struct transport *transport,
 		if (retcode)
 			goto cleanup;
 
-		retcode = ref_transaction_commit(transaction, &err);
+		retcode = ref_transaction_commit_extended(transaction, &err,
+							  fetch_write_packed_refs);
 		if (retcode) {
 			error("%s", err.buf);
 			ref_transaction_free(transaction);
@@ -1870,6 +1880,8 @@ static void add_options_to_argv(struct strvec *argv)
 		strvec_push(argv, "--update-head-ok");
 	if (force)
 		strvec_push(argv, "--force");
+	if (fetch_write_packed_refs)
+		strvec_push(argv, "--write-packed-refs");
 	if (keep)
 		strvec_push(argv, "--keep");
 	if (recurse_submodules == RECURSE_SUBMODULES_ON)
@@ -2142,6 +2154,12 @@ int cmd_fetch(int argc, const char **argv, const char *prefix)
 	argc = parse_options(argc, argv, prefix,
 			     builtin_fetch_options, builtin_fetch_usage, 0);
 
+	if (fetch_write_packed_refs) {
+		/* Need to enable transaction to write fetch refs to packed-refs
+		 * by setting atomic_fetch = 1.
+		 */
+		atomic_fetch = 1;
+	}
 	if (recurse_submodules_cli != RECURSE_SUBMODULES_DEFAULT)
 		recurse_submodules = recurse_submodules_cli;
 
@@ -2273,7 +2291,10 @@ int cmd_fetch(int argc, const char **argv, const char *prefix)
 			die(_("--filter can only be used with the remote "
 			      "configured in extensions.partialclone"));
 
-		if (atomic_fetch)
+		/* Option "--fetch-write-packed-refs" will enable "--atomic",
+		 * should not trigger this issue.
+		 */
+		if (atomic_fetch && !fetch_write_packed_refs)
 			die(_("--atomic can only be used when fetching "
 			      "from one remote"));
 
