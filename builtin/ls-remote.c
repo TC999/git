@@ -47,8 +47,9 @@ int cmd_ls_remote(int argc, const char **argv, const char *prefix)
 	const char **pattern = NULL;
 	struct transport_ls_refs_options transport_options =
 		TRANSPORT_LS_REFS_OPTIONS_INIT;
-	int i;
+	size_t i;
 	struct string_list server_options = STRING_LIST_INIT_DUP;
+	struct string_list ref_prefixes = STRING_LIST_INIT_NODUP;
 
 	struct remote *remote;
 	struct transport *transport;
@@ -65,6 +66,8 @@ int cmd_ls_remote(int argc, const char **argv, const char *prefix)
 			   PARSE_OPT_HIDDEN },
 		OPT_BIT('t', "tags", &flags, N_("limit to tags"), REF_TAGS),
 		OPT_BIT('h', "heads", &flags, N_("limit to heads"), REF_HEADS),
+		OPT_STRING_LIST('r', "ref-prefix", &ref_prefixes, N_("prefix"),
+				N_("specific matching ref prefix")),
 		OPT_BIT(0, "refs", &flags, N_("do not show peeled tags"), REF_NORMAL),
 		OPT_BOOL(0, "get-url", &get_url,
 			 N_("take url.<base>.insteadOf into account")),
@@ -87,7 +90,7 @@ int cmd_ls_remote(int argc, const char **argv, const char *prefix)
 	packet_trace_identity("ls-remote");
 
 	if (argc > 1) {
-		int i;
+		size_t i;
 		CALLOC_ARRAY(pattern, argc);
 		for (i = 1; i < argc; i++) {
 			pattern[i - 1] = xstrfmt("*/%s", argv[i]);
@@ -98,6 +101,8 @@ int cmd_ls_remote(int argc, const char **argv, const char *prefix)
 		strvec_push(&transport_options.ref_prefixes, "refs/tags/");
 	if (flags & REF_HEADS)
 		strvec_push(&transport_options.ref_prefixes, "refs/heads/");
+	for (i = 0; i < ref_prefixes.nr; i++)
+		expand_ref_prefix(&transport_options.ref_prefixes, ref_prefixes.items[i].string);
 
 	remote = remote_get(dest);
 	if (!remote) {
