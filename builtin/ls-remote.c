@@ -80,8 +80,7 @@ int cmd_ls_remote(int argc, const char **argv, const char *prefix)
 
 	memset(&ref_array, 0, sizeof(ref_array));
 
-	argc = parse_options(argc, argv, prefix, options, ls_remote_usage,
-			     PARSE_OPT_STOP_AT_NON_OPTION);
+	argc = parse_options(argc, argv, prefix, options, ls_remote_usage, 0);
 	dest = argv[0];
 
 	packet_trace_identity("ls-remote");

@@ -349,4 +349,28 @@ test_expect_success 'ls-remote prefixes work with all protocol versions' '
 	test_cmp expect actual.v2
 '
 
+test_expect_success 'ls-remote same result if exchange the order of --heads and <remote>' '
+	git ls-remote --heads self > expect.heads &&
+	git ls-remote self --heads > actual.heads &&
+	test_cmp expect.heads actual.heads
+'
+
+test_expect_success 'ls-remote same result if exchange the order of --tags and <remote>' '
+	git ls-remote --tags self > expect.tags &&
+	git ls-remote self --tags > actual.tags &&
+	test_cmp expect.tags actual.tags
+'
+
+test_expect_success 'ls-remote same result if exchange the order of --refs and <remote>' '
+	git ls-remote --refs self > expect.refs &&
+	git ls-remote self --refs > actual.refs &&
+	test_cmp expect.refs actual.refs
+'
+
+test_expect_success 'ls-remote same result if exchange the order of --symref and <remote>' '
+	git ls-remote --symref self > expect.symref &&
+	git ls-remote self --symref > actual.symref &&
+	test_cmp expect.symref actual.symref
+'
+
 test_done
