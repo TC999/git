@@ -1017,6 +1017,11 @@ static void write_reused_pack_one(size_t pos, struct hashfile *out,
 	type = unpack_object_header(reuse_packfile, w_curs, &cur, &size);
 	assert(type >= 0);
 
+	struct object_id oid;
+	unsigned index_pos = pack_pos_to_index(reuse_packfile, pos);
+	if(!nth_packed_object_id(&oid, reuse_packfile, index_pos))
+		fprintf(stderr, "[dyrone] [write_reused_pack_one] current oid: %s, pos: %d\n",oid_to_hex(&oid), pos);
+
 	if (type == OBJ_OFS_DELTA) {
 		off_t base_offset;
 		off_t fixup;
@@ -1026,6 +1031,13 @@ static void write_reused_pack_one(size_t pos, struct hashfile *out,
 
 		base_offset = get_delta_base(reuse_packfile, w_curs, &cur, type, offset);
 		assert(base_offset != 0);
+
+		uint32_t base_position;
+		struct object_id base_oid;
+		offset_to_pack_pos(reuse_packfile, base_offset, &base_position);
+		if(!nth_packed_object_id(&base_oid, reuse_packfile,base_position))
+			fprintf(stderr, "[dyrone] [write_reused_pack_one] base oid: %s, pos: %d\n",oid_to_hex(&base_oid), base_position);
+
 
 		/* Convert to REF_DELTA if we must... */
 		if (!allow_ofs_delta) {
@@ -1088,6 +1100,8 @@ static size_t write_reused_pack_verbatim(struct hashfile *out,
 			reuse_packfile_bitmap->words[pos] == (eword_t)~0)
 		pos++;
 
+	fprintf(stderr, "[dyrone] [write_reused_pack_verbatim] pos: %d\n", pos);
+
 	if (pos) {
 		off_t to_write;
 
@@ -1111,6 +1125,8 @@ static void write_reused_pack(struct hashfile *f)
 	size_t i = 0;
 	uint32_t offset;
 	struct pack_window *w_curs = NULL;
+
+	fprintf(stderr, "[dyrone] allow_ofs_delta: %d\n", allow_ofs_delta);
 
 	if (allow_ofs_delta)
 		i = write_reused_pack_verbatim(f, &w_curs);
@@ -1452,6 +1468,8 @@ static int want_object_in_pack(const struct object_id *oid,
 	struct list_head *pos;
 	struct multi_pack_index *m;
 
+	fprintf(stderr, "[dyrone] oid: %s", oid_to_hex(oid)," ");
+
 	if (!exclude && local && has_loose_object_nonlocal(oid))
 		return 0;
 
@@ -1462,14 +1480,17 @@ static int want_object_in_pack(const struct object_id *oid,
 	 */
 	if (*found_pack) {
 		want = want_found_object(oid, exclude, *found_pack);
+		fprintf(stderr, "return want from a given pack, want: %d%s\n", want, " ");
 		if (want != -1)
 			return want;
 	}
 
 	for (m = get_multi_pack_index(the_repository); m; m = m->next) {
+		fprintf(stderr, "exist multi pack index%s", " ");
 		struct pack_entry e;
 		if (fill_midx_entry(the_repository, oid, &e, m)) {
 			want = want_object_in_pack_one(e.p, oid, exclude, found_pack, found_offset);
+			fprintf(stderr, "return want from midx, want: %d%s\n", want, " ");
 			if (want != -1)
 				return want;
 		}
@@ -1481,6 +1502,7 @@ static int want_object_in_pack(const struct object_id *oid,
 		if (!exclude && want > 0)
 			list_move(&p->mru,
 				  get_packed_git_mru(the_repository));
+		fprintf(stderr, "[dyrone] return want from packs, want: %d%s\n, ", want, "");
 		if (want != -1)
 			return want;
 	}
@@ -1539,6 +1561,7 @@ static const char no_closure_warning[] = N_(
 static int add_object_entry(const struct object_id *oid, enum object_type type,
 			    const char *name, int exclude)
 {
+	fprintf(stderr, "[dyrone] oid: %s, in add_object_entry()%s", oid_to_hex(oid), "\n");
 	struct packed_git *found_pack = NULL;
 	off_t found_offset = 0;
 
@@ -1568,6 +1591,7 @@ static int add_object_entry_from_bitmap(const struct object_id *oid,
 					int flags, uint32_t name_hash,
 					struct packed_git *pack, off_t offset)
 {
+	fprintf(stderr, "[dyrone] oid: %s, in add_object_entry_from_bitmap()%s", oid_to_hex(oid), "\n");
 	display_progress(progress_state, ++nr_seen);
 
 	if (have_duplicate_entry(oid, 0))
@@ -3661,6 +3685,7 @@ static int get_object_list_from_bitmap(struct rev_info *revs)
 			&reuse_packfile_objects,
 			&reuse_packfile_bitmap)) {
 		assert(reuse_packfile_objects);
+		fprintf(stderr, "[dyrone] reuse_packfile_objects: %d\n", reuse_packfile_objects);
 		nr_result += reuse_packfile_objects;
 		nr_seen += reuse_packfile_objects;
 		display_progress(progress_state, nr_seen);

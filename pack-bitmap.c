@@ -839,18 +839,28 @@ static void show_extended_objects(struct bitmap_index *bitmap_git,
 	struct eindex *eindex = &bitmap_git->ext_index;
 	uint32_t i;
 
+	fprintf(stderr,
+		"[dyrone] [show_extended_objects] we are in %s\n","");
+	
 	for (i = 0; i < eindex->count; ++i) {
 		struct object *obj;
 
-		if (!bitmap_get(objects, bitmap_num_objects(bitmap_git) + i))
+		if (!bitmap_get(objects, bitmap_num_objects(bitmap_git) + i)){
+			fprintf(stderr,"[dyrone] [show_extended_objects] will continue in [1] %s\n","");
 			continue;
+		}
 
 		obj = eindex->objects[i];
 		if ((obj->type == OBJ_BLOB && !revs->blob_objects) ||
 		    (obj->type == OBJ_TREE && !revs->tree_objects) ||
-		    (obj->type == OBJ_TAG && !revs->tag_objects))
-			continue;
-
+		    (obj->type == OBJ_TAG && !revs->tag_objects)){
+				fprintf(stderr,"[dyrone] [show_extended_objects] will continue in [2] %s\n","");
+				continue;
+		}
+			
+		fprintf(stderr,
+			"[dyrone] [show_extended_objects] oid: %s, type: %d\n",
+			oid_to_hex(&obj->oid), obj->type);
 		show_reach(&obj->oid, obj->type, 0, eindex->hashes[i], NULL, 0);
 	}
 }
@@ -926,6 +936,10 @@ static void show_objects_for_type(
 
 				pack_id = nth_midxed_pack_int_id(m, index_pos);
 				pack = bitmap_git->midx->packs[pack_id];
+
+				fprintf(stderr,
+				"[dyrone] [show_objects_for_type] oid: %s, packname: %s, pos: %d\n",
+				oid_to_hex(&oid), pack->pack_name, pos + offset);
 			} else {
 				index_pos = pack_pos_to_index(bitmap_git->pack, pos + offset);
 				ofs = pack_pos_to_offset(bitmap_git->pack, pos + offset);
@@ -936,6 +950,7 @@ static void show_objects_for_type(
 
 			if (bitmap_git->hashes)
 				hash = get_be32(bitmap_git->hashes + index_pos);
+
 
 			show_reach(&oid, object_type, 0, hash, pack, ofs);
 		}
@@ -1365,8 +1380,15 @@ static int try_partial_reuse(struct packed_git *pack,
 	 * preferred pack precede all bits from other packs.
 	 */
 
-	if (pos >= pack->num_objects)
+	if (pos >= pack->num_objects){
+		fprintf(stderr, "[dyrone] pos: %lu >= pack->num_objects： %u, return\n", pos, pack->num_objects);
 		return -1; /* not actually in the pack or MIDX preferred pack */
+	}
+
+	struct object_id oid;
+	unsigned index_pos = pack_pos_to_index(pack, pos);
+	if(!nth_packed_object_id(&oid, pack, index_pos))
+		fprintf(stderr, "[dyrone] current oid: %s, pos: %d\n",oid_to_hex(&oid), pos);
 
 	offset = delta_obj_offset = pack_pos_to_offset(pack, pos);
 	type = unpack_object_header(pack, w_curs, &offset, &size);
@@ -1392,6 +1414,12 @@ static int try_partial_reuse(struct packed_git *pack,
 		if (offset_to_pack_pos(pack, base_offset, &base_pos) < 0)
 			return 0;
 
+
+		struct object_id base_oid;
+		unsigned base_index_pose = pack_pos_to_index(pack, base_pos);
+		if(!nth_packed_object_id(&base_oid, pack, base_index_pose))
+			fprintf(stderr, "[dyrone] base oid: %s, pos: %d\n",oid_to_hex(&base_oid), base_pos);
+
 		/*
 		 * We assume delta dependencies always point backwards. This
 		 * lets us do a single pass, and is basically always true
@@ -1401,8 +1429,10 @@ static int try_partial_reuse(struct packed_git *pack,
 		 * let's double check to make sure the pack wasn't written with
 		 * odd parameters.
 		 */
-		if (base_pos >= pos)
+		if (base_pos >= pos){
+			fprintf(stderr, "[dyrone] base_pos greater equal than pos return 0%s\n", "");
 			return 0;
+		}
 
 		/*
 		 * And finally, if we're not sending the base as part of our
@@ -1412,13 +1442,19 @@ static int try_partial_reuse(struct packed_git *pack,
 		 * to REF_DELTA on the fly. Better to just let the normal
 		 * object_entry code path handle it.
 		 */
-		if (!bitmap_get(reuse, base_pos))
+
+		// todo  *** 关键逻辑  ****
+		if (!bitmap_get(reuse, base_pos)) {
+			fprintf(stderr, "[dyrone] !bitmap_get(reuse, base_pos) return 0%s\n", "");
 			return 0;
+		}
+			
 	}
 
 	/*
 	 * If we got here, then the object is OK to reuse. Mark it.
 	 */
+	fprintf(stderr, "[dyrone] finally oid set in reuse bitmap: %s\n",oid_to_hex(&oid));
 	bitmap_set(reuse, pos);
 	return 0;
 }
@@ -1454,9 +1490,11 @@ int reuse_partial_packfile_from_bitmap(struct bitmap_index *bitmap_git,
 		pack = bitmap_git->pack;
 	objects_nr = pack->num_objects;
 
+	fprintf(stderr, "[dyrone] [reuse_partial_packfile_from_bitmap] pack name: %s, objects nr: %d\n", pack->pack_name, objects_nr);
+	fprintf(stderr, "[dyrone] [reuse_partial_packfile_from_bitmap] bitmap word_alloc: %d\n", result->word_alloc);
+
 	while (i < result->word_alloc && result->words[i] == (eword_t)~0)
 		i++;
-
 	/*
 	 * Don't mark objects not in the packfile or preferred pack. This bitmap
 	 * marks objects eligible for reuse, but the pack-reuse code only
@@ -1500,6 +1538,7 @@ done:
 	unuse_pack(&w_curs);
 
 	*entries = bitmap_popcount(reuse);
+	fprintf(stderr, "[dyrone] done: entries: %d\n", *entries);
 	if (!*entries) {
 		bitmap_free(reuse);
 		return -1;
@@ -1533,6 +1572,20 @@ void traverse_bitmap_commit_list(struct bitmap_index *bitmap_git,
 {
 	assert(bitmap_git->result);
 
+
+	fprintf(stderr,
+		"[dyrone] bitmap buffer sizes, blob: %d, trees: %d, commits: %d, tags: %d, entrycount: %d\n",
+		bitmap_git->blobs->buffer_size, bitmap_git->trees->buffer_size,
+		bitmap_git->commits->buffer_size, bitmap_git->tags->buffer_size,
+		bitmap_git->entry_count);
+
+	fprintf(stderr,
+		"[dyrone] traverse_bitmap_commit_list, tree: %d, blob: %d, tag: %d, \
+		 extendedobjects: %d, sum: %d\n",
+		revs->tree_objects, revs->blob_objects, revs->tag_objects,
+		bitmap_git->ext_index.count,
+		revs->tree_objects + revs->blob_objects + revs->tag_objects +
+			bitmap_git->ext_index.count);
 	show_objects_for_type(bitmap_git, OBJ_COMMIT, show_reachable);
 	if (revs->tree_objects)
 		show_objects_for_type(bitmap_git, OBJ_TREE, show_reachable);
@@ -1541,6 +1594,7 @@ void traverse_bitmap_commit_list(struct bitmap_index *bitmap_git,
 	if (revs->tag_objects)
 		show_objects_for_type(bitmap_git, OBJ_TAG, show_reachable);
 
+	// todo here ???? 有continue逻辑
 	show_extended_objects(bitmap_git, revs, show_reachable);
 }
 
