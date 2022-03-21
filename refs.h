@@ -63,6 +63,16 @@ struct worktree;
 #define RESOLVE_REF_NO_RECURSE 0x02
 #define RESOLVE_REF_ALLOW_BAD_NAME 0x04
 
+struct ref_patterns {
+	char **ref_prefixes;
+	char **ref_suffixes;
+};
+
+#define REF_PATTERNS_INIT { \
+	.ref_prefixes = empty_strvec, \
+	.ref_suffixes = empty_strvec, \
+}
+
 const char *refs_resolve_ref_unsafe(struct ref_store *refs,
 				    const char *refname,
 				    int resolve_flags,
