@@ -255,6 +255,14 @@ struct transport_ls_refs_options {
 	struct strvec ref_prefixes;
 
 	/*
+	 * Similar with 'ref_prefixes', list of ref suffixes can be sent to
+	 * the server (when communicating using protocol v2) to limit the
+	 * ref advetisement too. This also will speed up some tail-matching
+	 * operations like `git ls-remote`.
+	*/
+	struct strvec ref_suffixes;
+
+	/*
 	 * If unborn_head_target is not NULL, and the remote reports HEAD as
 	 * pointing to an unborn branch, transport_get_remote_refs() stores the
 	 * unborn branch in unborn_head_target.
