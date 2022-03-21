@@ -42,10 +42,12 @@ static void ensure_config_read(void)
 }
 
 /*
- * If we see this many or more "ref-prefix" lines from the client, we consider
- * it "too many" and will avoid using the prefix feature entirely.
+ * If we see this many or more "ref-prefix" or "ref-suffix" lines from the
+ * client, we consider it "too many" and will avoid using the prefix or
+ * suffix feature entirely.
  */
 #define TOO_MANY_PREFIXES 65536
+#define TOO_MANY_SUFFIXES 65536
 
 /*
  * Check if one of the prefixes is a prefix of the ref.
@@ -72,6 +74,7 @@ struct ls_refs_data {
 	unsigned peel;
 	unsigned symrefs;
 	struct strvec prefixes;
+	struct strvec suffixes;
 	struct strbuf buf;
 	unsigned unborn : 1;
 };
@@ -152,6 +155,7 @@ int ls_refs(struct repository *r, struct packet_reader *request)
 
 	memset(&data, 0, sizeof(data));
 	strvec_init(&data.prefixes);
+	strvec_init(&data.suffixes);
 	strbuf_init(&data.buf, 0);
 
 	ensure_config_read();
@@ -168,6 +172,9 @@ int ls_refs(struct repository *r, struct packet_reader *request)
 		else if (skip_prefix(arg, "ref-prefix ", &out)) {
 			if (data.prefixes.nr < TOO_MANY_PREFIXES)
 				strvec_push(&data.prefixes, out);
+		}else if (skip_prefix(arg, "ref-suffix ", &out)) {
+			if (data.prefixes.nr < TOO_MANY_SUFFIXES)
+				strvec_push(&data.suffixes, out);
 		}
 		else if (!strcmp("unborn", arg))
 			data.unborn = allow_unborn;
@@ -186,13 +193,19 @@ int ls_refs(struct repository *r, struct packet_reader *request)
 	if (data.prefixes.nr >= TOO_MANY_PREFIXES)
 		strvec_clear(&data.prefixes);
 
+	if (data.suffixes.nr >= TOO_MANY_SUFFIXES)
+		strvec_clear(&data.suffixes);
+
 	send_possibly_unborn_head(&data);
 	if (!data.prefixes.nr)
 		strvec_push(&data.prefixes, "");
+	if (!data.suffixes.nr)
+		strvec_push(&data.suffixes, "");
 	for_each_fullref_in_prefixes(get_git_namespace(), data.prefixes.v,
 				     send_ref, &data);
 	packet_fflush(stdout);
 	strvec_clear(&data.prefixes);
+	strvec_clear(&data.suffixes);
 	strbuf_release(&data.buf);
 	return 0;
 }

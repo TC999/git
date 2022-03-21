@@ -483,6 +483,8 @@ struct ref **get_remote_refs(int fd_out, struct packet_reader *reader,
 	const char *hash_name;
 	struct strvec *ref_prefixes = transport_options ?
 		&transport_options->ref_prefixes : NULL;
+	struct strvec *ref_suffixes = transport_options ?
+		&transport_options->ref_suffixes : NULL;
 	const char **unborn_head_target = transport_options ?
 		&transport_options->unborn_head_target : NULL;
 	*list = NULL;
@@ -519,6 +521,10 @@ struct ref **get_remote_refs(int fd_out, struct packet_reader *reader,
 	for (i = 0; ref_prefixes && i < ref_prefixes->nr; i++) {
 		packet_write_fmt(fd_out, "ref-prefix %s\n",
 				 ref_prefixes->v[i]);
+	}
+	for (i = 0; ref_suffixes && i < ref_suffixes->nr; i++) {
+		packet_write_fmt(fd_out, "ref-suffix %s\n",
+				 ref_suffixes->v[i]);
 	}
 	packet_flush(fd_out);
 
