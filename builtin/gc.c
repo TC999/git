@@ -46,6 +46,7 @@ static int aggressive_depth = 50;
 static int aggressive_window = 250;
 static int gc_auto_threshold = 6700;
 static int gc_auto_pack_limit = 50;
+static int gc_auto_loose_refs_limit = 50;
 static int detach_auto = 1;
 static int dryrun = 0;
 static int verbose = 0;
@@ -161,6 +162,7 @@ static void gc_config(void)
 	git_config_get_int("gc.aggressivedepth", &aggressive_depth);
 	git_config_get_int("gc.auto", &gc_auto_threshold);
 	git_config_get_int("gc.autopacklimit", &gc_auto_pack_limit);
+	git_config_get_int("gc.autolooserefslimit", &gc_auto_loose_refs_limit);
 	git_config_get_bool("gc.autodetach", &detach_auto);
 	git_config_get_expiry("gc.pruneexpire", &prune_expire);
 	git_config_get_expiry("gc.worktreepruneexpire", &prune_worktrees_expire);
@@ -479,6 +481,47 @@ static int too_many_packs(void)
 	return gc_auto_pack_limit < cnt;
 }
 
+static int if_too_many_loose_refs(const char *path, int *count)
+{
+	int ret = 0;
+	DIR *dir = opendir(path);
+	struct dirent *ent;
+	static struct strbuf buf = STRBUF_INIT;
+	if (!dir)
+		return 0;
+
+	while ((ent = readdir(dir)) != NULL) {
+		if (ent->d_name[0] == '.')
+			continue;
+		if (ends_with(ent->d_name, ".lock"))
+			continue;
+		if (ent->d_type == DT_DIR) {
+			strbuf_reset(&buf);
+			strbuf_addf(&buf, "%s/%s", path, ent->d_name);
+			ret = if_too_many_loose_refs(buf.buf, count);
+			if (ret)
+				break;
+		} else if (++*count > gc_auto_loose_refs_limit) {
+			ret = 1;
+			break;
+		}
+	}
+
+	closedir(dir);
+	strbuf_release(&buf);
+	return ret;
+}
+
+static int too_many_loose_refs(void)
+{
+	int num_loose = 0;
+
+	if (gc_auto_loose_refs_limit <= 0)
+		return 0;
+
+	return if_too_many_loose_refs(git_path("refs"), &num_loose);
+}
+
 static uint64_t total_ram(void)
 {
 #if defined(HAVE_SYSINFO)
@@ -631,7 +674,7 @@ static int need_to_gc(void)
 
 		add_repack_all_option(&keep_pack);
 		string_list_clear(&keep_pack, 0);
-	} else if (too_many_loose_objects())
+	} else if (too_many_loose_objects() || too_many_loose_refs())
 		add_repack_incremental_option();
 	else {
 		if (verbose)

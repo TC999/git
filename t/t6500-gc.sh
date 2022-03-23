@@ -163,6 +163,19 @@ test_expect_success 'auto gc with too many loose objects does not attempt to cre
 	test_line_count = 1 new # There is one new pack
 '
 
+test_expect_success 'auto gc with too many loose refs' '
+	test_config gc.autolooserefslimit 5 &&
+	git branch loose-refs-1 &&
+	git gc --auto &&
+	test_stdout_line_count -ge 0 find .git/refs -type f &&
+	git branch loose-refs-2 &&
+	git branch loose-refs-3 &&
+	git branch loose-refs-4 &&
+	git branch loose-refs-5 &&
+	git gc --auto &&
+	test_stdout_line_count = 0 find .git/refs -type f
+'
+
 test_expect_success 'gc --no-quiet' '
 	GIT_PROGRESS_DELAY=0 git -c gc.writeCommitGraph=true gc --no-quiet >stdout 2>stderr &&
 	test_must_be_empty stdout &&

@@ -38,6 +38,12 @@ gc.autoPackLimit::
 See the `gc.bigPackThreshold` configuration variable below. When in
 use, it'll affect how the auto pack limit works.
 
+gc.autoLooseRefsLimit::
+	When there are more than this many loose references., `git gc
+	--auto` consolidates them into packed-refs.  The default value
+	is 50.  Setting this to 0 disables it. Setting `gc.auto` to 0
+	will also disable this.
+
 gc.autoDetach::
 	Make `git gc --auto` return immediately and run in background
 	if the system supports it. Default is true.
