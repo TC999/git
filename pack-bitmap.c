@@ -483,11 +483,12 @@ static int open_pack_bitmap(struct repository *r,
 
 	assert(!bitmap_git->map);
 
-	for (p = get_all_packs(r); p; p = p->next) {
-		if (open_pack_bitmap_1(bitmap_git, p) == 0)
-			ret = 0;
+	if (!bitmap_git->midx) {
+		for (p = get_all_packs(r); p; p = p->next) {
+			if (open_pack_bitmap_1(bitmap_git, p) == 0)
+				ret = 0;
+		}
 	}
-
 	return ret;
 }
 
