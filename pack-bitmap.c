@@ -323,7 +323,7 @@ static int open_midx_bitmap_1(struct bitmap_index *bitmap_git,
 
 	if (fstat(fd, &st)) {
 		close(fd);
-		return -1;
+		return error_errno(_("cannot stat bitmap file"));
 	}
 
 	if (bitmap_git->pack || bitmap_git->midx) {
@@ -361,7 +361,7 @@ cleanup:
 	bitmap_git->map_pos = 0;
 	bitmap_git->map = NULL;
 	bitmap_git->midx = NULL;
-	return -1;
+	return error(_("cannot open midx bitmap file"));
 }
 
 static int open_pack_bitmap_1(struct bitmap_index *bitmap_git, struct packed_git *packfile)
@@ -382,7 +382,7 @@ static int open_pack_bitmap_1(struct bitmap_index *bitmap_git, struct packed_git
 
 	if (fstat(fd, &st)) {
 		close(fd);
-		return -1;
+		return error_errno(_("cannot stat bitmap file"));
 	}
 
 	if (bitmap_git->pack || bitmap_git->midx) {
@@ -394,7 +394,7 @@ static int open_pack_bitmap_1(struct bitmap_index *bitmap_git, struct packed_git
 
 	if (!is_pack_valid(packfile)) {
 		close(fd);
-		return -1;
+		return error(_("packfile is invalid"));
 	}
 
 	bitmap_git->pack = packfile;
@@ -409,7 +409,7 @@ static int open_pack_bitmap_1(struct bitmap_index *bitmap_git, struct packed_git
 		bitmap_git->map_size = 0;
 		bitmap_git->map_pos = 0;
 		bitmap_git->pack = NULL;
-		return -1;
+		return error(_("bitmap header is invalid"));
 	}
 
 	return 0;
