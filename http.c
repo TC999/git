@@ -794,6 +794,8 @@ static CURL *get_curl_handle(void)
 #endif
 
 	curl_easy_setopt(result, CURLOPT_NETRC, CURL_NETRC_OPTIONAL);
+	if (getenv("GIT_CURL_NETRC_FILE"))
+		curl_easy_setopt(result, CURLOPT_NETRC_FILE, getenv("GIT_CURL_NETRC_FILE"));
 	curl_easy_setopt(result, CURLOPT_HTTPAUTH, CURLAUTH_ANY);
 
 #ifdef CURLGSSAPI_DELEGATION_FLAG
