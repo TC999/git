@@ -1,5 +1,6 @@
 #include "cache.h"
 #include "config.h"
+#include "strmap.h"
 #include "trace2/tr2_cfg.h"
 #include "trace2/tr2_sysenv.h"
 
@@ -10,6 +11,7 @@ static int tr2_cfg_loaded;
 static struct strbuf **tr2_cfg_env_vars;
 static int tr2_cfg_env_vars_count;
 static int tr2_cfg_env_vars_loaded;
+static struct strset tr_cfg_set = STRSET_INIT;
 
 /*
  * Parse a string containing a comma-delimited list of config keys
@@ -101,12 +103,17 @@ static int tr2_cfg_cb(const char *key, const char *value, void *d)
 {
 	struct strbuf **s;
 	struct tr2_cfg_data *data = (struct tr2_cfg_data *)d;
+	const char *prior_value;
 
 	for (s = tr2_cfg_patterns; *s; s++) {
 		struct strbuf *buf = *s;
 		int wm = wildmatch(buf->buf, key, WM_CASEFOLD);
 		if (wm == WM_MATCH) {
-			trace2_def_param_fl(data->file, data->line, key, value);
+			if (strset_contains(&tr_cfg_set, key)
+			    || git_config_get_value(key, &prior_value))
+				continue;
+			trace2_def_param_fl(data->file, data->line, key, prior_value);
+			strset_add(&tr_cfg_set, key);
 			return 0;
 		}
 	}
