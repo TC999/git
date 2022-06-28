@@ -209,6 +209,11 @@ static int set_git_option(struct git_transport_options *opts,
 	if (!strcmp(name, TRANS_OPT_UPLOADPACK)) {
 		opts->uploadpack = value;
 		return 0;
+	} else if (!strcmp(name, TRANS_OPT_BLACK_HOLE)) {
+		/* value is "1" or "2" */
+		if (value && *value)
+			opts->black_hole = *value - '0';
+		return 0;
 	} else if (!strcmp(name, TRANS_OPT_RECEIVEPACK)) {
 		opts->receivepack = value;
 		return 0;
