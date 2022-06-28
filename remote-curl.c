@@ -17,6 +17,7 @@
 #include "protocol.h"
 #include "quote.h"
 #include "transport.h"
+#include "fetch-pack.h"
 
 static struct remote *remote;
 /* always ends with a trailing slash */
@@ -29,6 +30,10 @@ struct options {
 	struct string_list deepen_not;
 	struct string_list push_options;
 	char *filter;
+
+	/* black hole: do not save pack file, used for test */
+	unsigned black_hole : 2;
+
 	unsigned progress : 1,
 		check_self_contained_and_connected : 1,
 		cloning : 1,
@@ -60,6 +65,12 @@ static int set_option(const char *name, const char *value)
 		if (value == end || *end)
 			return -1;
 		options.verbosity = v;
+		return 0;
+	}
+	else if (!strcmp(name, TRANS_OPT_BLACK_HOLE)) {
+		/* value is "1" or "2" */
+		if (value && *value)
+			options.black_hole = *value - '0';
 		return 0;
 	}
 	else if (!strcmp(name, "progress")) {
@@ -1161,6 +1172,10 @@ static int fetch_git(struct discovery *heads,
 
 	strvec_pushl(&args, "fetch-pack", "--stateless-rpc",
 		     "--stdin", "--lock-pack", NULL);
+	if (options.black_hole == FETCH_PACK_OPT_BLACK_HOLE_VERIFY)
+		strvec_push(&args, "--black-hole-verify");
+	else if (options.black_hole == FETCH_PACK_OPT_BLACK_HOLE_NO_VERIFY)
+		strvec_push(&args, "--black-hole");
 	if (options.followtags)
 		strvec_push(&args, "--include-tag");
 	if (options.thin)
