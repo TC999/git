@@ -374,6 +374,7 @@ static int fetch_refs_via_pack(struct transport *transport,
 	struct ref *refs_tmp = NULL;
 
 	memset(&args, 0, sizeof(args));
+	args.black_hole = data->options.black_hole;
 	args.uploadpack = data->options.uploadpack;
 	args.keep_pack = data->options.keep;
 	args.lock_pack = 1;
