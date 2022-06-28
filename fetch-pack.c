@@ -888,6 +888,20 @@ static int get_pack(struct fetch_pack_args *args,
 		strvec_push(&cmd.args, alternate_shallow_file);
 	}
 
+	if (args->black_hole == FETCH_PACK_OPT_BLACK_HOLE_VERIFY) {
+		/*
+		 * "do_keep" is a flag to call "git-index-pack" or "git-unpack-objects".
+		 *
+		 * call "git-unpack-objects -n" instead of "git-index-pack"
+		 * to verify pack data before throwing away.
+		 *
+		 */
+		do_keep = 0;
+	} else if (args->black_hole == FETCH_PACK_OPT_BLACK_HOLE_NO_VERIFY) {
+		/* throw away pack data silently, without verify it */
+		goto throw_away;
+	}
+
 	if (fetch_fsck_objects >= 0
 	    ? fetch_fsck_objects
 	    : transfer_fsck_objects >= 0
@@ -895,7 +909,8 @@ static int get_pack(struct fetch_pack_args *args,
 	    : 0)
 		fsck_objects = 1;
 
-	if (do_keep || args->from_promisor || index_pack_args || fsck_objects) {
+	if (!args->black_hole &&
+	    (do_keep || args->from_promisor || index_pack_args || fsck_objects)) {
 		if (pack_lockfiles || fsck_objects)
 			cmd.out = -1;
 		cmd_name = "index-pack";
@@ -939,6 +954,9 @@ static int get_pack(struct fetch_pack_args *args,
 		strvec_push(&cmd.args, cmd_name);
 		if (args->quiet || args->no_progress)
 			strvec_push(&cmd.args, "-q");
+		/* black hole: dry run mode. check without unpack */
+		if (args->black_hole)
+			strvec_push(&cmd.args, "-n");
 		args->check_self_contained_and_connected = 0;
 	}
 
@@ -995,6 +1013,33 @@ static int get_pack(struct fetch_pack_args *args,
 			ret == 0;
 	else
 		die(_("%s failed"), cmd_name);
+
+	goto cleanup;
+
+throw_away:
+	/* consume stdin (demux.out) to discard the received pack data */
+	if (1) {
+		ssize_t total = 0;
+		ssize_t want_size = 8192;
+		char *buf = xmalloc(want_size);
+
+		for (;;) {
+			ssize_t got = read_in_full(demux.out, buf, want_size);
+			if (got < 0) {
+				die("fail to read from server");
+			}
+			total += got;
+			if (got < want_size) {
+				fprintf(stderr, "\n");
+				break;
+			}
+			fprintf(stderr, "local: read %"PRIu64" from server...\t\r", (uint64_t)total);
+		}
+		fprintf(stderr, "NOTE: read total %"PRIu64" bytes of pack data from server.\n", (uint64_t)total);
+		free(buf);
+	}
+
+cleanup:
 	if (use_sideband && finish_async(&demux))
 		die(_("error in sideband demultiplexer"));
 

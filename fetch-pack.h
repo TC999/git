@@ -7,6 +7,9 @@
 #include "list-objects-filter-options.h"
 #include "oidset.h"
 
+#define FETCH_PACK_OPT_BLACK_HOLE_VERIFY	1
+#define FETCH_PACK_OPT_BLACK_HOLE_NO_VERIFY	2
+
 struct oid_array;
 
 struct fetch_pack_args {
@@ -23,6 +26,14 @@ struct fetch_pack_args {
 	 * lines only with these tips and their ancestors.
 	 */
 	const struct oid_array *negotiation_tips;
+
+	/*
+	 * Run fetch, but throw away data.
+	 *
+	 *  1: throw away pack data but still try to verify.
+	 *  2: throw away pack data silently.
+	 */
+	unsigned black_hole:2;
 
 	unsigned deepen_relative:1;
 	unsigned quiet:1;
