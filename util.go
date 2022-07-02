@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
+	"strings"
 )
 
 // CheckFileExist will check the paths exist, if one not exist,
@@ -36,4 +38,23 @@ func NewCommand(ctx context.Context, path string, env []string, stdin io.Reader,
 	}
 
 	return agitCommand, nil
+}
+
+// TrimTopicPrefixNumber trim the topic number
+func TrimTopicPrefixNumber(topicName string) string {
+	var tmpTopic string
+	if strings.HasPrefix(topicName, "topic/") && len(topicName) >= 7 {
+		tmpTopic = strings.SplitN(topicName, "topic/", 2)[1]
+		reg := regexp.MustCompile("^[0-9]{1,6}-(\\S*)")
+		matchedNameArray := reg.FindStringSubmatch(tmpTopic)
+
+		// The index 1 is the string self
+		if len(matchedNameArray) != 2 {
+			return topicName
+		}
+
+		return "topic/" + reg.FindStringSubmatch(tmpTopic)[1]
+	}
+
+	return ""
 }
