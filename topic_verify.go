@@ -105,7 +105,7 @@ func verifyLocalBranchIsOld(o *Options, localBranch *Branch, remoteBranch *Branc
 	}
 
 	if len(strings.TrimSpace(stdout.String())) != 0 {
-		return fmt.Errorf("branch: '%s' behind remote, you need fetch it first", localBranch.BranchName)
+		return fmt.Errorf("your branch: '%s' is behind '%s', you need fetch it first", localBranch.BranchName, remoteBranch.BranchName)
 	}
 
 	return nil
