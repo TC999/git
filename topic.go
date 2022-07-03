@@ -9,8 +9,6 @@ import (
 	"path"
 	"strings"
 	"time"
-
-	"golang.aliyun-inc.com/agit/agit-release/cmd"
 )
 
 const (
@@ -56,7 +54,7 @@ type AGitTopicScheduler struct {
 	remoteTopicBranches map[string]*Branch
 }
 
-func (a *AGitTopicScheduler) ReadLocalTopicBranch(o *cmd.Options) error {
+func (a *AGitTopicScheduler) ReadLocalTopicBranch(o *Options) error {
 	var (
 		stdout bytes.Buffer
 		stderr bytes.Buffer
@@ -108,7 +106,7 @@ func (a *AGitTopicScheduler) ReadLocalTopicBranch(o *cmd.Options) error {
 	return nil
 }
 
-func (a *AGitTopicScheduler) ReadRemoteTopicBranch(o *cmd.Options) error {
+func (a *AGitTopicScheduler) ReadRemoteTopicBranch(o *Options) error {
 	var (
 		stdout bytes.Buffer
 		stderr bytes.Buffer
@@ -154,7 +152,7 @@ func (a *AGitTopicScheduler) ReadRemoteTopicBranch(o *cmd.Options) error {
 		}
 
 		a.remoteTopicBranches[noNumberBranchName] = &Branch{
-			BranchName: branchName,
+			BranchName: fmt.Sprintf("%s/%s", o.RemoteName, branchName),
 			Reference:  reference,
 		}
 	}
@@ -163,7 +161,7 @@ func (a *AGitTopicScheduler) ReadRemoteTopicBranch(o *cmd.Options) error {
 }
 
 // GetTopics about to depend, just support one depend topic
-func (a *AGitTopicScheduler) GetTopics(o *cmd.Options) error {
+func (a *AGitTopicScheduler) GetTopics(o *Options) error {
 	var (
 		// Just used to record the index for depends
 		tmpCache = make(map[string]int)

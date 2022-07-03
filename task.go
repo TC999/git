@@ -2,8 +2,6 @@ package agit_release
 
 import (
 	"fmt"
-
-	"golang.aliyun-inc.com/agit/agit-release/cmd"
 )
 
 type TaskContext struct {
@@ -14,7 +12,7 @@ type TaskContext struct {
 }
 
 type Scheduler interface {
-	Do(option *cmd.Options, taskContext *TaskContext) error
+	Do(option *Options, taskContext *TaskContext) error
 	Next(scheduler Scheduler, name string) error
 }
 
@@ -23,7 +21,7 @@ type ReleaseScheduler struct {
 	nextName string
 }
 
-func (r *ReleaseScheduler) Do(option *cmd.Options, taskContext *TaskContext) error {
+func (r *ReleaseScheduler) Do(option *Options, taskContext *TaskContext) error {
 	if r.next != nil {
 		return r.next.Do(option, taskContext)
 	}

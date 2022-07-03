@@ -2,11 +2,9 @@ package agit_release
 
 import (
 	"fmt"
-
-	"golang.aliyun-inc.com/agit/agit-release/cmd"
 )
 
-func (a *AGitTopicScheduler) Do(o *cmd.Options, taskContext *TaskContext) error {
+func (a *AGitTopicScheduler) Do(o *Options, taskContext *TaskContext) error {
 	if err := a.GetTopics(o); err != nil {
 		return err
 	}
@@ -16,7 +14,7 @@ func (a *AGitTopicScheduler) Do(o *cmd.Options, taskContext *TaskContext) error 
 	taskContext.remoteTopicBranches = a.remoteTopicBranches
 
 	if a.next != nil {
-		a.next.Do(o, taskContext)
+		return a.next.Do(o, taskContext)
 	}
 
 	return nil

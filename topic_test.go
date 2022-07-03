@@ -10,7 +10,6 @@ import (
 	"time"
 
 	testspace "github.com/Jiu2015/gotestspace"
-	"golang.aliyun-inc.com/agit/agit-release/cmd"
 )
 
 var (
@@ -56,7 +55,7 @@ func TestAGitTopicScheduler_ReadLocalTopicBranch(t *testing.T) {
 	defer cancel()
 
 	type args struct {
-		o *cmd.Options
+		o *Options
 	}
 	tests := []struct {
 		name           string
@@ -68,7 +67,7 @@ func TestAGitTopicScheduler_ReadLocalTopicBranch(t *testing.T) {
 		{
 			name: "successfully",
 			args: args{
-				o: &cmd.Options{},
+				o: &Options{},
 			},
 			createBranchFn: func() (testspace.Space, string, error) {
 				repoSpace := prepareBranchRepo(t, []string{"topic/001-branch1", "topic/002-branch2"})
@@ -84,7 +83,7 @@ func TestAGitTopicScheduler_ReadLocalTopicBranch(t *testing.T) {
 		{
 			name: "none_branch",
 			args: args{
-				o: &cmd.Options{},
+				o: &Options{},
 			},
 			createBranchFn: func() (testspace.Space, string, error) {
 				repoSpace := prepareBranchRepo(t, []string{})
@@ -96,7 +95,7 @@ func TestAGitTopicScheduler_ReadLocalTopicBranch(t *testing.T) {
 		{
 			name: "one_topic_and_one_other_branch",
 			args: args{
-				o: &cmd.Options{},
+				o: &Options{},
 			},
 			createBranchFn: func() (testspace.Space, string, error) {
 				repoSpace := prepareBranchRepo(t, []string{"topic/001-branch1", "002-branch2"})
@@ -159,7 +158,7 @@ func TestAGitTopicScheduler_ReadRemoteTopicBranch(t *testing.T) {
 		remoteTopicBranches map[string]*Branch
 	}
 	type args struct {
-		o *cmd.Options
+		o *Options
 	}
 	tests := []struct {
 		name           string
@@ -171,7 +170,7 @@ func TestAGitTopicScheduler_ReadRemoteTopicBranch(t *testing.T) {
 		{
 			name: "successfully",
 			args: args{
-				o: &cmd.Options{
+				o: &Options{
 					RemoteName: "origin",
 				},
 			},
@@ -187,14 +186,14 @@ func TestAGitTopicScheduler_ReadRemoteTopicBranch(t *testing.T) {
 			},
 			wantErr: false,
 			wantBranch: []string{
-				"topic/001-branch1",
-				"topic/002-branch2",
+				"origin/topic/001-branch1",
+				"origin/topic/002-branch2",
 			},
 		},
 		{
 			name: "none_branch",
 			args: args{
-				o: &cmd.Options{
+				o: &Options{
 					RemoteName: "origin",
 				},
 			},
@@ -208,7 +207,7 @@ func TestAGitTopicScheduler_ReadRemoteTopicBranch(t *testing.T) {
 		{
 			name: "one_topic_and_one_other_branch",
 			args: args{
-				o: &cmd.Options{
+				o: &Options{
 					RemoteName: "origin",
 				},
 			},
@@ -224,7 +223,7 @@ func TestAGitTopicScheduler_ReadRemoteTopicBranch(t *testing.T) {
 			},
 			wantErr: false,
 			wantBranch: []string{
-				"topic/001-branch1",
+				"origin/topic/001-branch1",
 			},
 		},
 	}
@@ -271,7 +270,7 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 	defer cancel()
 
 	type args struct {
-		o *cmd.Options
+		o *Options
 	}
 	tests := []struct {
 		name           string
@@ -283,7 +282,7 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 		{
 			name: "no_depend_successfully",
 			args: args{
-				o: &cmd.Options{
+				o: &Options{
 					RemoteName: "origin",
 				},
 			},
@@ -329,7 +328,7 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 		{
 			name: "with_valid_depend",
 			args: args{
-				o: &cmd.Options{
+				o: &Options{
 					RemoteName: "origin",
 				},
 			},
@@ -384,7 +383,7 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 		{
 			name: "with_invalid_depend",
 			args: args{
-				o: &cmd.Options{
+				o: &Options{
 					RemoteName: "origin",
 				},
 			},
@@ -439,7 +438,7 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 		{
 			name: "only_remote_on_repo",
 			args: args{
-				o: &cmd.Options{
+				o: &Options{
 					RemoteName: "origin",
 				},
 			},
@@ -486,7 +485,7 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 		{
 			name: "remote_valid_depend",
 			args: args{
-				o: &cmd.Options{
+				o: &Options{
 					RemoteName: "origin",
 				},
 			},
@@ -542,7 +541,7 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 		{
 			name: "repo_not_exist_branch",
 			args: args{
-				o: &cmd.Options{
+				o: &Options{
 					RemoteName: "origin",
 				},
 			},
@@ -588,7 +587,7 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 		{
 			name: "ignore_code_comment",
 			args: args{
-				o: &cmd.Options{
+				o: &Options{
 					RemoteName: "origin",
 				},
 			},
@@ -625,7 +624,7 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 		{
 			name: "use_remote_branch",
 			args: args{
-				o: &cmd.Options{
+				o: &Options{
 					RemoteName: "origin",
 					UseRemote:  true,
 				},

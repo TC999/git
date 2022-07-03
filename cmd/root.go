@@ -5,34 +5,33 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	agit_release "golang.aliyun-inc.com/agit/agit-release"
 )
 
-var AGitOptions Options
-
-type Options struct {
-	CurrentPath      string
-	ReleaseBranch    string
-	GitTargetVersion string
-
-	// The remote name, default is origin(remotes/origin)
-	RemoteName string
-	UseRemote  bool
-
-	// Just used for internal
-	GitVersion  string
-	AGitVersion string
-}
+var agitOptions *agit_release.Options
 
 var rootCmd = &cobra.Command{
 	Use:   "",
 	Short: "",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("execute")
+		taskContext := &agit_release.TaskContext{}
+		tasks := &agit_release.ReleaseScheduler{}
+		readVersion := &agit_release.AGitVersion{}
+		readTopic := &agit_release.AGitTopicScheduler{}
+		topicVerify := &agit_release.TopicVerify{}
+
+		tasks.Next(readVersion, "read_version")
+		readVersion.Next(readTopic, "read_topic")
+		readTopic.Next(topicVerify, "topic_verify")
+
+		if err := tasks.Do(agitOptions, taskContext); err != nil {
+			fmt.Printf("%s", err.Error())
+		}
 	},
 }
 
 func init() {
-	Options := &Options{}
+	Options := &agit_release.Options{}
 	currentPath, err := os.Getwd()
 	if err != nil {
 		panic("cannot get current path: " + err.Error())
@@ -94,6 +93,8 @@ func init() {
 		"",
 		"the agit version, such as 6.5.9",
 	)
+
+	agitOptions = Options
 }
 
 func Execute() {

@@ -6,8 +6,6 @@ import (
 	"log"
 	"os"
 	"path"
-
-	"golang.aliyun-inc.com/agit/agit-release/cmd"
 )
 
 const (
@@ -20,7 +18,7 @@ type AGitVersion struct {
 	nextName string
 }
 
-func (a *AGitVersion) Do(o *cmd.Options) error {
+func (a *AGitVersion) Do(o *Options, taskContext *TaskContext) error {
 	if o.GitVersion != "" && o.AGitVersion != "" {
 		return nil
 	}
@@ -57,11 +55,16 @@ func (a *AGitVersion) Do(o *cmd.Options) error {
 
 	o.GitVersion = string(gitVersion)
 	o.AGitVersion = string(agitVersion)
+
+	if a.next != nil {
+		return a.next.Do(o, taskContext)
+	}
+
 	return nil
 }
 
-func (a AGitVersion) Next(scheduler Scheduler, name string) error {
-	if scheduler != nil {
+func (a *AGitVersion) Next(scheduler Scheduler, name string) error {
+	if scheduler == nil {
 		return fmt.Errorf("the %s is nil", name)
 	}
 

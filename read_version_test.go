@@ -5,8 +5,6 @@ import (
 	"os"
 	"path"
 	"testing"
-
-	"golang.aliyun-inc.com/agit/agit-release/cmd"
 )
 
 const (
@@ -49,7 +47,8 @@ func TestVersionCheck(t *testing.T) {
 		nextName string
 	}
 	type args struct {
-		o *cmd.Options
+		o           *Options
+		taskContext *TaskContext
 	}
 	tests := []struct {
 		name          string
@@ -65,9 +64,10 @@ func TestVersionCheck(t *testing.T) {
 			name:   "two_version_files_exist",
 			fields: fields{},
 			args: args{
-				o: &cmd.Options{
+				o: &Options{
 					CurrentPath: testPath,
 				},
+				taskContext: &TaskContext{},
 			},
 			filePrepareFn: func() error {
 				if err := createFile(testPath, _gitVersionFileType, "2.36.1"); err != nil {
@@ -89,9 +89,10 @@ func TestVersionCheck(t *testing.T) {
 			name:   "only_git_version_file_exist",
 			fields: fields{},
 			args: args{
-				o: &cmd.Options{
+				o: &Options{
 					CurrentPath: testPath,
 				},
+				taskContext: &TaskContext{},
 			},
 			filePrepareFn: func() error {
 				return createFile(testPath, _gitVersionFileType, "2.36.1")
@@ -103,9 +104,10 @@ func TestVersionCheck(t *testing.T) {
 			name:   "only_agit_version_file",
 			fields: fields{},
 			args: args{
-				o: &cmd.Options{
+				o: &Options{
 					CurrentPath: testPath,
 				},
+				taskContext: &TaskContext{},
 			},
 			filePrepareFn: func() error {
 				return createFile(testPath, _agitVersionFileType, "6.5.9")
@@ -129,7 +131,7 @@ func TestVersionCheck(t *testing.T) {
 				tt.cleanup()
 			}()
 
-			if err := a.Do(tt.args.o); (err != nil) != tt.wantErr {
+			if err := a.Do(tt.args.o, tt.args.taskContext); (err != nil) != tt.wantErr {
 				t.Errorf("Do() error = %v, wantErr %v", err, tt.wantErr)
 			}
 

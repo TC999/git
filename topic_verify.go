@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"golang.aliyun-inc.com/agit/agit-release/cmd"
 )
 
 type TopicVerify struct {
@@ -15,7 +13,7 @@ type TopicVerify struct {
 	nextName string
 }
 
-func (t *TopicVerify) Do(o *cmd.Options, taskContext *TaskContext) error {
+func (t *TopicVerify) Do(o *Options, taskContext *TaskContext) error {
 	if err := verify(o, taskContext); err != nil {
 		return err
 	}
@@ -38,7 +36,7 @@ func (t *TopicVerify) Next(scheduler Scheduler, name string) error {
 	return nil
 }
 
-func verify(o *cmd.Options, taskContext *TaskContext) error {
+func verify(o *Options, taskContext *TaskContext) error {
 	for _, topic := range taskContext.topics {
 		localBranch := taskContext.localTopicBranches[topic.TopicName]
 		remoteBranch := taskContext.remoteTopicBranches[topic.TopicName]
@@ -54,7 +52,7 @@ func verify(o *cmd.Options, taskContext *TaskContext) error {
 	return nil
 }
 
-func verifyBranchIsRebasedGitVersion(o *cmd.Options, branch *Branch) error {
+func verifyBranchIsRebasedGitVersion(o *Options, branch *Branch) error {
 	var (
 		stdout bytes.Buffer
 		stderr bytes.Buffer
@@ -82,7 +80,7 @@ func verifyBranchIsRebasedGitVersion(o *cmd.Options, branch *Branch) error {
 	return nil
 }
 
-func verifyLocalBranchIsOld(o *cmd.Options, localBranch *Branch, remoteBranch *Branch) error {
+func verifyLocalBranchIsOld(o *Options, localBranch *Branch, remoteBranch *Branch) error {
 	var (
 		stdout bytes.Buffer
 		stderr bytes.Buffer
