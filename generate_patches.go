@@ -53,10 +53,14 @@ func (g *GeneratePatches) Generate(o *Options, taskContext *TaskContext) error {
 
 		fmt.Printf("Generating %0.70s...", topic.GitBranch.BranchName)
 
+		rangeArgument := fmt.Sprintf("%s..%s", o.GitVersion, topic.GitBranch.BranchName)
+		if topic.DependIndex >= 0 {
+			rangeArgument = fmt.Sprintf("%s..%s", taskContext.topics[topic.DependIndex], topic.GitBranch.BranchName)
+		}
+
 		cmd, err := NewCommand(ctx, o.CurrentPath, nil, nil, &stdout, &stderr,
 			"git", "format-patch",
-			fmt.Sprintf("--start-number=%04d", patchNumber),
-			fmt.Sprintf("%s..%s", o.GitVersion, topic.GitBranch.BranchName))
+			fmt.Sprintf("--start-number=%04d", patchNumber), rangeArgument)
 		if err != nil {
 			return fmt.Errorf("generate patch failed, err: %v", err)
 		}
