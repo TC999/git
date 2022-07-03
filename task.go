@@ -7,8 +7,10 @@ import (
 )
 
 type TaskContext struct {
-	topics   []*Topic
-	testList []string
+	topics              []*Topic
+	localTopicBranches  map[string]*Branch
+	remoteTopicBranches map[string]*Branch
+	testList            []string
 }
 
 type Scheduler interface {
