@@ -13,9 +13,12 @@ type Options struct {
 	CurrentPath      string
 	ReleaseBranch    string
 	GitTargetVersion string
-	UseLocal         bool
-	UseRemote        bool
 
+	// The remote name, default is origin(remotes/origin)
+	RemoteName string
+	UseRemote  bool
+
+	// Just used for internal
 	GitVersion  string
 	AGitVersion string
 }
@@ -68,12 +71,12 @@ func init() {
 		"if local and remote not same, then use remote branch",
 	)
 
-	rootCmd.Flags().BoolVarP(
-		&Options.UseLocal,
-		"use-local",
-		"l",
-		false,
-		"if local and remote not same, then use local branch",
+	rootCmd.Flags().StringVarP(
+		&Options.RemoteName,
+		"remote-name",
+		"",
+		"origin",
+		"the remote name, default is origin",
 	)
 
 	rootCmd.Flags().StringVarP(
