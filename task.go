@@ -1,0 +1,41 @@
+package agit_release
+
+import (
+	"fmt"
+
+	"golang.aliyun-inc.com/agit/agit-release/cmd"
+)
+
+type TaskContext struct {
+	topics   []*Topic
+	testList []string
+}
+
+type Scheduler interface {
+	Do(option *cmd.Options, taskContext *TaskContext) error
+	Next(scheduler Scheduler, name string) error
+}
+
+type ReleaseScheduler struct {
+	next     Scheduler
+	nextName string
+}
+
+func (r *ReleaseScheduler) Do(option *cmd.Options, taskContext *TaskContext) error {
+	if r.next != nil {
+		return r.next.Do(option, taskContext)
+	}
+
+	return fmt.Errorf("execute %s failed", r.nextName)
+}
+
+func (r *ReleaseScheduler) Next(scheduler Scheduler, name string) error {
+	if scheduler == nil {
+		return fmt.Errorf("the scheduler cannot be nil")
+	}
+
+	r.next = scheduler
+	r.nextName = name
+
+	return nil
+}
