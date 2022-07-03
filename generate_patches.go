@@ -5,7 +5,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
+)
+
+const (
+	_outputFolderName = "patches/t"
+	_seriesFile       = "patches/series"
 )
 
 type GeneratePatches struct {
@@ -45,6 +52,12 @@ func (g *GeneratePatches) Generate(o *Options, taskContext *TaskContext) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
+	f, err := os.OpenFile(filepath.Join(o.CurrentPath, _seriesFile), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("write series file failed, err: %v", err)
+	}
+	defer f.Close()
+
 	for _, topic := range taskContext.topics {
 		var (
 			stdout bytes.Buffer
@@ -59,7 +72,7 @@ func (g *GeneratePatches) Generate(o *Options, taskContext *TaskContext) error {
 		}
 
 		cmd, err := NewCommand(ctx, o.CurrentPath, nil, nil, &stdout, &stderr,
-			"git", "format-patch",
+			"git", "format-patch", "-o", _outputFolderName,
 			fmt.Sprintf("--start-number=%04d", patchNumber), rangeArgument)
 		if err != nil {
 			return fmt.Errorf("generate patch failed, err: %v", err)
@@ -70,8 +83,9 @@ func (g *GeneratePatches) Generate(o *Options, taskContext *TaskContext) error {
 		}
 
 		scanner := bufio.NewScanner(bytes.NewReader(stdout.Bytes()))
+
 		for scanner.Scan() {
-			scanner.Text()
+			f.WriteString(fmt.Sprintf("t/%s\n", scanner.Text()))
 			patchNumber++
 		}
 
