@@ -76,7 +76,7 @@ func init() {
 		&Options.RemoteName,
 		"remote-name",
 		"",
-		"origin",
+		"",
 		"the remote name, default is origin",
 	)
 
