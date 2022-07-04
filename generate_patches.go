@@ -68,7 +68,8 @@ func (g *GeneratePatches) Generate(o *Options, taskContext *TaskContext) error {
 
 		rangeArgument := fmt.Sprintf("%s..%s", o.GitVersion, topic.GitBranch.BranchName)
 		if topic.DependIndex >= 0 {
-			rangeArgument = fmt.Sprintf("%s..%s", taskContext.topics[topic.DependIndex], topic.GitBranch.BranchName)
+			rangeArgument = fmt.Sprintf("%s..%s",
+				taskContext.topics[topic.DependIndex].GitBranch.BranchName, topic.GitBranch.BranchName)
 		}
 
 		cmd, err := NewCommand(ctx, o.CurrentPath, nil, nil, &stdout, &stderr,
