@@ -16,13 +16,15 @@ var rootCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		taskContext := &agit_release.TaskContext{}
 		tasks := &agit_release.ReleaseScheduler{}
+		taskRemoteName := &agit_release.TaskRemoteName{}
 		readVersion := &agit_release.AGitVersion{}
 		readTopic := &agit_release.AGitTopicScheduler{}
 		topicVerify := &agit_release.TopicVerify{}
 		generatePatches := &agit_release.GeneratePatches{}
 
 		tasks.Next(readVersion, "read_version")
-		readVersion.Next(readTopic, "read_topic")
+		readVersion.Next(taskRemoteName, "get_remote_name")
+		taskRemoteName.Next(readTopic, "read_topic")
 		readTopic.Next(topicVerify, "topic_verify")
 		topicVerify.Next(generatePatches, "generate_patches")
 
