@@ -3,7 +3,6 @@ package agit_release
 import (
 	"bytes"
 	"fmt"
-	"log"
 	"os"
 	"path"
 )
@@ -23,7 +22,7 @@ func (a *AGitVersion) Do(o *Options, taskContext *TaskContext) error {
 		return nil
 	}
 
-	log.Print("will get git and agit version from current path files")
+	fmt.Println("Remind: will get git and agit version from current path files")
 
 	gitVersionPath := path.Join(o.CurrentPath, _gitVersion)
 	agitVersionPath := path.Join(o.CurrentPath, _agitVersion)
