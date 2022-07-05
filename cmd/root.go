@@ -14,6 +14,11 @@ var rootCmd = &cobra.Command{
 	Use:   "",
 	Short: "",
 	Run: func(cmd *cobra.Command, args []string) {
+		if err := validateOptions(); err != nil {
+			fmt.Println(err.Error())
+			os.Exit(128)
+		}
+
 		taskContext := &agit_release.TaskContext{}
 		tasks := &agit_release.ReleaseScheduler{}
 		taskRemoteName := &agit_release.TaskRemoteName{}
@@ -69,9 +74,17 @@ func init() {
 	rootCmd.Flags().BoolVarP(
 		&Options.UseRemote,
 		"use-remote",
-		"u",
+		"",
 		false,
 		"if local and remote not same, then use remote branch",
+	)
+
+	rootCmd.Flags().BoolVarP(
+		&Options.UseLocal,
+		"user-local",
+		"",
+		false,
+		"if local and remote not same, then user local branch",
 	)
 
 	rootCmd.Flags().StringVarP(
@@ -99,6 +112,22 @@ func init() {
 	)
 
 	agitOptions = Options
+}
+
+func validateOptions() error {
+	if agitOptions.UseRemote && agitOptions.UseLocal {
+		return fmt.Errorf("'--use-local' and '--use-remote' cannot be used together")
+	}
+
+	if agitOptions.UseLocal {
+		agitOptions.BranchMode = 1
+	}
+
+	if agitOptions.UseRemote {
+		agitOptions.BranchMode = 2
+	}
+
+	return nil
 }
 
 func Execute() {
