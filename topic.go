@@ -23,11 +23,11 @@ const (
 )
 
 const (
-	// Remote branch
-	_branchRemoteType = iota + 1
-
 	// Local branch
-	_branchLocalType
+	_branchLocalType = iota + 1
+
+	// Remote branch
+	_branchRemoteType
 )
 
 type topicReader func() error
@@ -211,20 +211,14 @@ func (a *AGitTopicScheduler) GetTopics(o *Options) error {
 				depend = strings.TrimSpace(splitLine[1])
 			}
 
-			noNumberTopicBranch := TrimTopicPrefixNumber(topicName)
 			noNumberDependBranch := TrimTopicPrefixNumber(depend)
 
-			if v, ok := a.localTopicBranches[noNumberTopicBranch]; ok && !o.UseRemote {
-				tmpBranchType = 1 << 0
-				tmpBranch = v
-			} else if v, ok = a.remoteTopicBranches[noNumberTopicBranch]; ok {
-				tmpBranchType = 1 << 1
-				tmpBranch = v
-			} else {
-				return fmt.Errorf("the topic: %s not exist in repo, please check it again", topicName)
+			tmpBranch, tmpBranchType, err = a.choiceBranch(o, topicName, a.localTopicBranches, a.remoteTopicBranches)
+			if err != nil {
+				return err
 			}
 
-			if len(noNumberTopicBranch) > 0 {
+			if len(topicName) > 0 {
 				if v, ok := tmpCache[noNumberDependBranch]; ok {
 					tmpDependIndex = v
 				}
@@ -252,4 +246,52 @@ func (a *AGitTopicScheduler) GetTopics(o *Options) error {
 	}
 
 	return nil
+}
+
+func (a *AGitTopicScheduler) choiceBranch(o *Options, topicName string, localTopicBranches,
+	remoteTopicBranches map[string]*Branch) (_ *Branch, branchType int, _ error) {
+	var (
+		tmpLocalBranch  *Branch
+		tmpRemoteBranch *Branch
+	)
+
+	noNumberTopicBranch := TrimTopicPrefixNumber(topicName)
+	tmpLocalBranch = localTopicBranches[noNumberTopicBranch]
+	tmpRemoteBranch = remoteTopicBranches[noNumberTopicBranch]
+
+	if tmpLocalBranch == nil && tmpRemoteBranch == nil {
+		return nil, 0, fmt.Errorf("the topic '%s' does not exit in local and remote", topicName)
+	}
+
+	switch o.BranchMode {
+	case UseLocalMode:
+		if tmpLocalBranch != nil {
+			return tmpLocalBranch, _branchLocalType, nil
+		}
+
+		// If local is nil, then will user remote
+		return tmpRemoteBranch, _branchRemoteType, nil
+	case UseRemoteMode:
+		if tmpRemoteBranch == nil {
+			return nil, 0, fmt.Errorf("the topic '%s' does not exit in remote", topicName)
+		}
+
+		return tmpRemoteBranch, _branchRemoteType, nil
+	case DefaultBranchMode:
+		if tmpLocalBranch != nil && tmpRemoteBranch != nil &&
+			tmpLocalBranch.Reference != tmpRemoteBranch.Reference {
+			return nil, 0, fmt.Errorf("the topic '%s' local and remote are inconsistent,"+
+				"plese use '--use-local' or '--use-remote'", topicName)
+		}
+
+		if tmpLocalBranch == nil || tmpRemoteBranch == nil {
+			// tmpLocalBranch or tmpRemoteBranch is nil
+			return nil, 0, fmt.Errorf("the topic '%s' local and remote are inconsistent,"+
+				"please use '--use-local' or '--use-remote'", topicName)
+		}
+
+		return tmpLocalBranch, _branchLocalType, nil
+	}
+
+	return nil, 0, fmt.Errorf("BUG: branch mode invalid")
 }
