@@ -3,6 +3,7 @@ package agit_release
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -278,6 +279,7 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 		createBranchFn func() (testspace.Space, string, error)
 		wantErr        bool
 		wantTopic      []*Topic
+		errObj         error
 	}{
 		{
 			name: "no_depend_successfully",
@@ -381,65 +383,12 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 			},
 		},
 		{
-			name: "with_invalid_depend",
+			name: "only_remote_on_repo_with_user_remote_argument",
 			args: args{
 				o: &Options{
 					RemoteName: "origin",
-				},
-			},
-			createBranchFn: func() (testspace.Space, string, error) {
-				repoSpace := prepareBranchRepo(t, []string{"topic/001-branch1", "topic/002-branch2", "topic/003-branch3"})
-				_, _, err := repoSpace.Execute(ctx, "cd workdir && git push --all")
-				if err != nil {
-					return nil, "", err
-				}
-
-				_, _, err = repoSpace.Execute(ctx, `
-					cd workdir && 
-					printf "topic/branch1\ntopic/branch2:topic/branch21\ntopic/003-branch3" >topic.txt
-				`)
-				if err != nil {
-					return nil, "", err
-				}
-
-				return repoSpace, repoSpace.GetPath("workdir"), nil
-			},
-			wantErr: true,
-			wantTopic: []*Topic{
-				{
-					TopicName:   "topic/branch1",
-					DependIndex: -1,
-					BranchType:  1,
-					GitBranch: &Branch{
-						BranchName: "topic/001-branch1",
-						Reference:  "63f12b3fd491c12c4b5398848b64624c1ba5a0d1",
-					},
-				},
-				{
-					TopicName:   "topic/branch2",
-					DependIndex: 0,
-					BranchType:  1,
-					GitBranch: &Branch{
-						BranchName: "topic/002-branch2",
-						Reference:  "763d856f16e3d9f8bd643e50badfde04dc907a52",
-					},
-				},
-				{
-					TopicName:   "topic/003-branch3",
-					DependIndex: -1,
-					BranchType:  1,
-					GitBranch: &Branch{
-						BranchName: "topic/003-branch3",
-						Reference:  "78a8d04e87cd6c119f8ae31da2c17d312fe27d9e",
-					},
-				},
-			},
-		},
-		{
-			name: "only_remote_on_repo",
-			args: args{
-				o: &Options{
-					RemoteName: "origin",
+					UseRemote:  true,
+					BranchMode: UseRemoteMode,
 				},
 			},
 			createBranchFn: func() (testspace.Space, string, error) {
@@ -467,7 +416,7 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 					DependIndex: -1,
 					BranchType:  2,
 					GitBranch: &Branch{
-						BranchName: "topic/001-branch1",
+						BranchName: "origin/topic/001-branch1",
 						Reference:  "63f12b3fd491c12c4b5398848b64624c1ba5a0d1",
 					},
 				},
@@ -476,17 +425,46 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 					DependIndex: -1,
 					BranchType:  2,
 					GitBranch: &Branch{
-						BranchName: "topic/002-branch2",
+						BranchName: "origin/topic/002-branch2",
 						Reference:  "763d856f16e3d9f8bd643e50badfde04dc907a52",
 					},
 				},
 			},
 		},
 		{
+			name: "only_remote_on_repo_with_user_without_remote_argument",
+			args: args{
+				o: &Options{
+					RemoteName: "origin",
+				},
+			},
+			createBranchFn: func() (testspace.Space, string, error) {
+				repoSpace := prepareBranchRepo(t, []string{"topic/001-branch1", "topic/002-branch2"})
+				_, _, err := repoSpace.Execute(ctx, "cd workdir && git push --all && cd .. && rm -rf workdir")
+				if err != nil {
+					return nil, "", err
+				}
+
+				_, _, err = repoSpace.Execute(ctx, `
+					git clone base.git workdir &&
+					cd workdir && 
+					printf "topic/branch1\ntopic/branch2" >topic.txt
+				`)
+				if err != nil {
+					return nil, "", err
+				}
+
+				return repoSpace, repoSpace.GetPath("workdir"), nil
+			},
+			wantErr: true,
+			errObj:  errors.New("the topic 'topic/branch1' local and remote are inconsistent,please use '--use-local' or '--use-remote'"),
+		},
+		{
 			name: "remote_valid_depend",
 			args: args{
 				o: &Options{
 					RemoteName: "origin",
+					BranchMode: UseRemoteMode,
 				},
 			},
 			createBranchFn: func() (testspace.Space, string, error) {
@@ -514,7 +492,7 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 					DependIndex: -1,
 					BranchType:  2,
 					GitBranch: &Branch{
-						BranchName: "topic/001-branch1",
+						BranchName: "origin/topic/001-branch1",
 						Reference:  "63f12b3fd491c12c4b5398848b64624c1ba5a0d1",
 					},
 				},
@@ -523,7 +501,7 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 					DependIndex: 0,
 					BranchType:  2,
 					GitBranch: &Branch{
-						BranchName: "topic/002-branch2",
+						BranchName: "origin/topic/002-branch2",
 						Reference:  "763d856f16e3d9f8bd643e50badfde04dc907a52",
 					},
 				},
@@ -532,7 +510,7 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 					DependIndex: -1,
 					BranchType:  2,
 					GitBranch: &Branch{
-						BranchName: "topic/003-branch3",
+						BranchName: "origin/topic/003-branch3",
 						Reference:  "78a8d04e87cd6c119f8ae31da2c17d312fe27d9e",
 					},
 				},
@@ -563,26 +541,7 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 				return repoSpace, repoSpace.GetPath("workdir"), nil
 			},
 			wantErr: true,
-			wantTopic: []*Topic{
-				{
-					TopicName:   "topic/branch1",
-					DependIndex: -1,
-					BranchType:  1,
-					GitBranch: &Branch{
-						BranchName: "topic/001-branch1",
-						Reference:  "63f12b3fd491c12c4b5398848b64624c1ba5a0d1",
-					},
-				},
-				{
-					TopicName:   "topic/branch2",
-					DependIndex: -1,
-					BranchType:  1,
-					GitBranch: &Branch{
-						BranchName: "topic/002-branch2",
-						Reference:  "763d856f16e3d9f8bd643e50badfde04dc907a52",
-					},
-				},
-			},
+			errObj:  errors.New("the topic 'topic/branch2' does not exit in local and remote"),
 		},
 		{
 			name: "ignore_code_comment",
@@ -627,6 +586,7 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 				o: &Options{
 					RemoteName: "origin",
 					UseRemote:  true,
+					BranchMode: UseRemoteMode,
 				},
 			},
 			createBranchFn: func() (testspace.Space, string, error) {
@@ -653,7 +613,7 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 					DependIndex: -1,
 					BranchType:  2,
 					GitBranch: &Branch{
-						BranchName: "topic/001-branch1",
+						BranchName: "origin/topic/001-branch1",
 						Reference:  "63f12b3fd491c12c4b5398848b64624c1ba5a0d1",
 					},
 				},
@@ -662,7 +622,7 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 					DependIndex: -1,
 					BranchType:  2,
 					GitBranch: &Branch{
-						BranchName: "topic/002-branch2",
+						BranchName: "origin/topic/002-branch2",
 						Reference:  "763d856f16e3d9f8bd643e50badfde04dc907a52",
 					},
 				},
@@ -681,8 +641,13 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 
 			tt.args.o.CurrentPath = path
 
-			if err := a.GetTopics(tt.args.o); (err != nil) != tt.wantErr {
+			err = a.GetTopics(tt.args.o)
+			if (err != nil) != tt.wantErr {
 				t.Errorf("GetTopics() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if !reflect.DeepEqual(tt.errObj, err) {
+				t.Errorf("GetTopics() error contents invalid")
 			}
 
 			if !tt.wantErr && !reflect.DeepEqual(tt.wantTopic, a.topics) {
