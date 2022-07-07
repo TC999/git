@@ -717,6 +717,7 @@ The "exec_id" field is a command-unique id and is only useful if the
 {
 	"event":"def_param",
 	...
+	"scope":...
 	"param":"core.abbrev",
 	"value":"7"
 }
@@ -1240,9 +1241,9 @@ d0 | main                     | version      |     |           |           |    
 d0 | main                     | start        |     |  0.000260 |           |              | /opt/git/master/bin/git version
 d0 | main                     | cmd_ancestry |     |           |           |              | ancestry:[bash sshd sshd sshd systemd]
 d0 | main                     | cmd_name     |     |           |           |              | version (version)
-d0 | main                     | def_param    |     |           |           |              | color.ui:never
-d0 | main                     | def_param    |     |           |           |              | color.ui:always
-d0 | main                     | def_param    |     |           |           |              | color.ui:auto
+d0 | main                     | def_param    |     |           |           | scope:system | color.ui:never
+d0 | main                     | def_param    |     |           |           | scope:global | color.ui:always
+d0 | main                     | def_param    |     |           |           | scope:local  | color.ui:auto
 d0 | main                     | exit         |     |  0.000470 |           |              | code:0
 d0 | main                     | atexit       |     |  0.000477 |           |              | code:0
 ----------------
