@@ -139,3 +139,254 @@ func Test_sortNoDependTopics(t *testing.T) {
 		})
 	}
 }
+
+func TestTaskTopicSort_sortDepend(t1 *testing.T) {
+	type args struct {
+		taskContext *TaskContext
+	}
+	tests := []struct {
+		name           string
+		args           args
+		wantErr        bool
+		wantTopicArray []*Topic
+	}{
+		{
+			//0a
+			//1b
+			//5f
+			//4e:a0
+			//2c:b1
+			//3d:f5
+
+			//e-a
+			//c-b
+			//d-f
+			name: "one_layer_successfully",
+			args: args{
+				taskContext: &TaskContext{
+					topics: []*Topic{
+						{
+							TopicName:   "a",
+							DependIndex: -1,
+							BranchType:  0,
+							GitBranch: &Branch{
+								BranchName: "a",
+							},
+						},
+						{
+							TopicName:   "b",
+							DependIndex: -1,
+							BranchType:  0,
+							GitBranch: &Branch{
+								BranchName: "b",
+							},
+						},
+						{
+							TopicName:   "c",
+							DependIndex: 1,
+							BranchType:  0,
+							GitBranch: &Branch{
+								BranchName: "c",
+							},
+						},
+						{
+							TopicName:   "d",
+							DependIndex: 5,
+							BranchType:  0,
+							GitBranch: &Branch{
+								BranchName: "d",
+							},
+						},
+						{
+							TopicName:   "e",
+							DependIndex: 0,
+							BranchType:  0,
+							GitBranch: &Branch{
+								BranchName: "e",
+							},
+						},
+						{
+							TopicName:   "f",
+							DependIndex: -1,
+							BranchType:  0,
+							GitBranch: &Branch{
+								BranchName: "f",
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+			wantTopicArray: []*Topic{
+				{
+					TopicName:   "a",
+					DependIndex: -1,
+					BranchType:  0,
+					GitBranch: &Branch{
+						BranchName: "a",
+					},
+				},
+				{
+					TopicName:   "b",
+					DependIndex: -1,
+					BranchType:  0,
+					GitBranch: &Branch{
+						BranchName: "b",
+					},
+				},
+				{
+					TopicName:   "f",
+					DependIndex: -1,
+					BranchType:  0,
+					GitBranch: &Branch{
+						BranchName: "f",
+					},
+				},
+				{
+					TopicName:   "e",
+					DependIndex: 0,
+					BranchType:  0,
+					GitBranch: &Branch{
+						BranchName: "e",
+					},
+				},
+				{
+					TopicName:   "c",
+					DependIndex: 1,
+					BranchType:  0,
+					GitBranch: &Branch{
+						BranchName: "c",
+					},
+				},
+				{
+					TopicName:   "d",
+					DependIndex: 2,
+					BranchType:  0,
+					GitBranch: &Branch{
+						BranchName: "d",
+					},
+				},
+			},
+		},
+		{
+			//0a
+			//1b
+			//2c
+			//3d:b
+			//4e:c
+			//5f:d
+			name: "f-d-b_e-c",
+			args: args{
+				taskContext: &TaskContext{
+					topics: []*Topic{
+						{
+							TopicName:   "a",
+							DependIndex: -1,
+							BranchType:  0,
+							GitBranch: &Branch{
+								BranchName: "a",
+							},
+						},
+						{
+							TopicName:   "b",
+							DependIndex: -1,
+							BranchType:  0,
+							GitBranch: &Branch{
+								BranchName: "b",
+							},
+						},
+						{
+							TopicName:   "c",
+							DependIndex: -1,
+							BranchType:  0,
+							GitBranch: &Branch{
+								BranchName: "c",
+							},
+						},
+						{
+							TopicName:   "d",
+							DependIndex: 1,
+							BranchType:  0,
+							GitBranch: &Branch{
+								BranchName: "d",
+							},
+						},
+						{
+							TopicName:   "e",
+							DependIndex: 2,
+							BranchType:  0,
+							GitBranch: &Branch{
+								BranchName: "e",
+							},
+						},
+						{
+							TopicName:   "f",
+							DependIndex: 3,
+							BranchType:  0,
+							GitBranch: &Branch{
+								BranchName: "f",
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+			wantTopicArray: []*Topic{
+				{
+					TopicName:   "a",
+					DependIndex: -1,
+					GitBranch: &Branch{
+						BranchName: "a",
+					},
+				},
+				{
+					TopicName:   "b",
+					DependIndex: -1,
+					GitBranch: &Branch{
+						BranchName: "b",
+					},
+				},
+				{
+					TopicName:   "c",
+					DependIndex: -1,
+					GitBranch: &Branch{
+						BranchName: "c",
+					},
+				},
+				{
+					TopicName:   "d",
+					DependIndex: 1,
+					GitBranch: &Branch{
+						BranchName: "d",
+					},
+				},
+				{
+					TopicName:   "f",
+					DependIndex: 3,
+					GitBranch: &Branch{
+						BranchName: "f",
+					},
+				},
+				{
+					TopicName:   "e",
+					DependIndex: 2,
+					GitBranch: &Branch{
+						BranchName: "e",
+					},
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t1.Run(tt.name, func(t1 *testing.T) {
+			t := &TaskTopicSort{}
+			if err := t.sortDepend(tt.args.taskContext); (err != nil) != tt.wantErr {
+				t1.Errorf("sortDepend() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if !reflect.DeepEqual(tt.wantTopicArray, tt.args.taskContext.topics) {
+				t1.Errorf("wantTopicarray not equal")
+			}
+		})
+	}
+}

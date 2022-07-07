@@ -11,6 +11,9 @@ type TaskTopicSort struct {
 }
 
 func (t *TaskTopicSort) Do(o *Options, taskContext *TaskContext) error {
+	if err := t.sortDepend(taskContext); err != nil {
+		return err
+	}
 
 	if t.next != nil {
 		return t.next.Do(o, taskContext)
@@ -39,61 +42,93 @@ type dependDesc struct {
 // sortDepend will try to verify and re-sort the order
 func (t *TaskTopicSort) sortDepend(taskContext *TaskContext) error {
 	topicCount := len(taskContext.topics)
-	var noDependTopics []*dependDesc
+	var (
+		// It will record the not have depended on topic
+		noDependTopics = make([]*Topic, 0, topicCount)
 
-	dependTopics := make([]*Topic, 0, topicCount)
+		// It will record exist depended on topic
+		dependTopicDesc = make([]*dependDesc, 0, topicCount)
+
+		// It will record sorted topics
+		sortedTopics = make([]*Topic, 0, topicCount)
+
+		// It will record the new order topic index which will be
+		// used to update 'depend on' index
+		newOrderMap = make(map[string]int)
+	)
 
 	for index, topic := range taskContext.topics {
 		if topic.DependIndex >= 0 {
-			dependTopics = append(dependTopics, topic)
+			dependTopicDesc = append(dependTopicDesc, &dependDesc{
+				CurrentIndex: index,
+				DependIndex:  topic.DependIndex,
+				Topic:        topic,
+				DependTopic:  taskContext.topics[topic.DependIndex],
+			})
 			continue
 		}
 
-		noDependTopics = append(noDependTopics, &dependDesc{
-			CurrentIndex: index,
-			DependIndex:  topic.DependIndex,
-			Topic:        topic,
-			DependTopic:  taskContext.topics[topic.DependIndex],
-		})
+		noDependTopics = append(noDependTopics, topic)
+		newOrderMap[topic.GitBranch.BranchName] = len(noDependTopics) - 1
 	}
 
-	sort.Slice(dependTopics, func(i, j int) bool {
-		return dependTopics[i].DependIndex < dependTopics[j].DependIndex
-	})
+	sortedDependTopics, err := sortDependTopics(dependTopicDesc)
+	if err != nil {
+		return err
+	}
 
-	// TODO not implement
+	// Add no depend
+	sortedTopics = append(sortedTopics, noDependTopics...)
 
+	// Add sorted depend
+	for _, sorted := range sortedDependTopics {
+		newOrderMap[sorted.Topic.GitBranch.BranchName] = len(sortedTopics)
+
+		// Reset the dependIndex
+		if v, ok := newOrderMap[sorted.DependTopic.GitBranch.BranchName]; ok {
+			sorted.Topic.DependIndex = v
+		}
+
+		sortedTopics = append(sortedTopics, sorted.Topic)
+	}
+
+	// Update the context
+	taskContext.topics = sortedTopics
 	return nil
 }
 
-func sortDependTopics(dependTopics []*dependDesc) ([]*dependDesc, error) {
+func sortDependTopics(dependTopicDesc []*dependDesc) ([]*dependDesc, error) {
 	var (
-		//dependLink []*dependDesc
+		// dependLink []*dependDesc
 		allLinks [][]*dependDesc
 		result   []*dependDesc
 	)
 
-	if len(dependTopics) == 0 {
-		return dependTopics, nil
+	if len(dependTopicDesc) == 0 {
+		return dependTopicDesc, nil
 	}
 
+	sort.Slice(dependTopicDesc, func(i, j int) bool {
+		return dependTopicDesc[i].DependIndex < dependTopicDesc[j].DependIndex
+	})
+
 	continueSeek := true
-	for len(dependTopics) > 0 {
+	for len(dependTopicDesc) > 0 {
 		var dependLink []*dependDesc
 		dependLink = append(dependLink, &dependDesc{
-			CurrentIndex: dependTopics[0].CurrentIndex,
-			DependIndex:  dependTopics[0].DependIndex,
-			Topic:        dependTopics[0].Topic,
-			DependTopic:  dependTopics[0].DependTopic,
+			CurrentIndex: dependTopicDesc[0].CurrentIndex,
+			DependIndex:  dependTopicDesc[0].DependIndex,
+			Topic:        dependTopicDesc[0].Topic,
+			DependTopic:  dependTopicDesc[0].DependTopic,
 		})
 
-		dependTopics = append(dependTopics[:0], dependTopics[0+1:]...)
+		dependTopicDesc = append(dependTopicDesc[:0], dependTopicDesc[0+1:]...)
 
-		for continueSeek && len(dependTopics) > 0 {
-			for i, topicDesc := range dependTopics {
+		for continueSeek && len(dependTopicDesc) > 0 {
+			for i, topicDesc := range dependTopicDesc {
 				if topicDesc.DependIndex == dependLink[len(dependLink)-1].CurrentIndex {
 					dependLink = append(dependLink, topicDesc)
-					dependTopics = append(dependTopics[:i], dependTopics[i+1:]...)
+					dependTopicDesc = append(dependTopicDesc[:i], dependTopicDesc[i+1:]...)
 					continueSeek = true
 					break
 				}
