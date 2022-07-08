@@ -154,14 +154,14 @@ func TestTaskTopicSort_sortDepend(t1 *testing.T) {
 		{
 			//0a
 			//1b
-			//5f
-			//4e:a0
 			//2c:b1
 			//3d:f5
+			//4e:a0
+			//5f
 
-			//e-a
 			//c-b
 			//d-f
+			//e-a
 			name: "one_layer_successfully",
 			args: args{
 				taskContext: &TaskContext{
@@ -244,14 +244,6 @@ func TestTaskTopicSort_sortDepend(t1 *testing.T) {
 					},
 				},
 				{
-					TopicName:   "e",
-					DependIndex: 0,
-					BranchType:  0,
-					GitBranch: &Branch{
-						BranchName: "e",
-					},
-				},
-				{
 					TopicName:   "c",
 					DependIndex: 1,
 					BranchType:  0,
@@ -265,6 +257,14 @@ func TestTaskTopicSort_sortDepend(t1 *testing.T) {
 					BranchType:  0,
 					GitBranch: &Branch{
 						BranchName: "d",
+					},
+				},
+				{
+					TopicName:   "e",
+					DependIndex: 0,
+					BranchType:  0,
+					GitBranch: &Branch{
+						BranchName: "e",
 					},
 				},
 			},
@@ -564,6 +564,120 @@ func TestTaskTopicSort_sortDepend(t1 *testing.T) {
 				},
 			},
 		},
+		{
+			//0a
+			//1b:d
+			//2c:b
+			//3d:
+			//4e:b
+			//5f:d
+			name: "c-b_e-b_f-b_depend_index_changed",
+			args: args{
+				taskContext: &TaskContext{
+					topics: []*Topic{
+						{
+							TopicName:   "a",
+							DependIndex: -1,
+							BranchType:  0,
+							GitBranch: &Branch{
+								BranchName: "a",
+							},
+						},
+						{
+							TopicName:   "b",
+							DependIndex: 3,
+							BranchType:  0,
+							GitBranch: &Branch{
+								BranchName: "b",
+							},
+						},
+						{
+							TopicName:   "c",
+							DependIndex: 1,
+							BranchType:  0,
+							GitBranch: &Branch{
+								BranchName: "c",
+							},
+						},
+						{
+							TopicName:   "d",
+							DependIndex: -1,
+							BranchType:  0,
+							GitBranch: &Branch{
+								BranchName: "d",
+							},
+						},
+						{
+							TopicName:   "e",
+							DependIndex: 1,
+							BranchType:  0,
+							GitBranch: &Branch{
+								BranchName: "e",
+							},
+						},
+						{
+							TopicName:   "f",
+							DependIndex: 3,
+							BranchType:  0,
+							GitBranch: &Branch{
+								BranchName: "f",
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+			wantTopicArray: []*Topic{
+				{
+					TopicName:   "a",
+					DependIndex: -1,
+					BranchType:  0,
+					GitBranch: &Branch{
+						BranchName: "a",
+					},
+				},
+				{
+					TopicName:   "d",
+					DependIndex: -1,
+					BranchType:  0,
+					GitBranch: &Branch{
+						BranchName: "d",
+					},
+				},
+				{
+					TopicName:   "b",
+					DependIndex: 1,
+					BranchType:  0,
+					GitBranch: &Branch{
+						BranchName: "b",
+					},
+				},
+				{
+					TopicName:   "c",
+					DependIndex: 2,
+					BranchType:  0,
+					GitBranch: &Branch{
+						BranchName: "c",
+					},
+				},
+				{
+					TopicName:   "e",
+					DependIndex: 2,
+					BranchType:  0,
+					GitBranch: &Branch{
+						BranchName: "e",
+					},
+				},
+				{
+					TopicName:   "f",
+					DependIndex: 1,
+					BranchType:  0,
+					GitBranch: &Branch{
+						BranchName: "f",
+					},
+				},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t1.Run(tt.name, func(t1 *testing.T) {
@@ -578,7 +692,17 @@ func TestTaskTopicSort_sortDepend(t1 *testing.T) {
 			}
 
 			if err == nil && !reflect.DeepEqual(tt.wantTopicArray, tt.args.taskContext.topics) {
-				t1.Errorf("wantTopicarray not equal")
+				t1.Errorf("wantTopicArray not equal")
+			}
+
+			// Not have error then do the check
+			if err == nil {
+				// Check dependency index must before the current index
+				for index, topic := range tt.args.taskContext.topics {
+					if topic.DependIndex >= index {
+						t1.Errorf("the topic: '%s' dependency index: %d invalid", topic.GitBranch.BranchName, index)
+					}
+				}
 			}
 		})
 	}
