@@ -25,13 +25,15 @@ var rootCmd = &cobra.Command{
 		readVersion := &agit_release.AGitVersion{}
 		readTopic := &agit_release.AGitTopicScheduler{}
 		topicVerify := &agit_release.TopicVerify{}
+		topicSort := &agit_release.TaskTopicSort{}
 		generatePatches := &agit_release.GeneratePatches{}
 
 		tasks.Next(readVersion, "read_version")
 		readVersion.Next(taskRemoteName, "get_remote_name")
 		taskRemoteName.Next(readTopic, "read_topic")
 		readTopic.Next(topicVerify, "topic_verify")
-		topicVerify.Next(generatePatches, "generate_patches")
+		topicVerify.Next(topicSort, "topic_sort")
+		topicSort.Next(generatePatches, "generate_patches")
 
 		if err := tasks.Do(agitOptions, taskContext); err != nil {
 			fmt.Printf("%s", err.Error())
