@@ -88,6 +88,29 @@ func CheckoutBranch(repoPath, branchName string) error {
 	return nil
 }
 
+// GetCurrentBranchName get current branch name
+func GetCurrentBranchName(repoPath string) (string, error) {
+	var (
+		stdout bytes.Buffer
+		stderr bytes.Buffer
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	cmd, err := NewCommand(ctx, repoPath, nil, nil, &stdout, &stderr,
+		"git", "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("cannot get current branch, err: %v", err)
+	}
+
+	if err = cmd.Wait(); err != nil {
+		return "", fmt.Errorf("cannot get current branch, stderr: %s, err: %v", stderr.String(), err)
+	}
+
+	return strings.TrimSpace(stdout.String()), nil
+}
+
 // GetCurrentRemoteName get current remote name from current branch
 func GetCurrentRemoteName(repoPath string) (string, error) {
 	var (
