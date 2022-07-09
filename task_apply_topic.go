@@ -38,26 +38,39 @@ func (t *TaskApplyTopic) Next(scheduler Scheduler, name string) error {
 
 func (t *TaskApplyTopic) amPatches(o *Options, taskContext *TaskContext) error {
 	currentPatchFolder := filepath.Join(o.CurrentPath, "patches", "t")
-
-	de, err := os.ReadDir(currentPatchFolder)
+	currentBranch, err := GetCurrentBranchName(o.CurrentPath)
 	if err != nil {
 		return err
 	}
+
+	tmpFolder, err := os.MkdirTemp("", "agit-release-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmpFolder)
+
+	fmt.Printf("Will applying to '%s' branch...\n", o.ReleaseBranch)
 
 	// Checkout branch
 	if err = CheckoutBranch(o.CurrentPath, o.ReleaseBranch); err != nil {
 		return err
 	}
 
-	for _, d := range de {
-		if d.IsDir() {
-			continue
+	// When finished, checkout back
+	defer func() {
+		if err = CheckoutBranch(o.CurrentPath, currentBranch); err != nil {
+			fmt.Println("cannot checkout back: ", err.Error())
 		}
+	}()
 
-		filePath := filepath.Join(currentPatchFolder, d.Name())
+	patchFiles, err := t.copyFilesToFolder(currentPatchFolder, tmpFolder)
+	if err != nil {
+		return err
+	}
 
+	for _, patchFile := range patchFiles {
 		// Start apply patch
-		if err = t.amPatch(o, filePath); err != nil {
+		if err = t.amPatch(o, patchFile); err != nil {
 			return err
 		}
 	}
@@ -83,9 +96,59 @@ func (t *TaskApplyTopic) amPatch(o *Options, patchFile string) error {
 	}
 
 	if err = cmd.Wait(); err != nil {
+		defer func() {
+			if err := t.amAbort(o); err != nil {
+				fmt.Println("cannot abort apply, you need to abort manually, err: ", err.Error())
+			}
+		}()
+
 		return fmt.Errorf("apply patch failed, current patch: %s, stderr: %s, err: %v", patchFile, stderr.String(), err)
 	}
 
 	fmt.Printf("\tdone\n")
+	return nil
+}
+
+func (t *TaskApplyTopic) copyFilesToFolder(srcFolder, dstFolder string) ([]string, error) {
+	var res []string
+	srdDirEntities, err := os.ReadDir(srcFolder)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, entity := range srdDirEntities {
+		if entity.IsDir() {
+			continue
+		}
+
+		filePath := filepath.Join(srcFolder, entity.Name())
+		dstFilePath := filepath.Join(dstFolder, entity.Name())
+		if err := CopyFile(filePath, dstFilePath); err != nil {
+			return nil, err
+		}
+
+		res = append(res, dstFilePath)
+	}
+
+	return res, nil
+}
+
+// When applying failed, then need abort.
+// if not do this, it will be failed on the next time.
+func (t *TaskApplyTopic) amAbort(o *Options) error {
+	var stderr bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	cmd, err := NewCommand(ctx, o.CurrentPath, nil, nil, nil, &stderr,
+		"git", "am", "--abort")
+	if err != nil {
+		return fmt.Errorf("abort apply failed, err: %v", err)
+	}
+
+	if err = cmd.Wait(); err != nil {
+		return fmt.Errorf("abort apply failed, stderr: %s, err: %v", stderr.String(), err)
+	}
+
 	return nil
 }
