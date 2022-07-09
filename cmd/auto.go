@@ -8,10 +8,8 @@ import (
 	agit_release "golang.aliyun-inc.com/agit/agit-release"
 )
 
-var agitOptions *agit_release.Options
-
-var generateCmd = &cobra.Command{
-	Use:   "generate",
+var autoCmd = &cobra.Command{
+	Use:   "auto",
 	Short: "",
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := validateOptions(); err != nil {
@@ -35,86 +33,84 @@ var generateCmd = &cobra.Command{
 		topicVerify.Next(topicSort, "topic_sort")
 		topicSort.Next(generatePatches, "generate_patches")
 
-		if err := tasks.Do(agitOptions, taskContext); err != nil {
+		if err := tasks.Do(&agitOptions, taskContext); err != nil {
 			fmt.Printf("%s", err.Error())
 		}
 	},
 }
 
 func init() {
-	Options := &agit_release.Options{}
 	currentPath, err := os.Getwd()
 	if err != nil {
 		panic("cannot get current path: " + err.Error())
 	}
 
 	// If not provide the path, then it will use current path
-	generateCmd.Flags().StringVarP(
-		&Options.CurrentPath,
+	autoCmd.Flags().StringVarP(
+		&agitOptions.CurrentPath,
 		"path",
 		"p",
 		currentPath,
 		"",
 	)
 
-	generateCmd.Flags().StringVarP(
-		&Options.ReleaseBranch,
+	autoCmd.Flags().StringVarP(
+		&agitOptions.ReleaseBranch,
 		"release-branch",
 		"r",
 		"",
 		"the release branch name",
 	)
 
-	generateCmd.Flags().StringVarP(
-		&Options.GitTargetVersion,
+	autoCmd.Flags().StringVarP(
+		&agitOptions.GitTargetVersion,
 		"target-version",
 		"t",
 		"",
 		"v2.36.1",
 	)
 
-	generateCmd.Flags().BoolVarP(
-		&Options.UseRemote,
+	autoCmd.Flags().BoolVarP(
+		&agitOptions.UseRemote,
 		"use-remote",
 		"",
 		false,
 		"if local and remote not same, then use remote branch",
 	)
 
-	generateCmd.Flags().BoolVarP(
-		&Options.UseLocal,
+	autoCmd.Flags().BoolVarP(
+		&agitOptions.UseLocal,
 		"user-local",
 		"",
 		false,
 		"if local and remote not same, then user local branch",
 	)
 
-	generateCmd.Flags().StringVarP(
-		&Options.RemoteName,
+	autoCmd.Flags().StringVarP(
+		&agitOptions.RemoteName,
 		"remote-name",
 		"",
 		"",
 		"the remote name, default is origin",
 	)
 
-	generateCmd.Flags().StringVarP(
-		&Options.GitVersion,
+	autoCmd.Flags().StringVarP(
+		&agitOptions.GitVersion,
 		"git-version",
 		"",
 		"",
 		"the git version, such as v2.36.1",
 	)
 
-	generateCmd.Flags().StringVarP(
-		&Options.AGitVersion,
+	autoCmd.Flags().StringVarP(
+		&agitOptions.AGitVersion,
 		"agit-version",
 		"",
 		"",
 		"the agit version, such as 6.5.9",
 	)
 
-	agitOptions = Options
-	rootCmd.AddCommand(generateCmd)
+	rootCmd.AddCommand(autoCmd)
 }
 
 func validateOptions() error {
