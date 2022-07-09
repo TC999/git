@@ -25,6 +25,7 @@ var autoCmd = &cobra.Command{
 		topicVerify := &agit_release.TopicVerify{}
 		topicSort := &agit_release.TaskTopicSort{}
 		generatePatches := &agit_release.GeneratePatches{}
+		taskApplyPatches := &agit_release.TaskApplyTopic{}
 
 		tasks.Next(readVersion, "read_version")
 		readVersion.Next(taskRemoteName, "get_remote_name")
@@ -32,6 +33,7 @@ var autoCmd = &cobra.Command{
 		readTopic.Next(topicVerify, "topic_verify")
 		topicVerify.Next(topicSort, "topic_sort")
 		topicSort.Next(generatePatches, "generate_patches")
+		generatePatches.Next(taskApplyPatches, "apply_patches")
 
 		if err := tasks.Do(&agitOptions, taskContext); err != nil {
 			fmt.Printf("%s", err.Error())
