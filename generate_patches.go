@@ -93,6 +93,6 @@ func (g *GeneratePatches) Generate(o *Options, taskContext *TaskContext) error {
 		fmt.Printf("\t done\n")
 	}
 
-	fmt.Println("Successfully generate all the patches")
+	fmt.Printf("Successfully generate all the patches\n\n")
 	return nil
 }
