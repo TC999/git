@@ -37,6 +37,7 @@ var generateCmd = &cobra.Command{
 
 		if err := tasks.Do(agitOptions, taskContext); err != nil {
 			fmt.Printf("%s", err.Error())
+			os.Exit(1)
 		}
 	},
 }

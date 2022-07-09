@@ -1,6 +1,7 @@
 package agit_release
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // CheckFileExist will check the paths exist, if one not exist,
@@ -61,4 +63,27 @@ func TrimTopicPrefixNumber(topicName string) string {
 	}
 
 	return ""
+}
+
+// CheckoutBranch checkout command
+func CheckoutBranch(repoPath, branchName string) error {
+	var stderr bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if len(branchName) == 0 {
+		return fmt.Errorf("the release-branch cannot be empty")
+	}
+
+	cmd, err := NewCommand(ctx, repoPath, nil, nil, nil, &stderr,
+		"git", "checkout", branchName)
+	if err != nil {
+		return fmt.Errorf("cannot checkout '%s' branch, err: %v", branchName, err)
+	}
+
+	if err = cmd.Wait(); err != nil {
+		return fmt.Errorf("cannot checkout '%s' branch, stderr: %s, err: %v", branchName, stderr.String(), err)
+	}
+
+	return nil
 }

@@ -44,6 +44,11 @@ func (t *TaskApplyTopic) amPatches(o *Options, taskContext *TaskContext) error {
 		return err
 	}
 
+	// Checkout branch
+	if err = CheckoutBranch(o.CurrentPath, o.ReleaseBranch); err != nil {
+		return err
+	}
+
 	for _, d := range de {
 		if d.IsDir() {
 			continue
