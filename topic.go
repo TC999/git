@@ -101,6 +101,12 @@ func (a *AGitTopicScheduler) ReadLocalTopicBranch(o *Options) error {
 		stderr bytes.Buffer
 	)
 
+	if a.preTopics == nil {
+		if err := a.preReadTopicFiles(o); err != nil {
+			return err
+		}
+	}
+
 	if a.localTopicBranches == nil {
 		a.localTopicBranches = make(map[string]*Branch)
 	}
@@ -133,6 +139,11 @@ func (a *AGitTopicScheduler) ReadLocalTopicBranch(o *Options) error {
 		branchName = strings.Replace(branchName, "refs/heads/", "", 1)
 
 		noNumberBranchName := TrimTopicPrefixNumber(branchName)
+
+		// If topic.txt doesn't contain this local branch, then will skip.
+		if _, ok := a.preTopics[noNumberBranchName]; !ok {
+			continue
+		}
 
 		if _, ok := a.localTopicBranches[noNumberBranchName]; ok {
 			return fmt.Errorf("the topic: %s already exist, please check it again", branchName)

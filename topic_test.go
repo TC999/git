@@ -73,6 +73,10 @@ func TestAGitTopicScheduler_ReadLocalTopicBranch(t *testing.T) {
 			createBranchFn: func() (testspace.Space, string, error) {
 				repoSpace := prepareBranchRepo(t, []string{"topic/001-branch1", "topic/002-branch2"})
 				_, _, err := repoSpace.Execute(ctx, "git branch -a")
+				repoSpace.Execute(ctx, `
+					cd workdir &&
+					printf "branch1\nbranch2" >topic.txt
+				`)
 				return repoSpace, repoSpace.GetPath("workdir"), err
 			},
 			wantErr: false,
@@ -88,6 +92,10 @@ func TestAGitTopicScheduler_ReadLocalTopicBranch(t *testing.T) {
 			},
 			createBranchFn: func() (testspace.Space, string, error) {
 				repoSpace := prepareBranchRepo(t, []string{})
+				repoSpace.Execute(ctx, `
+					cd workdir &&
+					printf "" >topic.txt
+				`)
 				return repoSpace, repoSpace.GetPath("workdir"), nil
 			},
 			wantErr:    false,
@@ -101,6 +109,10 @@ func TestAGitTopicScheduler_ReadLocalTopicBranch(t *testing.T) {
 			createBranchFn: func() (testspace.Space, string, error) {
 				repoSpace := prepareBranchRepo(t, []string{"topic/001-branch1", "002-branch2"})
 				_, _, err := repoSpace.Execute(ctx, "git branch -a")
+				repoSpace.Execute(ctx, `
+					cd workdir &&
+					printf "branch1\nbranch2" >topic.txt
+				`)
 				return repoSpace, repoSpace.GetPath("workdir"), err
 			},
 			wantErr: false,
