@@ -194,7 +194,12 @@ func TestAGitTopicScheduler_ReadRemoteTopicBranch(t *testing.T) {
 					return nil, "", err
 				}
 
-				_, _, err = repoSpace.Execute(ctx, "rm -rf workdir && git clone base.git workdir")
+				_, _, err = repoSpace.Execute(ctx, `
+					rm -rf workdir && 
+					git clone base.git workdir &&
+					cd workdir &&
+					printf "branch1\nbranch2" >topic.txt
+				`)
 				return repoSpace, repoSpace.GetPath("workdir"), err
 			},
 			wantErr: false,
@@ -212,6 +217,10 @@ func TestAGitTopicScheduler_ReadRemoteTopicBranch(t *testing.T) {
 			},
 			createBranchFn: func() (testspace.Space, string, error) {
 				repoSpace := prepareBranchRepo(t, []string{})
+				repoSpace.Execute(ctx, `
+					cd workdir &&
+					printf "" >topic.txt
+				`)
 				return repoSpace, repoSpace.GetPath("workdir"), nil
 			},
 			wantErr:    false,
@@ -231,7 +240,12 @@ func TestAGitTopicScheduler_ReadRemoteTopicBranch(t *testing.T) {
 					return nil, "", err
 				}
 
-				_, _, err = repoSpace.Execute(ctx, "rm -rf workdir && git clone base.git workdir")
+				_, _, err = repoSpace.Execute(ctx, `
+					rm -rf workdir && 
+					git clone base.git workdir &&
+					cd workdir &&
+					printf "branch1\nbranch2" >topic.txt
+				`)
 				return repoSpace, repoSpace.GetPath("workdir"), err
 			},
 			wantErr: false,

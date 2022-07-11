@@ -168,6 +168,12 @@ func (a *AGitTopicScheduler) ReadRemoteTopicBranch(o *Options) error {
 		a.remoteTopicBranches = make(map[string]*Branch)
 	}
 
+	if a.preTopics == nil {
+		if err := a.preReadTopicFiles(o); err != nil {
+			return err
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -193,16 +199,16 @@ func (a *AGitTopicScheduler) ReadRemoteTopicBranch(o *Options) error {
 		reference := strings.TrimSpace(lineSplit[0])
 		branchName := strings.TrimSpace(lineSplit[1])
 
-		// If not contains the remote name, then continue
-		if !strings.HasPrefix(branchName, "refs/remotes/"+o.RemoteName) {
-			continue
-		}
-
 		// Remove refs/remotes/${remote}
 		branchName = strings.Replace(branchName,
 			fmt.Sprintf("%s%s/", "refs/remotes/", o.RemoteName), "", 1)
 
 		noNumberBranchName := TrimTopicPrefixNumber(branchName)
+
+		// If topic.txt doesn't contain this remote branch, then will skip.
+		if _, ok := a.preTopics[noNumberBranchName]; !ok {
+			continue
+		}
 
 		if v, ok := a.remoteTopicBranches[noNumberBranchName]; ok {
 			return fmt.Errorf("the topic: %s already exist, please check remote branch '%s' and '%s'\n",
