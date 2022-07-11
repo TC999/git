@@ -141,14 +141,20 @@ func (a *AGitTopicScheduler) ReadRemoteTopicBranch(o *Options) error {
 		reference := strings.TrimSpace(lineSplit[0])
 		branchName := strings.TrimSpace(lineSplit[1])
 
-		// Remove refs/heads/
+		// If not contains the remote name, then continue
+		if !strings.HasPrefix(branchName, "refs/remotes/"+o.RemoteName) {
+			continue
+		}
+
+		// Remove refs/remotes/${remote}
 		branchName = strings.Replace(branchName,
 			fmt.Sprintf("%s%s/", "refs/remotes/", o.RemoteName), "", 1)
 
 		noNumberBranchName := TrimTopicPrefixNumber(branchName)
 
-		if _, ok := a.remoteTopicBranches[noNumberBranchName]; ok {
-			return fmt.Errorf("the topic: %s already exist, please check it again", branchName)
+		if v, ok := a.remoteTopicBranches[noNumberBranchName]; ok {
+			return fmt.Errorf("the topic: %s already exist, please check remote branch '%s' and '%s'\n",
+				noNumberBranchName, v.BranchName, branchName)
 		}
 
 		a.remoteTopicBranches[noNumberBranchName] = &Branch{
@@ -176,12 +182,16 @@ func (a *AGitTopicScheduler) GetTopics(o *Options) error {
 
 	// Load the local branches
 	if len(a.localTopicBranches) <= 0 {
-		a.ReadLocalTopicBranch(o)
+		if err := a.ReadLocalTopicBranch(o); err != nil {
+			return err
+		}
 	}
 
 	// Load the remote branches
 	if len(a.remoteTopicBranches) <= 0 {
-		a.ReadRemoteTopicBranch(o)
+		if err := a.ReadRemoteTopicBranch(o); err != nil {
+			return err
+		}
 	}
 
 	if contents, err := os.ReadFile(topicFilePath); err == nil {
@@ -282,13 +292,13 @@ func (a *AGitTopicScheduler) choiceBranch(o *Options, topicName string, localTop
 		if tmpLocalBranch != nil && tmpRemoteBranch != nil &&
 			tmpLocalBranch.Reference != tmpRemoteBranch.Reference {
 			return nil, 0, fmt.Errorf("the topic '%s' local and remote are inconsistent,"+
-				"plese use '--use-local' or '--use-remote'", topicName)
+				" plese use '--use-local' or '--use-remote'", topicName)
 		}
 
 		if tmpLocalBranch == nil || tmpRemoteBranch == nil {
 			// tmpLocalBranch or tmpRemoteBranch is nil
 			return nil, 0, fmt.Errorf("the topic '%s' local and remote are inconsistent,"+
-				"please use '--use-local' or '--use-remote'", topicName)
+				" please use '--use-local' or '--use-remote'", topicName)
 		}
 
 		return tmpLocalBranch, _branchLocalType, nil

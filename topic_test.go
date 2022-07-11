@@ -457,7 +457,7 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 				return repoSpace, repoSpace.GetPath("workdir"), nil
 			},
 			wantErr: true,
-			errObj:  errors.New("the topic 'topic/branch1' local and remote are inconsistent,please use '--use-local' or '--use-remote'"),
+			errObj:  errors.New("the topic 'topic/branch1' local and remote are inconsistent, please use '--use-local' or '--use-remote'"),
 		},
 		{
 			name: "remote_valid_depend",
