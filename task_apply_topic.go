@@ -1,4 +1,4 @@
-package agit_release
+package patchwork
 
 import (
 	"bytes"
@@ -43,7 +43,7 @@ func (t *TaskApplyTopic) amPatches(o *Options, taskContext *TaskContext) error {
 		return err
 	}
 
-	tmpFolder, err := os.MkdirTemp("", "agit-release-*")
+	tmpFolder, err := os.MkdirTemp("", "patchwork-*")
 	if err != nil {
 		return err
 	}

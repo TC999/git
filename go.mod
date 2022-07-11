@@ -1,4 +1,4 @@
-module golang.aliyun-inc.com/agit/agit-release
+module golang.aliyun-inc.com/agit/patchwork
 
 go 1.18
 

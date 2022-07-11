@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	agit_release "golang.aliyun-inc.com/agit/agit-release"
+	"golang.aliyun-inc.com/agit/patchwork"
 )
 
 var autoCmd = &cobra.Command{
@@ -17,16 +17,16 @@ var autoCmd = &cobra.Command{
 			os.Exit(128)
 		}
 
-		taskContext := &agit_release.TaskContext{}
-		tasks := &agit_release.ReleaseScheduler{}
-		taskRemoteName := &agit_release.TaskRemoteName{}
-		readVersion := &agit_release.AGitVersion{}
-		readTopic := &agit_release.AGitTopicScheduler{}
-		topicVerify := &agit_release.TopicVerify{}
-		topicSort := &agit_release.TaskTopicSort{}
-		generatePatches := &agit_release.GeneratePatches{}
-		taskApplyPatches := &agit_release.TaskApplyTopic{}
-		taskTopicTest := &agit_release.TaskTopicTest{}
+		taskContext := &patchwork.TaskContext{}
+		tasks := &patchwork.ReleaseScheduler{}
+		taskRemoteName := &patchwork.TaskRemoteName{}
+		readVersion := &patchwork.AGitVersion{}
+		readTopic := &patchwork.AGitTopicScheduler{}
+		topicVerify := &patchwork.TopicVerify{}
+		topicSort := &patchwork.TaskTopicSort{}
+		generatePatches := &patchwork.GeneratePatches{}
+		taskApplyPatches := &patchwork.TaskApplyTopic{}
+		taskTopicTest := &patchwork.TaskTopicTest{}
 
 		tasks.Next(readVersion, "read_version")
 		readVersion.Next(taskRemoteName, "get_remote_name")

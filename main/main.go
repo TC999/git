@@ -1,6 +1,6 @@
 package main
 
-import "golang.aliyun-inc.com/agit/agit-release/cmd"
+import "golang.aliyun-inc.com/agit/patchwork/cmd"
 
 func main() {
 	cmd.Execute()

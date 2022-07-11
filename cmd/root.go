@@ -5,12 +5,12 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	agit_release "golang.aliyun-inc.com/agit/agit-release"
+	"golang.aliyun-inc.com/agit/patchwork"
 )
 
 var (
 	rootCmd     = &cobra.Command{}
-	agitOptions = agit_release.Options{}
+	agitOptions = patchwork.Options{}
 )
 
 func Execute() {

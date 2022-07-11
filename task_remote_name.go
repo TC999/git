@@ -1,4 +1,4 @@
-package agit_release
+package patchwork
 
 import (
 	"fmt"

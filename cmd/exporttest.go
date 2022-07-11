@@ -5,21 +5,21 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	agit_release "golang.aliyun-inc.com/agit/agit-release"
+	"golang.aliyun-inc.com/agit/patchwork"
 )
 
 var exportTestCmd = &cobra.Command{
 	Use:   "export-test",
 	Short: "",
 	Run: func(cmd *cobra.Command, args []string) {
-		taskContext := &agit_release.TaskContext{}
-		tasks := &agit_release.ReleaseScheduler{}
-		taskRemoteName := &agit_release.TaskRemoteName{}
-		readVersion := &agit_release.AGitVersion{}
-		readTopic := &agit_release.AGitTopicScheduler{}
-		topicVerify := &agit_release.TopicVerify{}
-		topicSort := &agit_release.TaskTopicSort{}
-		taskExportTest := &agit_release.TaskTopicTest{}
+		taskContext := &patchwork.TaskContext{}
+		tasks := &patchwork.ReleaseScheduler{}
+		taskRemoteName := &patchwork.TaskRemoteName{}
+		readVersion := &patchwork.AGitVersion{}
+		readTopic := &patchwork.AGitTopicScheduler{}
+		topicVerify := &patchwork.TopicVerify{}
+		topicSort := &patchwork.TaskTopicSort{}
+		taskExportTest := &patchwork.TaskTopicTest{}
 
 		tasks.Next(readVersion, "read_version")
 		readVersion.Next(taskRemoteName, "get_remote_name")
