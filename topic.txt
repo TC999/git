@@ -1,0 +1,17 @@
+github-action
+refs-txn-hook
+black-hole
+quiltexport
+rate-limit
+agit-txn
+agit-gc
+transparent-data-encryption
+end-of-options
+not-receive-pack-file-with-large-object
+http-fetch-speed-limit
+pre-send-pack-hook
+write-packed-refs
+auto-gc-if-too-many-loose-refs
+midx-fixup-deleting-packfile
+support-read-netrc-file-from-a-specific-path
+agit-version
