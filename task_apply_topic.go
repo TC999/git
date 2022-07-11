@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -69,6 +70,11 @@ func (t *TaskApplyTopic) amPatches(o *Options, taskContext *TaskContext) error {
 	}
 
 	for _, patchFile := range patchFiles {
+		// If not '.patch' file will ignore
+		if !strings.HasSuffix(patchFile, ".patch") {
+			continue
+		}
+
 		// Start apply patch
 		if err = t.amPatch(o, patchFile); err != nil {
 			return err
