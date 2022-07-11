@@ -90,7 +90,7 @@ func (t *TaskApplyTopic) amPatch(o *Options, patchFile string) error {
 	fmt.Printf("Appling %0.70s...", filepath.Base(patchFile))
 
 	cmd, err := NewCommand(ctx, o.CurrentPath, nil, nil, &stdout, &stderr,
-		"git", "am", patchFile)
+		"git", "am", "-3", patchFile)
 	if err != nil {
 		return fmt.Errorf("apply patch failed, current patch: %s, err: %v", patchFile, err)
 	}
