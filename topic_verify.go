@@ -19,7 +19,7 @@ func (t *TopicVerify) Do(o *Options, taskContext *TaskContext) error {
 	}
 
 	if t.next != nil {
-		t.next.Do(o, taskContext)
+		return t.next.Do(o, taskContext)
 	}
 
 	return nil
