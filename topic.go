@@ -280,6 +280,11 @@ func (a *AGitTopicScheduler) GetTopics(o *Options) error {
 			}
 
 			noNumberDependBranch := TrimTopicPrefixNumber(depend)
+			noNumberTopicBranch := TrimTopicPrefixNumber(topicName)
+
+			if _, ok := a.preTopics[noNumberTopicBranch]; !ok {
+				continue
+			}
 
 			tmpBranch, tmpBranchType, err = a.choiceBranch(o, topicName, a.localTopicBranches, a.remoteTopicBranches)
 			if err != nil {
@@ -291,13 +296,6 @@ func (a *AGitTopicScheduler) GetTopics(o *Options) error {
 					tmpDependIndex = v
 				}
 
-				// Do not check the depend invalid, the other task will sort the depends
-				//if (len(noNumberDependBranch) > 0 && tmpDependIndex == -1) ||
-				//	tmpDependIndex > index {
-				//
-				//	return fmt.Errorf("please check topic: %s and the depend: %s, "+
-				//		"the depend must before itself", topicName, depend)
-				//}
 			}
 
 			a.topics = append(a.topics,
