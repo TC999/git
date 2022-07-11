@@ -49,9 +49,50 @@ type AGitTopicScheduler struct {
 	next     Scheduler
 	nextName string
 
-	topics              []*Topic
+	topics []*Topic
+
+	// It is used to check local and remote, internal field
+	preTopics map[string]struct{}
+
 	localTopicBranches  map[string]*Branch
 	remoteTopicBranches map[string]*Branch
+}
+
+// preReadTopicFiles this method will pre-read topic.txt, it just used for ignore the remote
+// and local not contains topics in topic.txt
+func (a *AGitTopicScheduler) preReadTopicFiles(o *Options) error {
+	res := make(map[string]struct{})
+	topicFilePath := path.Join(o.CurrentPath, _topicName)
+	contents, err := os.ReadFile(topicFilePath)
+	if err != nil {
+		return fmt.Errorf("topic.txt file not exist")
+	}
+
+	scanner := bufio.NewScanner(bytes.NewReader(contents))
+	for scanner.Scan() {
+		tmpTopic := strings.TrimSpace(scanner.Text())
+
+		// Current line is code comment, just ignore it
+		if strings.HasPrefix(tmpTopic, "#") {
+			continue
+		}
+
+		tmpArray := strings.Split(tmpTopic, ":")
+		if len(tmpArray) == 0 {
+			continue
+		}
+
+		tmpTopic = TrimTopicPrefixNumber(tmpArray[0])
+
+		if _, ok := res[tmpTopic]; ok {
+			return fmt.Errorf("the topic '%s' exists multiple times, please check it again", tmpTopic)
+		}
+
+		res[tmpTopic] = struct{}{}
+	}
+
+	a.preTopics = res
+	return nil
 }
 
 func (a *AGitTopicScheduler) ReadLocalTopicBranch(o *Options) error {
