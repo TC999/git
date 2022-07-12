@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -86,7 +87,12 @@ func (g *GeneratePatches) Generate(o *Options, taskContext *TaskContext) error {
 		scanner := bufio.NewScanner(bytes.NewReader(stdout.Bytes()))
 
 		for scanner.Scan() {
-			f.WriteString(fmt.Sprintf("t/%s\n", scanner.Text()))
+			tmpPatchName := scanner.Text()
+			if strings.HasPrefix(tmpPatchName, "patches/") {
+				tmpPatchName = strings.Replace(tmpPatchName, "patches/", "", 1)
+			}
+
+			f.WriteString(fmt.Sprintf("%s\n", tmpPatchName))
 			patchNumber++
 		}
 
