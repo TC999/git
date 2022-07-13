@@ -16,6 +16,11 @@ const (
 	_seriesFile       = "patches/series"
 )
 
+const (
+	_agitReleaseTopic = "agit-version"
+	_agitDevVersion   = "agit.dev"
+)
+
 type GeneratePatches struct {
 	next     Scheduler
 	nextName string
@@ -63,7 +68,13 @@ func (g *GeneratePatches) Generate(o *Options, taskContext *TaskContext) error {
 		var (
 			stdout bytes.Buffer
 			stderr bytes.Buffer
+
+			isReplaceAgitVersion bool
 		)
+
+		if topic.TopicName == _agitReleaseTopic {
+			isReplaceAgitVersion = true
+		}
 
 		fmt.Printf("Generating %0.70s...", topic.GitBranch.BranchName)
 
@@ -88,6 +99,14 @@ func (g *GeneratePatches) Generate(o *Options, taskContext *TaskContext) error {
 
 		for scanner.Scan() {
 			tmpPatchName := scanner.Text()
+
+			// Replace agit version
+			if isReplaceAgitVersion {
+				if err = setAgitVersionOnPatch(o, tmpPatchName); err != nil {
+					return err
+				}
+			}
+
 			if strings.HasPrefix(tmpPatchName, "patches/") {
 				tmpPatchName = strings.Replace(tmpPatchName, "patches/", "", 1)
 			}
@@ -96,9 +115,25 @@ func (g *GeneratePatches) Generate(o *Options, taskContext *TaskContext) error {
 			patchNumber++
 		}
 
+		isReplaceAgitVersion = false
+
 		fmt.Printf("\t done\n")
 	}
 
 	fmt.Printf("Successfully generate all the patches\n\n")
 	return nil
+}
+
+// setAgitVersionOnPatch will replace 'agit.dev' to really agit verison
+func setAgitVersionOnPatch(o *Options, patchName string) error {
+	patchPath := filepath.Join(o.CurrentPath, patchName)
+
+	contents, err := os.ReadFile(patchPath)
+	if err != nil {
+		return err
+	}
+
+	newContents := strings.Replace(string(contents), _agitDevVersion, o.AGitVersion, -1)
+
+	return os.WriteFile(patchPath, []byte(newContents), 0o644)
 }
