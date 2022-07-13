@@ -73,7 +73,7 @@ func verifyBranchIsRebasedGitVersion(o *Options, branch *Branch) error {
 		}
 
 		if len(strings.TrimSpace(stdout.String())) > 0 {
-			return fmt.Errorf("the branch %s not rebase to %s", branch.BranchName, o.GitVersion)
+			return fmt.Errorf("the branch %s not rebase to %s\n", branch.BranchName, o.GitVersion)
 		}
 	}
 
