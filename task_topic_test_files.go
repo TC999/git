@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	_testFileReg = "(t/[^/]*.sh)"
+	_testFileReg = "t/([^/]*.sh)"
 )
 
 const (
@@ -101,6 +101,7 @@ func (t *TaskTopicTest) getTopicTestFiles(o *Options, topicBranchName string) ([
 	var (
 		stdout bytes.Buffer
 		stderr bytes.Buffer
+		res    []string
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
@@ -118,5 +119,11 @@ func (t *TaskTopicTest) getTopicTestFiles(o *Options, topicBranchName string) ([
 	}
 
 	reg := regexp.MustCompile(_testFileReg)
-	return reg.FindAllString(stdout.String(), -1), nil
+	for _, matched := range reg.FindAllStringSubmatch(stdout.String(), -1) {
+		if len(matched) > 1 {
+			res = append(res, matched[1])
+		}
+	}
+
+	return res, nil
 }
