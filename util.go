@@ -88,6 +88,27 @@ func CheckoutBranch(repoPath, branchName string) error {
 	return nil
 }
 
+// ResetCurrentBranch reset current branch to other branch or tag
+func ResetCurrentBranch(repoPath, tagName string) error {
+	var stderr bytes.Buffer
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	cmd, err := NewCommand(ctx, repoPath, nil, nil, nil, &stderr,
+		"git", "reset", "--hard", tagName)
+	if err != nil {
+		return fmt.Errorf("cannot reset current branch to '%s', err: %v", tagName, err)
+	}
+
+	if err = cmd.Wait(); err != nil {
+		return fmt.Errorf("cannot reset current branch to '%s', stderr: %s, err: %v",
+			tagName, stderr.String(), err)
+	}
+
+	return nil
+}
+
 // GetCurrentBranchName get current branch name
 func GetCurrentBranchName(repoPath string) (string, error) {
 	var (
