@@ -58,6 +58,10 @@ func (g *GeneratePatches) Generate(o *Options, taskContext *TaskContext) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
+	if err := createPatchFolder(o); err != nil {
+		return err
+	}
+
 	f, err := os.OpenFile(filepath.Join(o.CurrentPath, _seriesFile), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return fmt.Errorf("write series file failed, err: %v", err)
@@ -136,4 +140,14 @@ func setAgitVersionOnPatch(o *Options, patchName string) error {
 	newContents := strings.Replace(string(contents), _agitDevVersion, o.AGitVersion, -1)
 
 	return os.WriteFile(patchPath, []byte(newContents), 0o644)
+}
+
+func createPatchFolder(o *Options) error {
+	patchFolder := filepath.Join(o.CurrentPath, "patches", "t")
+	_, err := os.Stat(patchFolder)
+	if err == nil {
+		return nil
+	}
+
+	return os.MkdirAll(patchFolder, 0o755)
 }
