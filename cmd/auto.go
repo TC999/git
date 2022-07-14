@@ -75,14 +75,6 @@ func init() {
 		"force reset release branch to git version",
 	)
 
-	autoCmd.Flags().StringVarP(
-		&agitOptions.GitTargetVersion,
-		"target-version",
-		"t",
-		"",
-		"v2.36.1",
-	)
-
 	autoCmd.Flags().BoolVarP(
 		&agitOptions.UseRemote,
 		"use-remote",

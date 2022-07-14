@@ -10,7 +10,6 @@ type Options struct {
 	CurrentPath             string
 	ReleaseBranch           string
 	ForceResetReleaseBranch bool
-	GitTargetVersion        string
 
 	// The remote name, default is origin(remotes/origin)
 	RemoteName string
