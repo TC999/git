@@ -67,6 +67,14 @@ func init() {
 		"the release branch name",
 	)
 
+	autoCmd.Flags().BoolVarP(
+		&agitOptions.ForceResetReleaseBranch,
+		"force",
+		"f",
+		false,
+		"force reset release branch to git version",
+	)
+
 	autoCmd.Flags().StringVarP(
 		&agitOptions.GitTargetVersion,
 		"target-version",
