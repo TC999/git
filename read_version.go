@@ -22,7 +22,7 @@ func (a *AGitVersion) Do(o *Options, taskContext *TaskContext) error {
 		return nil
 	}
 
-	fmt.Println("Remind: will get git and agit version from current path files")
+	fmt.Println("Reminding: will get git and agit version from current path files")
 
 	gitVersionPath := path.Join(o.CurrentPath, _gitVersion)
 	agitVersionPath := path.Join(o.CurrentPath, _agitVersion)

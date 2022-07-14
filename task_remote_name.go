@@ -18,7 +18,7 @@ func (r *TaskRemoteName) Do(o *Options, taskContext *TaskContext) error {
 			return err
 		}
 
-		fmt.Printf("Remind: Remote name not provide, will be use '%s'\n", o.RemoteName)
+		fmt.Printf("Reminding: Remote name not provide, will be use '%s'\n", o.RemoteName)
 	}
 
 	if r.next != nil {
