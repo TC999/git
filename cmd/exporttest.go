@@ -9,8 +9,9 @@ import (
 )
 
 var exportTestCmd = &cobra.Command{
-	Use:   "export-test",
-	Short: "",
+	Use:        "export-test",
+	Short:      "",
+	Deprecated: "will merged to --export-patches",
 	Run: func(cmd *cobra.Command, args []string) {
 		taskContext := &patchwork.TaskContext{}
 		tasks := &patchwork.ReleaseScheduler{}
