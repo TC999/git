@@ -9,8 +9,9 @@ import (
 )
 
 var autoCmd = &cobra.Command{
-	Use:   "auto",
-	Short: "",
+	Use:        "auto",
+	Short:      "",
+	Deprecated: "do not use this",
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := validateOptions(); err != nil {
 			fmt.Println(err.Error())
