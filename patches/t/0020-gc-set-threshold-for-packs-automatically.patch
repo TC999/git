@@ -1,0 +1,1074 @@
+From 005b151692d01e95fdc3dff4629f00a215e0371f Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Tue, 7 Jul 2020 22:30:14 +0800
+Subject: [PATCH 20/20] gc: set threshold for packs automatically
+
+Add new config variable "agit.gc", which is enabled (-1) by default.
+
+Set big_pack_threshold and keep_pack_threshold automatically if agit.gc
+is enabled and repo size greater than 200MB.
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ builtin/gc.c                 | 201 +++++++++++-
+ t/t6502-git-gc-dryrun.sh     |   1 +
+ t/t6503-agit-gc-threshold.sh | 142 +++++++++
+ t/t6504-agit-gc-dryrun.sh    | 587 +++++++++++++++++++++++++++++++++++
+ 4 files changed, 923 insertions(+), 8 deletions(-)
+ create mode 100755 t/t6503-agit-gc-threshold.sh
+ create mode 100755 t/t6504-agit-gc-dryrun.sh
+
+diff --git a/builtin/gc.c b/builtin/gc.c
+index 99af092620..20e65e760b 100644
+--- a/builtin/gc.c
++++ b/builtin/gc.c
+@@ -34,6 +34,10 @@
+ #include "hook.h"
+ 
+ #define FAILED_RUN "failed to run %s"
++#define SMALLEST_BIG_PACK_THRESHOLD_DEFAULT	1LL<<26	/* 64MB */
++#ifndef OFF_MAX
++	#define OFF_MAX ULONG_MAX
++#endif
+ 
+ static const char * const builtin_gc_usage[] = {
+ 	N_("git gc [<options>]"),
+@@ -49,11 +53,15 @@ static int gc_auto_pack_limit = 50;
+ static int detach_auto = 1;
+ static int dryrun = 0;
+ static int verbose = 0;
++static int agit_gc = -1;
+ static timestamp_t gc_log_expire_time;
+ static const char *gc_log_expire = "1.day.ago";
+ static const char *prune_expire = "2.weeks.ago";
+ static const char *prune_worktrees_expire = "3.months.ago";
+-static unsigned long big_pack_threshold;
++/* Keep number of packs which have size between big_pack_threshold
++ * and (2 * big_pack_threshold). */
++static int max_big_pack_edge_num = 8;
++static off_t big_pack_threshold;
+ static unsigned long max_delta_cache_size = DEFAULT_DELTA_CACHE_SIZE;
+ 
+ static struct strvec reflog = STRVEC_INIT;
+@@ -137,6 +145,7 @@ static int gc_config_is_timestamp_never(const char *var)
+ static void gc_config(void)
+ {
+ 	const char *value;
++	unsigned long gc_big_pack_threshold;
+ 
+ 	if (!git_config_get_value("gc.packrefs", &value)) {
+ 		if (value && !strcmp(value, "notbare"))
+@@ -158,12 +167,87 @@ static void gc_config(void)
+ 	git_config_get_expiry("gc.worktreepruneexpire", &prune_worktrees_expire);
+ 	git_config_get_expiry("gc.logexpiry", &gc_log_expire);
+ 
+-	git_config_get_ulong("gc.bigpackthreshold", &big_pack_threshold);
++	if (!git_config_get_ulong("gc.bigpackthreshold", &gc_big_pack_threshold)) {
++		/* Biggest packfile should less than OFF_MAX, maybe (OFF_MAX / 1.2). */
++		if (gc_big_pack_threshold >= OFF_MAX / 24 * 10)
++			big_pack_threshold = OFF_MAX / 24 * 10;
++		else
++			big_pack_threshold = gc_big_pack_threshold;
++	}
+ 	git_config_get_ulong("pack.deltacachesize", &max_delta_cache_size);
+ 
++	git_config_get_bool("agit.gc", &agit_gc);
++
+ 	git_config(git_default_config, NULL);
+ }
+ 
++static void set_agit_pack_threshold(void)
++{
++	struct packed_git *p;
++	uint64_t total = 0;
++	off_t threshold = 0;
++	char *env;
++
++	if (!agit_gc)
++		return;
++
++	for (p = get_all_packs(the_repository); p; p = p->next) {
++		if (!p->pack_local)
++			continue;
++		total += p->pack_size;
++	}
++
++	if (verbose) {
++		env = getenv("AGIT_DEBUG_TOTAL_PACK_SIZE");
++		if (env) {
++			fprintf(stderr, "note: AGIT_DEBUG_TOTAL_PACK_SIZE is set to %s.\n", env);
++			total = atoll(env);
++		}
++	}
++
++	if (total > 1LL<<35) {		/* range: 32GB ~ */
++		threshold = 1LL<<31;	/*   2GB packfile */
++		max_big_pack_edge_num = 1000;
++	} else if (total > 1LL<<34) {	/* range: 16GB ~ 32GB */
++		threshold = 1LL<<30;	/*   1GB packfile */
++	} else if (total > 1LL<<33) {	/* range: 8GB ~ 16GB */
++		threshold = 1LL<<29;	/*   512MB packfile */
++	} else if (total > 1LL<<32) {	/* range: 4GB ~ 8GB */
++		threshold = 1LL<<28;	/*   256MB packfile */
++	} else if (total > 1LL<<31) {	/* range: 2GB ~ 4GB */
++		threshold = 1LL<<27;	/*   128MB packfile */
++	} else if (total > 1LL<<27) {	/* range: 128MB ~ 2GB */
++		threshold = 1LL<<26;	/*   64MB packfile */
++	} else {
++		/* Total pack size below 128MB, disable agit-gc. */
++		/* If set this env, run agit-gc for test */
++		env = getenv("AGIT_DEBUG_ASSUME_BIG_REPOSITORY");
++		if (!env) {
++			if (verbose)
++				fprintf(stderr, "note: agit_gc is disabled for repo size below 128MB.\n");
++			agit_gc = 0;
++		}
++		if (verbose && big_pack_threshold)
++			fprintf(stderr, "note: big_pack_threshold is pre-defined as %"PRIu64".\n",
++				(uint64_t)big_pack_threshold);
++		return;
++	}
++
++	/* Biggest packfile should less than OFF_MAX, maybe (OFF_MAX / 1.2),
++	 * and threshold is a half of the biggest packfile. */
++	if (threshold >= OFF_MAX / 24 * 10)
++		threshold = OFF_MAX / 24 * 10;
++	if (verbose) {
++		if (big_pack_threshold)
++			fprintf(stderr, "note: big_pack_threshold is reset from %"PRIu64" to %"PRIu64".\n",
++				(uint64_t)big_pack_threshold,
++				(uint64_t)threshold);
++		else
++			fprintf(stderr, "note: big_pack_threshold is set to %"PRIu64".\n", (uint64_t)threshold);
++	}
++	big_pack_threshold = threshold;
++}
++
+ static void show_command(const char **argv, int flag)
+ {
+ 	struct strbuf sb = STRBUF_INIT;
+@@ -239,11 +323,16 @@ static int too_many_loose_objects(void)
+ 	return needed;
+ }
+ 
++static struct packed_git *agit_find_base_packs(struct string_list *packs,
++					       off_t limit);
+ static struct packed_git *find_base_packs(struct string_list *packs,
+-					  unsigned long limit)
++					  off_t limit)
+ {
+ 	struct packed_git *p, *base = NULL;
+ 
++	if (agit_gc && limit)
++		return agit_find_base_packs(packs, limit);
++
+ 	for (p = get_all_packs(the_repository); p; p = p->next) {
+ 		if (!p->pack_local)
+ 			continue;
+@@ -268,14 +357,93 @@ static struct packed_git *find_base_packs(struct string_list *packs,
+ 	return base;
+ }
+ 
++static int show_verbose_message(struct string_list_item *item, void *data) {
++	fputs(item->string, stderr);
++	return 0;
++}
++
++static struct packed_git *agit_find_base_packs(struct string_list *packs,
++					       off_t limit)
++{
++	struct packed_git *p, *base = NULL;
++	int count = 0;
++	off_t limit_x2;
++	struct string_list verbose_list = STRING_LIST_INIT_DUP;
++	struct strbuf msg = STRBUF_INIT;
++	unsigned long smallest_big_pack_threshold;
++	char *env;
++
++	limit_x2 = limit > (OFF_MAX / 24 * 10) ? (OFF_MAX / 12 * 10) : limit * 2;
++	env = getenv("AGIT_DEBUG_SMALLEST_BIG_PACK_THRESHOLD");
++	if (env) {
++		fprintf(stderr, "note: AGIT_DEBUG_SMALLEST_BIG_PACK_THRESHOLD is set to %s.\n", env);
++		smallest_big_pack_threshold = atol(env);
++	} else {
++		smallest_big_pack_threshold = SMALLEST_BIG_PACK_THRESHOLD_DEFAULT;
++	}
++	for (p = get_all_packs(the_repository); p; p = p->next) {
++		if (!p->pack_local)
++			continue;
++		if (limit_x2 && p->pack_size >= limit_x2) {
++			string_list_append(packs, p->pack_name);
++			if (verbose) {
++				strbuf_reset(&msg);
++				strbuf_addf(&msg,
++					    "note: always keep pack '%s' (%"PRIu64" > %"PRIu64").\n",
++					    p->pack_name, (uint64_t)p->pack_size, limit_x2);
++				string_list_append(&verbose_list, msg.buf);
++			}
++			continue;
++		} else if (limit && p->pack_size >= limit && (count++ < max_big_pack_edge_num)) {
++			string_list_append(packs, p->pack_name);
++			if (verbose) {
++				strbuf_reset(&msg);
++				strbuf_addf(&msg,
++					    "note: will keep pack '%s' (%"PRIu64" > %"PRIu64").\n",
++					    p->pack_name, (uint64_t)p->pack_size, (uint64_t)limit);
++				string_list_append(&verbose_list, msg.buf);
++			}
++			continue;
++		} else if ((!base || base->pack_size < p->pack_size) &&
++			   p->pack_size > smallest_big_pack_threshold) {
++			base = p;
++		}
++	}
++
++	if (base) {
++		if (verbose) {
++			strbuf_reset(&msg);
++			strbuf_addf(&msg,
++				    "note: will keep largest pack '%s'.\n",
++				    base->pack_name);
++			string_list_append(&verbose_list, msg.buf);
++		}
++		string_list_append(packs, base->pack_name);
++	}
++
++	if (verbose && verbose_list.nr > 0) {
++		string_list_sort(&verbose_list);
++		for_each_string_list(&verbose_list, show_verbose_message, NULL);
++		string_list_clear(&verbose_list, 0);
++		strbuf_release(&msg);
++	}
++
++	return base;
++}
++
+ static int too_many_packs(void)
+ {
+ 	struct packed_git *p;
+ 	int cnt;
++	off_t limit, limit_x2;
++	int ignore = 0, exclude = 0;
+ 
+ 	if (gc_auto_pack_limit <= 0)
+ 		return 0;
+ 
++	limit = big_pack_threshold;
++	limit_x2 = limit > (OFF_MAX / 24 * 10) ? (OFF_MAX / 12 * 10) : limit * 2;
++
+ 	for (cnt = 0, p = get_all_packs(the_repository); p; p = p->next) {
+ 		if (!p->pack_local)
+ 			continue;
+@@ -288,11 +456,26 @@ static int too_many_packs(void)
+ 		 * Perhaps check the size of the pack and count only
+ 		 * very small ones here?
+ 		 */
++		if (agit_gc && limit) {
++		    if (p->pack_size >= limit_x2) {
++			    exclude++;
++			    continue;
++		    }
++		    if (p->pack_size >= limit && ignore++ < max_big_pack_edge_num)
++			    continue;
++		}
+ 		cnt++;
+ 	}
+-	if (verbose) {
+-		if (gc_auto_pack_limit < cnt)
+-			fprintf(stderr, "note: too many packs. (%d > %d)\n", cnt, gc_auto_pack_limit);
++	if (verbose && gc_auto_pack_limit < cnt) {
++		if (!exclude && !ignore)
++			fprintf(stderr, "note: too many packs. (%d > %d)\n",
++				cnt,
++				gc_auto_pack_limit);
++		else
++			fprintf(stderr, "note: too many packs. (%d > %d, excluding %d keeped pack(s))\n",
++				cnt,
++				gc_auto_pack_limit,
++				exclude + ignore);
+ 	}
+ 	return gc_auto_pack_limit < cnt;
+ }
+@@ -418,7 +601,7 @@ static int need_to_gc(void)
+ 
+ 		if (big_pack_threshold) {
+ 			find_base_packs(&keep_pack, big_pack_threshold);
+-			if (keep_pack.nr >= gc_auto_pack_limit) {
++			if (!agit_gc && keep_pack.nr >= gc_auto_pack_limit) {
+ 				if (verbose)
+ 					fprintf(stderr,
+ 						"note: too many packs to keep: %" PRIuMAX " > %d, clean and use largest one to keep.\n",
+@@ -664,6 +847,8 @@ int cmd_gc(int argc, const char **argv, const char *prefix)
+ 	if (quiet)
+ 		strvec_push(&repack, "-q");
+ 
++	set_agit_pack_threshold();
++
+ 	if (auto_gc) {
+ 		/*
+ 		 * Auto-gc should be least intrusive as possible.
+@@ -701,7 +886,7 @@ int cmd_gc(int argc, const char **argv, const char *prefix)
+ 	} else {
+ 		struct string_list keep_pack = STRING_LIST_INIT_NODUP;
+ 
+-		if (keep_largest_pack != -1) {
++		if (!agit_gc && keep_largest_pack != -1) {
+ 			if (keep_largest_pack)
+ 				find_base_packs(&keep_pack, 0);
+ 		} else if (big_pack_threshold) {
+diff --git a/t/t6502-git-gc-dryrun.sh b/t/t6502-git-gc-dryrun.sh
+index 04e60a0255..7f4e52d2b7 100755
+--- a/t/t6502-git-gc-dryrun.sh
++++ b/t/t6502-git-gc-dryrun.sh
+@@ -35,6 +35,7 @@ rewrite_gc_output() {
+ test_expect_success 'setup' '
+ 	create_bare_repo repo.git &&
+ 	git -C repo.git config gc.autoDetach 0 &&
++	git -C repo.git config agit.gc 0 &&
+ 	git clone repo.git work
+ '
+ 
+diff --git a/t/t6503-agit-gc-threshold.sh b/t/t6503-agit-gc-threshold.sh
+new file mode 100755
+index 0000000000..4d78ad2fd5
+--- /dev/null
++++ b/t/t6503-agit-gc-threshold.sh
+@@ -0,0 +1,142 @@
++#!/bin/sh
++
++test_description='agit-gc threshold test'
++
++GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
++export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
++
++. ./test-lib.sh
++
++create_bare_repo () {
++	test "$#" = 1 ||
++	BUG "not 1 parameter to test-create-repo"
++	repo="$1"
++	mkdir -p "$repo"
++	(
++		cd "$repo" || error "Cannot setup test environment"
++		git -c \
++			init.defaultBranch="${GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME-master}" \
++			init --bare \
++			"--template=$GIT_BUILD_DIR/templates/blt/" >&3 2>&4 ||
++		error "cannot run git init -- have you built things yet?"
++		mv hooks hooks-disabled &&
++		git config core.abbrev 7
++	) || exit
++}
++
++test_expect_success 'pack size: < 128MB' '
++	AGIT_DEBUG_TOTAL_PACK_SIZE=100123123 \
++		git gc --dryrun 2>&1 |
++		grep -v "note: will run:" >actual &&
++	cat >expect <<-EOF &&
++	note: AGIT_DEBUG_TOTAL_PACK_SIZE is set to 100123123.
++	note: agit_gc is disabled for repo size below 128MB.
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'pack size: < 128MB (agit.gc=1)' '
++	AGIT_DEBUG_TOTAL_PACK_SIZE=100123123 \
++		git -c agit.gc=1 gc --dryrun 2>&1 |
++		grep -v "note: will run:" >actual &&
++	cat >expect <<-EOF &&
++	note: AGIT_DEBUG_TOTAL_PACK_SIZE is set to 100123123.
++	note: agit_gc is disabled for repo size below 128MB.
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'pack size: 128MB ~ 2GB' '
++	AGIT_DEBUG_TOTAL_PACK_SIZE=500123123 \
++		git gc --dryrun 2>&1 |
++		grep -v "note: will run:" >actual &&
++	cat >expect <<-EOF &&
++	note: AGIT_DEBUG_TOTAL_PACK_SIZE is set to 500123123.
++	note: big_pack_threshold is set to 67108864.
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'pack size: 2GB ~ 4GB' '
++	AGIT_DEBUG_TOTAL_PACK_SIZE=3123123123 \
++		git gc --dryrun 2>&1 |
++		grep -v "note: will run:" >actual &&
++	cat >expect <<-EOF &&
++	note: AGIT_DEBUG_TOTAL_PACK_SIZE is set to 3123123123.
++	note: big_pack_threshold is set to 134217728.
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'pack size: 4GB ~ 8GB' '
++	AGIT_DEBUG_TOTAL_PACK_SIZE=6123123123 \
++		git gc --dryrun 2>&1 |
++		grep -v "note: will run:" >actual &&
++	cat >expect <<-EOF &&
++	note: AGIT_DEBUG_TOTAL_PACK_SIZE is set to 6123123123.
++	note: big_pack_threshold is set to 268435456.
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'pack size: 8GB ~ 16GB' '
++	AGIT_DEBUG_TOTAL_PACK_SIZE=9123123123 \
++		git gc --dryrun 2>&1 |
++		grep -v "note: will run:" >actual &&
++	cat >expect <<-EOF &&
++	note: AGIT_DEBUG_TOTAL_PACK_SIZE is set to 9123123123.
++	note: big_pack_threshold is set to 536870912.
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'pack size: 16GB ~ 32GB' '
++	AGIT_DEBUG_TOTAL_PACK_SIZE=20123123123 \
++		git gc --dryrun 2>&1 |
++		grep -v "note: will run:" >actual &&
++	cat >expect <<-EOF &&
++	note: AGIT_DEBUG_TOTAL_PACK_SIZE is set to 20123123123.
++	note: big_pack_threshold is set to 1073741824.
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'pack size: 32GB ~ 64GB' '
++	if uname -a | grep -w i686 || test "$jobname" = "linux32"
++	then
++		cat >expect <<-EOF
++		note: AGIT_DEBUG_TOTAL_PACK_SIZE is set to 40123123123.
++		note: big_pack_threshold is set to 1789569700.
++		EOF
++	else
++		cat >expect <<-EOF
++		note: AGIT_DEBUG_TOTAL_PACK_SIZE is set to 40123123123.
++		note: big_pack_threshold is set to 2147483648.
++		EOF
++	fi &&
++	AGIT_DEBUG_TOTAL_PACK_SIZE=40123123123 \
++		git gc --dryrun 2>&1 |
++		grep -v "note: will run:" >actual &&
++	test_cmp expect actual
++'
++
++test_expect_success 'pack size: 64GB ~' '
++	if uname -a | grep -w i686 || test "$jobname" = "linux32"
++	then
++		cat >expect <<-EOF
++		note: AGIT_DEBUG_TOTAL_PACK_SIZE is set to 80123123123.
++		note: big_pack_threshold is set to 1789569700.
++		EOF
++	else
++		cat >expect <<-EOF
++		note: AGIT_DEBUG_TOTAL_PACK_SIZE is set to 80123123123.
++		note: big_pack_threshold is set to 2147483648.
++		EOF
++	fi &&
++	AGIT_DEBUG_TOTAL_PACK_SIZE=80123123123 \
++		git gc --dryrun 2>&1 |
++		grep -v "note: will run:" >actual &&
++	test_cmp expect actual
++'
++
++test_done
+diff --git a/t/t6504-agit-gc-dryrun.sh b/t/t6504-agit-gc-dryrun.sh
+new file mode 100755
+index 0000000000..6d91a3dc6d
+--- /dev/null
++++ b/t/t6504-agit-gc-dryrun.sh
+@@ -0,0 +1,587 @@
++#!/bin/sh
++
++test_description='agit-gc threshold test'
++
++GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
++export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
++
++. ./test-lib.sh
++
++create_bare_repo () {
++	test "$#" = 1 ||
++	BUG "not 1 parameter to test-create-repo"
++	repo="$1"
++	mkdir -p "$repo"
++	(
++		cd "$repo" || error "Cannot setup test environment"
++		git -c \
++			init.defaultBranch="${GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME-master}" \
++			init --bare \
++			"--template=$GIT_BUILD_DIR/templates/blt/" >&3 2>&4 ||
++		error "cannot run git init -- have you built things yet?"
++		mv hooks hooks-disabled &&
++		git config core.abbrev 7
++	) || exit
++}
++
++rewrite_gc_output() {
++	_x40="$_x35$_x05"
++
++	sed \
++		-e "s/'/\"/g" \
++		-e "s/([0-9][0-9][0-9][0-9]* >/(<SIZE> >/g" \
++		-e "s/pack-$_x40[0-9a-f]*/pack-<ID>/g"
++}
++
++test_expect_success 'setup' '
++	create_bare_repo repo.git &&
++	git -C repo.git config gc.autoDetach 0 &&
++	git clone repo.git work
++'
++
++if test "$GIT_TEST_DEFAULT_HASH" = sha256
++then
++	cat >expect <<-EOF
++	repo.git/objects/17/3e5dff2e3908c6976be9a1647cc27aca742a3694c8f8f717b06cbace61023b
++	repo.git/objects/17/5790306b946f2e4df0e79261dd1c9ceefd40c2d4ae3f8e1a4866ff518dc716
++	repo.git/objects/17/744c4d4b03844d2b9eeee3074105289666b7fd9136019fc7e341772abcba71
++	repo.git/objects/17/e77a090aae09afc93b3908bf6c57aad56bfec13e6927f47523b02dff5412f0
++	EOF
++else
++	cat >expect <<-EOF
++	repo.git/objects/17/5b6c5dfd7f9bf6e2b2c4e2dcf3e2341298575d
++	repo.git/objects/17/e344e7c08441fa81d5b56c21008dc0feeeaa20
++	EOF
++fi
++
++test_expect_success 'setup: add some loose objects' '
++	git -C repo.git config transfer.unpackLimit 10000 &&
++	(
++		cd work &&
++		for i in $(test_seq 1 512)
++		do
++			printf "$i\n" >$i.txt
++		done &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Initial commit" &&
++		git push
++	) &&
++	find repo.git/objects/17 -type f | sort >actual &&
++	test_cmp expect actual
++'
++
++test_expect_success 'setup: add packs' '
++	git -C repo.git config transfer.unpackLimit 1 &&
++	git -C repo.git config gc.auto 0 &&
++	(
++		cd work &&
++
++		test_copy_bytes 30720 </dev/urandom >30.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 30.bin" &&
++		git push &&
++
++		test_copy_bytes 61440 </dev/urandom >60.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 60.bin" &&
++		git push &&
++
++		test_copy_bytes 102400 </dev/urandom >100.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 100.bin" &&
++		git push &&
++
++		test_copy_bytes 133120 </dev/urandom >130.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 130.bin" &&
++		git push &&
++
++		test_copy_bytes 163840 </dev/urandom >160.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 160.bin" &&
++		git push &&
++
++		test_copy_bytes 204800 </dev/urandom >200.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 200.bin" &&
++		git push &&
++
++		test_copy_bytes 235520 </dev/urandom >230.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 230.bin" &&
++		git push &&
++
++		test_copy_bytes 266240 </dev/urandom >260.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 260.bin" &&
++		git push &&
++
++		test_copy_bytes 307200 </dev/urandom >300.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 300.bin" &&
++		git push &&
++
++		test_copy_bytes 337920 </dev/urandom >330.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 330.bin" &&
++		git push &&
++
++		test_copy_bytes 368640 </dev/urandom >360.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 360.bin" &&
++		git push &&
++
++		test_copy_bytes 409600 </dev/urandom >400.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 400.bin" &&
++		git push
++	)
++'
++
++if test "$GIT_TEST_DEFAULT_HASH" = sha256
++then
++	# SHA256: (769 +256 -1)/256 = 4
++	gc_auto_threshold=769
++else
++	# SHA1:	 (257 + 256 - 1) / 256 = 2
++	gc_auto_threshold=257
++fi
++
++test_expect_success 'gc: agit.gc is disabled for small repo' '
++	(
++		cd repo.git &&
++		git \
++			-c gc.autoPackLimit=5 \
++			-c gc.bigPackThreshold=200k \
++			-c gc.auto=$gc_auto_threshold \
++			-c gc.autoDetach=0 \
++			-c agit.gc=1 \
++			gc --auto --dryrun 2>&1
++	) >out &&
++	grep "^note: " out | rewrite_gc_output >actual &&
++
++	cat >expect <<-EOF &&
++	note: agit_gc is disabled for repo size below 128MB.
++	note: big_pack_threshold is pre-defined as 204800.
++	note: too many packs. (12 > 5)
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: too many packs to keep: 7 > 5, clean and use largest one to keep.
++	note: will keep largest pack "./objects/pack/pack-<ID>.pack".
++	note: will run: git pack-refs --all --prune
++	note: will run: git reflog expire --all
++	note: will run: git repack -d -l -A --unpack-unreachable=2.weeks.ago --keep-pack=pack-<ID>.pack
++	note: will run: git prune --expire 2.weeks.ago
++	note: will run: git worktree prune --expire 3.months.ago
++	note: will run: git rerere gc
++	EOF
++	test_cmp expect actual
++'
++
++test_done
++
++if test "$GIT_TEST_DEFAULT_HASH" = sha256
++then
++	# SHA256: (769 +256 -1)/256 = 4
++	gc_auto_threshold=769
++else
++	# SHA1:	 (257 + 256 - 1) / 256 = 2
++	gc_auto_threshold=257
++fi
++
++test_expect_success 'gc: repo is healthy' '
++	(
++		cd repo.git &&
++		AGIT_DEBUG_ASSUME_BIG_REPOSITORY=1 git \
++			-c gc.autoPackLimit=5 \
++			-c gc.bigPackThreshold=200k \
++			-c gc.auto=${gc_auto_threshold} \
++			-c gc.autoDetach=0 \
++			-c agit.gc=1 \
++			gc --auto --dryrun 2>&1
++	) >actual &&
++
++	cat >expect <<-EOF &&
++	note: big_pack_threshold is pre-defined as 204800.
++	note: repo is healthy, no need to gc.
++	EOF
++	test_cmp expect actual
++'
++
++if test "$GIT_TEST_DEFAULT_HASH" = sha256
++then
++	# SHA256: (768 +256 -1)/256 < 4
++	gc_auto_threshold=768
++	nr_of_files=3
++else
++	# SHA1:	 (256 + 256 - 1) / 256 < 2
++	gc_auto_threshold=256
++	nr_of_files=1
++fi
++
++test_expect_success 'gc: too many loose objects (agit.gc is not set)' '
++	git -C repo.git \
++		-c gc.auto=$gc_auto_threshold \
++		gc --auto --dryrun \
++		>out 2>&1 &&
++	grep "^note: " out | rewrite_gc_output >actual &&
++
++	cat >expect <<-EOF &&
++	note: agit_gc is disabled for repo size below 128MB.
++	note: too many loose objects, greater than: $nr_of_files.
++	note: will run: git pack-refs --all --prune
++	note: will run: git reflog expire --all
++	note: will run: git repack -d -l --no-write-bitmap-index
++	note: will run: git prune --expire 2.weeks.ago
++	note: will run: git worktree prune --expire 3.months.ago
++	note: will run: git rerere gc
++	note: too many loose objects, greater than: $nr_of_files.
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'gc: too many loose objects (agit.gc=1)' '
++	git -C repo.git \
++		-c gc.auto=$gc_auto_threshold \
++		-c agit.gc=1 \
++		gc --auto --dryrun \
++		>out 2>&1 &&
++	grep "^note: " out | rewrite_gc_output >actual &&
++
++	cat >expect <<-EOF &&
++	note: agit_gc is disabled for repo size below 128MB.
++	note: too many loose objects, greater than: $nr_of_files.
++	note: will run: git pack-refs --all --prune
++	note: will run: git reflog expire --all
++	note: will run: git repack -d -l --no-write-bitmap-index
++	note: will run: git prune --expire 2.weeks.ago
++	note: will run: git worktree prune --expire 3.months.ago
++	note: will run: git rerere gc
++	note: too many loose objects, greater than: $nr_of_files.
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'gc --auto: with big gc.bigPackThreshold' '
++	git -C repo.git \
++		-c gc.auto=6700 \
++		-c gc.autoPackLimit=11 \
++		-c agit.gc=1 \
++		-c gc.bigPackThreshold=100m \
++		gc --auto --dryrun \
++		>out 2>&1 &&
++	grep "^note: " out | rewrite_gc_output >actual &&
++
++	cat >expect <<-EOF &&
++	note: agit_gc is disabled for repo size below 128MB.
++	note: big_pack_threshold is pre-defined as 104857600.
++	note: too many packs. (12 > 11)
++	note: will run: git pack-refs --all --prune
++	note: will run: git reflog expire --all
++	note: will run: git repack -d -l -A --unpack-unreachable=2.weeks.ago
++	note: will run: git prune --expire 2.weeks.ago
++	note: will run: git worktree prune --expire 3.months.ago
++	note: will run: git rerere gc
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'gc --auto: small threshold 200KB' '
++	(
++		cd repo.git &&
++		AGIT_DEBUG_ASSUME_BIG_REPOSITORY=1 git \
++			-c gc.autoPackLimit=4 \
++			-c gc.bigPackThreshold=200k \
++			-c gc.auto=6700 \
++			-c gc.autoDetach=0 \
++			-c agit.gc=1 \
++			gc --auto --dryrun 2>&1
++	) >out &&
++	grep "^note: " out | rewrite_gc_output >actual &&
++
++	cat >expect <<-EOF &&
++	note: big_pack_threshold is pre-defined as 204800.
++	note: too many packs. (5 > 4, excluding 7 keeped pack(s))
++	note: always keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 409600).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will run: git pack-refs --all --prune
++	note: will run: git reflog expire --all
++	note: will run: git repack -d -l -A --unpack-unreachable=2.weeks.ago --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack
++	note: will run: git prune --expire 2.weeks.ago
++	note: will run: git worktree prune --expire 3.months.ago
++	note: will run: git rerere gc
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'gc --auto: small threshold 200KB and keep largest pack' '
++	(
++		cd repo.git &&
++		AGIT_DEBUG_SMALLEST_BIG_PACK_THRESHOLD=0 \
++		AGIT_DEBUG_ASSUME_BIG_REPOSITORY=1 git \
++			-c gc.autoPackLimit=4 \
++			-c gc.bigPackThreshold=200k \
++			-c gc.auto=6700 \
++			-c gc.autoDetach=0 \
++			-c agit.gc=1 \
++			gc --auto --dryrun 2>&1
++	) >out &&
++	grep "^note: " out | rewrite_gc_output >actual &&
++
++	cat >expect <<-EOF &&
++	note: big_pack_threshold is pre-defined as 204800.
++	note: too many packs. (5 > 4, excluding 7 keeped pack(s))
++	note: AGIT_DEBUG_SMALLEST_BIG_PACK_THRESHOLD is set to 0.
++	note: always keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 409600).
++	note: will keep largest pack "./objects/pack/pack-<ID>.pack".
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will run: git pack-refs --all --prune
++	note: will run: git reflog expire --all
++	note: will run: git repack -d -l -A --unpack-unreachable=2.weeks.ago --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack
++	note: will run: git prune --expire 2.weeks.ago
++	note: will run: git worktree prune --expire 3.months.ago
++	note: will run: git rerere gc
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'gc: threshold 200KB' '
++	(
++		cd repo.git &&
++		AGIT_DEBUG_ASSUME_BIG_REPOSITORY=1 git \
++			-c gc.autoPackLimit=4 \
++			-c gc.bigPackThreshold=200k \
++			-c gc.auto=6700 \
++			-c gc.autoDetach=0 \
++			-c agit.gc=1 \
++			gc --dryrun 2>&1
++	) >out &&
++	grep "^note: " out | rewrite_gc_output >actual &&
++
++	cat >expect <<-EOF &&
++	note: big_pack_threshold is pre-defined as 204800.
++	note: always keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 409600).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will run: git pack-refs --all --prune
++	note: will run: git reflog expire --all
++	note: will run: git repack -d -l -A --unpack-unreachable=2.weeks.ago --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack
++	note: will run: git prune --expire 2.weeks.ago
++	note: will run: git worktree prune --expire 3.months.ago
++	note: will run: git rerere gc
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'gc --auto: threshold 200KB, too many packs to keep (agit.gc is disabled)' '
++	(
++		cd repo.git &&
++		git \
++			-c gc.autoPackLimit=4 \
++			-c gc.bigPackThreshold=200k \
++			-c gc.auto=6700 \
++			-c gc.autoDetach=0 \
++			-c agit.gc=0 \
++			gc --auto --dryrun 2>&1
++	) >out &&
++	grep "^note: " out | rewrite_gc_output >actual &&
++
++	cat >expect <<-EOF &&
++	note: too many packs. (12 > 4)
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: too many packs to keep: 7 > 4, clean and use largest one to keep.
++	note: will keep largest pack "./objects/pack/pack-<ID>.pack".
++	note: will run: git pack-refs --all --prune
++	note: will run: git reflog expire --all
++	note: will run: git repack -d -l -A --unpack-unreachable=2.weeks.ago --keep-pack=pack-<ID>.pack
++	note: will run: git prune --expire 2.weeks.ago
++	note: will run: git worktree prune --expire 3.months.ago
++	note: will run: git rerere gc
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'gc --auto: threshold 200KB, too many packs to keep (agit.gc is disabled)' '
++	(
++		cd repo.git &&
++		git \
++			-c gc.autoPackLimit=4 \
++			-c gc.bigPackThreshold=200k \
++			-c gc.auto=6700 \
++			-c gc.autoDetach=0 \
++			-c agit.gc=0 \
++			gc --auto --dryrun 2>&1
++	) >out &&
++	grep "^note: " out | rewrite_gc_output >actual &&
++
++	cat >expect <<-EOF &&
++	note: too many packs. (12 > 4)
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: too many packs to keep: 7 > 4, clean and use largest one to keep.
++	note: will keep largest pack "./objects/pack/pack-<ID>.pack".
++	note: will run: git pack-refs --all --prune
++	note: will run: git reflog expire --all
++	note: will run: git repack -d -l -A --unpack-unreachable=2.weeks.ago --keep-pack=pack-<ID>.pack
++	note: will run: git prune --expire 2.weeks.ago
++	note: will run: git worktree prune --expire 3.months.ago
++	note: will run: git rerere gc
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'real gc: threshold 200KB' '
++	rm -rf repo1.git &&
++	cp -R repo.git repo1.git &&
++	(
++		cd repo1.git &&
++		AGIT_DEBUG_ASSUME_BIG_REPOSITORY=1 git \
++			-c gc.autoPackLimit=4 \
++			-c gc.bigPackThreshold=200k \
++			-c gc.auto=6700 \
++			-c gc.autoDetach=0 \
++			-c agit.gc=1 \
++			gc --verbose 2>&1
++	) >out &&
++	grep "^note: " out | rewrite_gc_output >actual &&
++
++	cat >expect <<-EOF &&
++	note: big_pack_threshold is pre-defined as 204800.
++	note: always keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 409600).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will run: git pack-refs --all --prune
++	note: will run: git reflog expire --all
++	note: will run: git repack -d -l -A --unpack-unreachable=2.weeks.ago --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack
++	note: will run: git prune --expire 2.weeks.ago
++	note: will run: git worktree prune --expire 3.months.ago
++	note: will run: git rerere gc
++	EOF
++	test_cmp expect actual &&
++
++	echo $(ls repo1.git/objects/pack/*.pack | wc -l) >actual &&
++	echo 8 >expect &&
++	test_cmp expect actual
++'
++
++test_expect_success 'real gc --auto: threshold 200KB, too many packs to keep (agit.gc is disabled)' '
++	rm -rf repo1.git &&
++	cp -R repo.git repo1.git &&
++	(
++		cd repo1.git &&
++		git \
++			-c gc.autoPackLimit=4 \
++			-c gc.bigPackThreshold=200k \
++			-c gc.auto=6700 \
++			-c gc.autoDetach=0 \
++			-c agit.gc=0 \
++			gc --auto --verbose 2>&1
++	) >out &&
++	grep "^note: " out | rewrite_gc_output >actual &&
++
++	cat >expect <<-EOF &&
++	note: too many packs. (12 > 4)
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: too many packs to keep: 7 > 4, clean and use largest one to keep.
++	note: will keep largest pack "./objects/pack/pack-<ID>.pack".
++	note: will run: git pack-refs --all --prune
++	note: will run: git reflog expire --all
++	note: will run: git repack -d -l -A --unpack-unreachable=2.weeks.ago --keep-pack=pack-<ID>.pack
++	note: will run: git prune --expire 2.weeks.ago
++	note: will run: git worktree prune --expire 3.months.ago
++	note: will run: git rerere gc
++	EOF
++	test_cmp expect actual &&
++
++	echo $(ls repo1.git/objects/pack/*.pack | wc -l) >actual &&
++	echo 2 >expect &&
++	test_cmp expect actual
++'
++
++test_expect_success 'real gc: threshold 400KB' '
++	rm -rf repo1.git &&
++	cp -R repo.git repo1.git &&
++	(
++		cd repo1.git &&
++		git \
++			-c gc.autoPackLimit=4 \
++			-c gc.bigPackThreshold=400k \
++			-c gc.auto=6700 \
++			-c gc.autoDetach=0 \
++			-c agit.gc=1 \
++			gc --verbose 2>&1
++	) >out &&
++	grep "^note: " out | rewrite_gc_output >actual &&
++
++	cat >expect <<-EOF &&
++	note: agit_gc is disabled for repo size below 128MB.
++	note: big_pack_threshold is pre-defined as 409600.
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 409600).
++	note: will run: git pack-refs --all --prune
++	note: will run: git reflog expire --all
++	note: will run: git repack -d -l -A --unpack-unreachable=2.weeks.ago --keep-pack=pack-<ID>.pack
++	note: will run: git prune --expire 2.weeks.ago
++	note: will run: git worktree prune --expire 3.months.ago
++	note: will run: git rerere gc
++	EOF
++	test_cmp expect actual &&
++
++	echo $(ls repo1.git/objects/pack/*.pack | wc -l) >actual &&
++	echo 2 >expect &&
++	test_cmp expect actual
++'
++
++test_done
+-- 
+2.34.1.51.g7e1f4e9345.agit.6.5.6
+

@@ -1,0 +1,1162 @@
+From 77649aa58e15c70a53a85932d10e46815c8ddc58 Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Wed, 17 Feb 2021 14:25:17 +0800
+Subject: [PATCH 32/42] crypto: agit-inspect: new test helper to inspect
+ packfile
+
+To inspect a packfile, using command:
+
+    test-tool agit-inspect pack <packfile>
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ Makefile                              |   1 +
+ t/helper/test-agit-inspect.c          | 477 ++++++++++++++++++++
+ t/helper/test-tool.c                  |   1 +
+ t/helper/test-tool.h                  |   1 +
+ t/t0940/test-0022-packfile-inspect.sh | 613 ++++++++++++++++++++++++++
+ 5 files changed, 1093 insertions(+)
+ create mode 100644 t/helper/test-agit-inspect.c
+ create mode 100644 t/t0940/test-0022-packfile-inspect.sh
+
+diff --git a/Makefile b/Makefile
+index a41ee4ebe9..007d83442f 100644
+--- a/Makefile
++++ b/Makefile
+@@ -705,6 +705,7 @@ PROGRAMS += $(patsubst %.o,git-%$X,$(PROGRAM_OBJS))
+ 
+ TEST_BUILTINS_OBJS += test-advise.o
+ TEST_BUILTINS_OBJS += test-agit-crypto.o
++TEST_BUILTINS_OBJS += test-agit-inspect.o
+ TEST_BUILTINS_OBJS += test-agit-od.o
+ TEST_BUILTINS_OBJS += test-bitmap.o
+ TEST_BUILTINS_OBJS += test-bloom.o
+diff --git a/t/helper/test-agit-inspect.c b/t/helper/test-agit-inspect.c
+new file mode 100644
+index 0000000000..930995f4db
+--- /dev/null
++++ b/t/helper/test-agit-inspect.c
+@@ -0,0 +1,477 @@
++#include "test-tool.h"
++#include "cache.h"
++#include "config.h"
++#include "delta.h"
++#include "pack.h"
++#include "csum-file.h"
++#include "blob.h"
++#include "commit.h"
++#include "tag.h"
++#include "tree.h"
++#include "progress.h"
++#include "fsck.h"
++#include "exec-cmd.h"
++#include "streaming.h"
++#include "thread-utils.h"
++#include "packfile.h"
++#include "object-store.h"
++#include "parse-options.h"
++
++static int input_fd;
++static git_hash_ctx input_ctx;
++static uint32_t input_crc32;
++
++static unsigned char input_buffer[4096];
++static unsigned char decrypt_buffer[4096];
++static unsigned int input_offset, input_len;
++static off_t consumed_bytes;
++static off_t max_input_size;
++static git_cryptor cryptor;
++static int pack_is_encrypted;
++static size_t in_pack_hdr_size;
++
++static struct object_entry *objects;
++static int nr_objects;
++
++static int verbose;
++static int show_crc;
++static int show_size = 1;
++static int show_version = 1;
++static int show_offset = 1;
++
++static const char * const agit_pack_usage[] = {
++	"test-tool agit-inspect pack <pack-file>",
++	NULL
++};
++
++struct object_entry {
++	struct pack_idx_entry idx;
++	unsigned long size;
++	unsigned char hdr_size;
++	signed char type;
++	signed char real_type;
++};
++
++/* Discard current buffer used content. */
++static void do_flush(int try_encrypt)
++{
++	if (input_offset) {
++		/* Calculate checksum based on raw data from packfile. */
++		the_hash_algo->update_fn(&input_ctx, input_buffer, input_offset);
++		memmove(input_buffer, input_buffer + input_offset, input_len);
++		if (pack_is_encrypted)
++			memmove(decrypt_buffer, decrypt_buffer + input_offset, input_len);
++		input_offset = 0;
++	}
++}
++
++static void flush(void)
++{
++	do_flush(1);
++}
++
++static void flush_header(void)
++{
++	/* Calculate checksum based on raw data from packfile. */
++	the_hash_algo->update_fn(&input_ctx, input_buffer, in_pack_hdr_size);
++
++	input_offset = 0;
++	input_len = 0;
++	consumed_bytes += in_pack_hdr_size;
++}
++
++static void use(int bytes)
++{
++	if (bytes > input_len)
++		die(_("used more bytes than were available"));
++	input_crc32 = crc32(input_crc32, input_buffer + input_offset, bytes);
++	input_len -= bytes;
++	input_offset += bytes;
++
++	/* make sure off_t is sufficiently large not to wrap */
++	if (signed_add_overflows(consumed_bytes, bytes))
++		die(_("pack too large for current definition of off_t"));
++	consumed_bytes += bytes;
++	if (max_input_size && consumed_bytes > max_input_size)
++		die(_("pack exceeds maximum allowed size"));
++}
++
++static void setup_buffers_from_header(void)
++{
++	union extend_pack_header *input_hdr;
++	struct pack_header *decrypt_hdr;
++
++	input_hdr = (union extend_pack_header *)input_buffer;
++	/* Header consistency check */
++	if (input_hdr->hdr.hdr_signature != htonl(PACK_SIGNATURE))
++		die(_("pack signature mismatch"));
++	if (!pack_version_ok(input_hdr->hdr.hdr_version))
++		die(_("pack version %"PRIu32" unsupported"),
++			ntohl(input_hdr->hdr.hdr_version));
++	nr_objects = ntohl(input_hdr->hdr.hdr_entries);
++
++	if (git_crypto_pack_is_encrypt(input_hdr->hdr.hdr_version)) {
++		pack_is_encrypted = 1;
++		if (crypto_pack_has_longer_nonce_for_version(
++			    input_hdr->hdr.hdr_version)) {
++			in_pack_hdr_size = sizeof(struct pack_header_with_nonce);
++			git_decryptor_init_or_die(&cryptor,
++						  input_hdr->ehdr.hdr_version,
++						  input_hdr->ehdr.nonce);
++		} else {
++			in_pack_hdr_size = sizeof(struct pack_header);
++			git_decryptor_init_or_die(
++				&cryptor, input_hdr->ehdr.hdr_version, NULL);
++		}
++		cryptor.byte_counter = in_pack_hdr_size;
++	} else {
++		in_pack_hdr_size = sizeof(struct pack_header);
++	}
++	if (pack_is_encrypted) {
++		decrypt_hdr = (struct pack_header *)decrypt_buffer;
++		memcpy(decrypt_hdr, input_hdr, sizeof(*decrypt_hdr));
++		decrypt_hdr->hdr_version = (decrypt_hdr->hdr_version >> 24) << 24;
++	}
++}
++
++/*
++ * Make sure at least "min" bytes are available in the buffer, and
++ * return the pointer to the buffer.
++ */
++static void *fill(int min)
++{
++	if (min <= input_len) {
++		if (pack_is_encrypted)
++			return decrypt_buffer + input_offset;
++		else
++			return input_buffer + input_offset;
++	}
++	if (min > sizeof(input_buffer))
++		die(Q_("cannot fill %d byte",
++		       "cannot fill %d bytes",
++		       min),
++		    min);
++	flush();
++	do {
++		ssize_t ret = xread(input_fd, input_buffer + input_len,
++				sizeof(input_buffer) - input_len);
++		if (ret <= 0) {
++			if (!ret)
++				die(_("early EOF"));
++			die_errno(_("read error on input"));
++		}
++		if (pack_is_encrypted)
++			cryptor.decrypt(&cryptor,
++					  input_buffer + input_len,
++					  decrypt_buffer + input_len,
++					  ret,
++					  ret);
++		input_len += ret;
++	} while (input_len < min);
++	if (pack_is_encrypted)
++		return decrypt_buffer;
++	else
++		return input_buffer;
++}
++
++static void open_pack_file(const char *pack_name)
++{
++	input_fd = xopen(pack_name, O_RDONLY);
++	the_hash_algo->init_fn(&input_ctx);
++}
++
++static void parse_pack_header(void)
++{
++	union extend_pack_header *hdr;
++	int hdr_size = sizeof(struct pack_header);
++	struct strbuf msg = STRBUF_INIT;
++	uint32_t hdr_version;
++
++	/* Header maybe provided by command line option: --pack_header=... */
++	if (input_len == 0) {
++		ssize_t ret = read_in_full(input_fd, input_buffer, hdr_size);
++		if (ret <= 0) {
++			if (!ret)
++				die(_("early EOF"));
++			die_errno(_("read error on input"));
++		}
++		input_len += ret;
++	}
++
++	hdr = (union extend_pack_header *) input_buffer;
++	if (git_crypto_pack_is_encrypt(hdr->hdr.hdr_version) &&
++	    crypto_pack_has_longer_nonce_for_version(
++		    hdr->hdr.hdr_version)) {
++		ssize_t ret = read_in_full(input_fd, input_buffer + input_len,
++					   sizeof(struct pack_header_with_nonce) - input_len);
++		if (ret <= 0) {
++			if (!ret)
++				die(_("early EOF"));
++			die_errno(_("read error on input"));
++		}
++		input_len += ret;
++	}
++
++	/* Filling header */
++	setup_buffers_from_header();
++
++	hdr_version = hdr->hdr.hdr_version;
++
++	flush_header();
++
++	strbuf_addf(&msg, "Header: %s", pack_is_encrypted ? "encrypt": "plain");
++	if (pack_is_encrypted) {
++		strbuf_addf(&msg, " (%x)", cryptor.algorithm);
++	}
++	if (show_version)
++		strbuf_addf(&msg, ", version: %08"PRIx32, ntohl(hdr_version));
++	strbuf_addch(&msg, '\n');
++	strbuf_addf(&msg, "Number of objects: %d\n", nr_objects);
++	printf("%s\n", msg.buf);
++	strbuf_release(&msg);
++}
++
++static NORETURN void bad_object(off_t offset, const char *format,
++		       ...) __attribute__((format (printf, 2, 3)));
++
++static NORETURN void bad_object(off_t offset, const char *format, ...)
++{
++	va_list params;
++	char buf[1024];
++
++	va_start(params, format);
++	vsnprintf(buf, sizeof(buf), format, params);
++	va_end(params);
++	die(_("pack has bad object at offset %"PRIuMAX": %s"),
++	    (uintmax_t)offset, buf);
++}
++
++static void *unpack_entry_data(off_t offset, unsigned long size,
++			       enum object_type type, struct object_id *oid)
++{
++	static char fixed_buf[8192];
++	int status;
++	git_zstream stream;
++	void *buf;
++
++	if (type == OBJ_BLOB && size > big_file_threshold)
++		buf = fixed_buf;
++	else
++		buf = xmallocz(size);
++
++	memset(&stream, 0, sizeof(stream));
++	git_inflate_init(&stream);
++	stream.next_out = buf;
++	stream.avail_out = buf == fixed_buf ? sizeof(fixed_buf) : size;
++
++	do {
++		stream.next_in = fill(1);
++		stream.avail_in = input_len;
++		status = git_inflate(&stream, 0);
++		use(input_len - stream.avail_in);
++		if (buf == fixed_buf) {
++			stream.next_out = buf;
++			stream.avail_out = sizeof(fixed_buf);
++		}
++	} while (status == Z_OK || status == Z_BUF_ERROR);
++	if (stream.total_out != size || status != Z_STREAM_END)
++		bad_object(offset, _("inflate returned %d"), status);
++	git_inflate_end(&stream);
++	return buf == fixed_buf ? NULL : buf;
++}
++
++static void *unpack_raw_entry(struct object_entry *obj,
++			      off_t *ofs_offset,
++			      struct object_id *ref_oid,
++			      struct object_id *oid)
++{
++	unsigned char *p;
++	unsigned long size, c;
++	off_t base_offset;
++	unsigned shift;
++	void *data;
++
++	obj->idx.offset = consumed_bytes;
++	input_crc32 = crc32(0, NULL, 0);
++
++	p = fill(1);
++	c = *p;
++	use(1);
++	obj->type = (c >> 4) & 7;
++	size = (c & 15);
++	shift = 4;
++	while (c & 0x80) {
++		p = fill(1);
++		c = *p;
++		use(1);
++		size += (c & 0x7f) << shift;
++		shift += 7;
++	}
++	obj->size = size;
++
++	switch (obj->type) {
++	case OBJ_REF_DELTA:
++		hashcpy(ref_oid->hash, fill(the_hash_algo->rawsz));
++		use(the_hash_algo->rawsz);
++		break;
++	case OBJ_OFS_DELTA:
++		p = fill(1);
++		c = *p;
++		use(1);
++		base_offset = c & 127;
++		while (c & 128) {
++			base_offset += 1;
++			if (!base_offset || MSB(base_offset, 7))
++				bad_object(obj->idx.offset, _("offset value overflow for delta base object"));
++			p = fill(1);
++			c = *p;
++			use(1);
++			base_offset = (base_offset << 7) + (c & 127);
++		}
++		*ofs_offset = obj->idx.offset - base_offset;
++		if (*ofs_offset <= 0 || *ofs_offset >= obj->idx.offset)
++			bad_object(obj->idx.offset, _("delta base offset is out of bound"));
++		break;
++	case OBJ_COMMIT:
++	case OBJ_TREE:
++	case OBJ_BLOB:
++	case OBJ_TAG:
++		break;
++	default:
++		bad_object(obj->idx.offset, _("unknown object type %d"), obj->type);
++	}
++	obj->hdr_size = consumed_bytes - obj->idx.offset;
++
++	data = unpack_entry_data(obj->idx.offset, obj->size, obj->type, oid);
++	obj->idx.crc32 = input_crc32;
++	return data;
++}
++
++/*
++ * First pass:
++ * - find locations of all objects;
++ * - calculate SHA1 of all non-delta objects;
++ * - remember base (SHA1 or offset) for all deltas.
++ */
++static void parse_pack_objects(unsigned char *hash)
++{
++	int i;
++	struct object_id ref_delta_oid;
++	unsigned char *fill_hash;
++	struct strbuf msg = STRBUF_INIT;
++
++	for (i = 0; i < nr_objects; i++) {
++		struct object_entry *obj = &objects[i];
++		off_t ofs_delta_offset = 0;
++
++		void *data = unpack_raw_entry(obj, &ofs_delta_offset,
++					      &ref_delta_oid,
++					      &obj->idx.oid);
++		strbuf_reset(&msg);
++		strbuf_addf(&msg, "[obj %d] ", i + 1);
++		switch(obj->type) {
++		case OBJ_OFS_DELTA:
++			strbuf_addstr(&msg, "type: ofs-delta");
++			if (show_offset)
++				strbuf_addf(&msg, " (offset: %"PRId64")", ofs_delta_offset);
++			break;
++		case OBJ_REF_DELTA:
++			strbuf_addstr(&msg, "type: ref-delta");
++			if (show_offset)
++				strbuf_addf(&msg, " (refoid: %s)", oid_to_hex(&ref_delta_oid));
++			break;
++		case OBJ_COMMIT:
++			strbuf_addstr(&msg, "type: commit");
++			break;
++		case OBJ_TREE:
++			strbuf_addstr(&msg, "type: tree");
++			break;
++		case OBJ_BLOB:
++			strbuf_addstr(&msg, "type: blob");
++			break;
++		case OBJ_TAG:
++			strbuf_addstr(&msg, "type: tag");
++			break;
++		default:
++			strbuf_addf(&msg, "type: unknown (%d)", obj->type);
++		}
++		if (show_size)
++			strbuf_addf(&msg, ", size: %ld", obj->size);
++		if (show_crc)
++			strbuf_addf(&msg, ", crc32: %8x", obj->idx.crc32);
++		printf("%s\n", msg.buf);
++		free(data);
++	}
++	objects[i].idx.offset = consumed_bytes;
++
++	/* Check pack integrity */
++	flush();
++	the_hash_algo->final_fn(hash, &input_ctx);
++	fill_hash = fill(the_hash_algo->rawsz);
++	if (pack_is_encrypted) {
++		/* The checksum at the end of packfile is unencrypted, but
++		 * after call fill, the hash is mangled, and should be
++		 * restored by calling decrypt again.
++		 */
++		cryptor.byte_counter -= the_hash_algo->rawsz;
++		cryptor.decrypt(&cryptor, fill_hash, fill_hash,
++				  the_hash_algo->rawsz, the_hash_algo->rawsz);
++	}
++	if (!hasheq(fill_hash, hash))
++		fprintf(stderr, "ERROR: pack is corrupted (checksum mismatch)");
++	else
++		printf("\nChecksum OK.\n");
++
++	use(the_hash_algo->rawsz);
++}
++
++static int inspect_pack(const char *pack_name)
++{
++	unsigned char pack_hash[GIT_MAX_RAWSZ];
++
++	open_pack_file(pack_name);
++	parse_pack_header();
++	CALLOC_ARRAY(objects, st_add(nr_objects, 1));
++	parse_pack_objects(pack_hash);
++	return 0;
++}
++
++int cmd__agit_inspect(int argc, const char *argv[])
++{
++	const char *cmd = NULL;
++	const char *pack_name = NULL;
++	int i;
++	const struct option agit_pack_options[] = {
++		OPT_BOOL('v', "verbose", &verbose, N_("verbose")), 
++		OPT_BOOL(0, "show-crc", &show_crc, "show entry crc32"),
++		OPT_BOOL(0, "show-size", &show_size, "show entry size"),
++		OPT_BOOL(0, "show-offset", &show_offset, "show delta object offset"),
++		OPT_BOOL(0, "show-version", &show_version, "show packfile version"),
++		OPT_END()
++	};
++
++	setup_git_directory();
++	git_config(git_default_config, NULL);
++	argc = parse_options(argc, argv, NULL, agit_pack_options,
++			     agit_pack_usage, 0);
++	for (i = 0; i < argc; i++) {
++		if (!cmd)
++			cmd = argv[i];
++		else if (!pack_name)
++			pack_name = argv[i];
++		else
++			usage_with_options(agit_pack_usage, agit_pack_options);
++	}
++
++	if (!cmd || !pack_name)
++		usage_with_options(agit_pack_usage, agit_pack_options);
++
++	if (!strcmp(cmd, "pack"))
++		return inspect_pack(pack_name);
++	else {
++		error("bad command: %s\n", cmd);
++		usage_with_options(agit_pack_usage, agit_pack_options);
++	}
++
++	return 1;
++}
+diff --git a/t/helper/test-tool.c b/t/helper/test-tool.c
+index 3c9438f862..13aecc9f8b 100644
+--- a/t/helper/test-tool.c
++++ b/t/helper/test-tool.c
+@@ -16,6 +16,7 @@ struct test_cmd {
+ static struct test_cmd cmds[] = {
+ 	{ "advise", cmd__advise_if_enabled },
+ 	{ "agit-crypto", cmd__agit_crypto },
++	{ "agit-inspect", cmd__agit_inspect },
+ 	{ "agit-od", cmd__agit_od },
+ 	{ "bitmap", cmd__bitmap },
+ 	{ "bloom", cmd__bloom },
+diff --git a/t/helper/test-tool.h b/t/helper/test-tool.h
+index 82ae6a3073..562fc05b45 100644
+--- a/t/helper/test-tool.h
++++ b/t/helper/test-tool.h
+@@ -6,6 +6,7 @@
+ 
+ int cmd__advise_if_enabled(int argc, const char **argv);
+ int cmd__agit_crypto(int argc, const char **argv);
++int cmd__agit_inspect(int argc, const char **argv);
+ int cmd__agit_od(int argc, const char **argv);
+ int cmd__bitmap(int argc, const char **argv);
+ int cmd__bloom(int argc, const char **argv);
+diff --git a/t/t0940/test-0022-packfile-inspect.sh b/t/t0940/test-0022-packfile-inspect.sh
+new file mode 100644
+index 0000000000..25ffcfea74
+--- /dev/null
++++ b/t/t0940/test-0022-packfile-inspect.sh
+@@ -0,0 +1,613 @@
++#!/bin/sh
++
++# Packfile misc test cases
++
++test_expect_success 'change core.bigfilethreshold from 512MB (default) to 3MB' '
++	git config core.bigfilethreshold 3000000
++'
++
++# Create base file, used as base for delta object.
++cat >base.txt <<-\EOF
++Dec Hex    Dec Hex    Dec Hex  Dec Hex  Dec Hex  Dec Hex   Dec Hex   Dec Hex
++  0 00 NUL  16 10 DLE  32 20    48 30 0  64 40 @  80 50 P   96 60 `  112 70 p
++  1 01 SOH  17 11 DC1  33 21 !  49 31 1  65 41 A  81 51 Q   97 61 a  113 71 q
++  2 02 STX  18 12 DC2  34 22 "  50 32 2  66 42 B  82 52 R   98 62 b  114 72 r
++  3 03 ETX  19 13 DC3  35 23 #  51 33 3  67 43 C  83 53 S   99 63 c  115 73 s
++  4 04 EOT  20 14 DC4  36 24 $  52 34 4  68 44 D  84 54 T  100 64 d  116 74 t
++  5 05 ENQ  21 15 NAK  37 25 %  53 35 5  69 45 E  85 55 U  101 65 e  117 75 u
++  6 06 ACK  22 16 SYN  38 26 &  54 36 6  70 46 F  86 56 V  102 66 f  118 76 v
++  7 07 BEL  23 17 ETB  39 27 '  55 37 7  71 47 G  87 57 W  103 67 g  119 77 w
++  8 08 BS   24 18 CAN  40 28 (  56 38 8  72 48 H  88 58 X  104 68 h  120 78 x
++  9 09 HT   25 19 EM   41 29 )  57 39 9  73 49 I  89 59 Y  105 69 i  121 79 y
++ 10 0A LF   26 1A SUB  42 2A *  58 3A :  74 4A J  90 5A Z  106 6A j  122 7A z
++ 11 0B VT   27 1B ESC  43 2B +  59 3B ;  75 4B K  91 5B [  107 6B k  123 7B {
++ 12 0C FF   28 1C FS   44 2C ,  60 3C <  76 4C L  92 5C \  108 6C l  124 7C |
++ 13 0D CR   29 1D GS   45 2D -  61 3D =  77 4D M  93 5D ]  109 6D m  125 7D }
++ 14 0E SO   30 1E RS   46 2E .  62 3E >  78 4E N  94 5E ^  110 6E n  126 7E ~
++ 15 0F SI   31 1F US   47 2F /  63 3F ?  79 4F O  95 5F _  111 6F o  127 7F DEL
++EOF
++
++test_expect_success 'create commits' '
++	git add base.txt &&
++	test_tick &&
++	git commit -m base &&
++	cp base.txt A.txt &&
++	echo A >>A.txt &&
++	git add A.txt &&
++	test_tick &&
++	git commit -m A
++'
++
++test_expect_success 'create pack1' '
++	git repack &&
++	git prune --expire=now &&
++	PK1=$(ls .git/objects/pack/*pack) &&
++	PK1=${PK1#*pack-} &&
++	PK1=${PK1%.pack}
++'
++
++test_expect_success 'verify pack1' '
++	git verify-pack \
++		".git/objects/pack/pack-${PK1}.pack"
++'
++
++test_expect_success 'inspect pack1' '
++	test-tool agit-inspect \
++		--no-show-size --no-show-crc --no-show-offset --show-version \
++		pack ".git/objects/pack/pack-${PK1}.pack" >actual &&
++	cat >expect <<-\EOF &&
++	Header: plain, version: 00000002
++	Number of objects: 6
++
++	[obj 1] type: commit
++	[obj 2] type: commit
++	[obj 3] type: blob
++	[obj 4] type: ofs-delta
++	[obj 5] type: tree
++	[obj 6] type: tree
++
++	Checksum OK.
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'enable crypto settings' '
++	git config agit.crypto.enabled 1 &&
++	git config agit.crypto.secret c2VjcmV0LXRva2VuMTIzNA== &&
++	git config agit.crypto.nonce random_nonce
++'
++
++test_expect_success 'create encrypted commits' '
++	cp base.txt B.txt &&
++	echo B >>B.txt &&
++	git add B.txt &&
++	test_tick &&
++	git commit -m B &&
++	cp B.txt C.txt &&
++	echo C >>C.txt &&
++	git add C.txt &&
++	test_tick &&
++	git commit -m C
++'
++
++test_expect_success 'create pack2, has objects reference to normal pack' '
++	git repack &&
++	git prune --expire=now &&
++	PK2=$(ls .git/objects/pack/*pack | grep -v "$PK1") &&
++	PK2=${PK2#*pack-} &&
++	PK2=${PK2%.pack}
++'
++
++test_expect_success 'verify pack2' '
++	git verify-pack \
++		".git/objects/pack/pack-${PK2}.pack"
++'
++
++cat >expect-1 <<-\EOF
++Header: encrypt (1), version: 81000002
++Number of objects: 6
++
++[obj 1] type: commit
++[obj 2] type: commit
++[obj 3] type: blob
++[obj 4] type: ofs-delta
++[obj 5] type: tree
++[obj 6] type: ofs-delta
++
++Checksum OK.
++EOF
++
++cat >expect-2 <<-\EOF
++Header: encrypt (2), version: 82000002
++Number of objects: 6
++
++[obj 1] type: commit
++[obj 2] type: commit
++[obj 3] type: blob
++[obj 4] type: ofs-delta
++[obj 5] type: tree
++[obj 6] type: ofs-delta
++
++Checksum OK.
++EOF
++
++cat >expect-64 <<-\EOF
++Header: encrypt (40), version: c0617202
++Number of objects: 6
++
++[obj 1] type: commit
++[obj 2] type: commit
++[obj 3] type: blob
++[obj 4] type: ofs-delta
++[obj 5] type: tree
++[obj 6] type: ofs-delta
++
++Checksum OK.
++EOF
++
++cat >expect-65 <<-\EOF
++Header: encrypt (41), version: c1617202
++Number of objects: 6
++
++[obj 1] type: commit
++[obj 2] type: commit
++[obj 3] type: blob
++[obj 4] type: ofs-delta
++[obj 5] type: tree
++[obj 6] type: ofs-delta
++
++Checksum OK.
++EOF
++
++test_expect_success 'inspect pack2' '
++	test-tool agit-inspect \
++		--no-show-size --no-show-crc --no-show-offset --show-version \
++		pack ".git/objects/pack/pack-${PK2}.pack" >actual &&
++	test_cmp expect-${GIT_TEST_CRYPTO_ALGORITHM_TYPE} actual
++'
++
++test_expect_success 'create more encrypted commits' '
++	cp C.txt D.txt &&
++	echo D >>D.txt &&
++	git add D.txt &&
++	test_tick &&
++	git commit -m D &&
++	cp D.txt E.txt &&
++	echo E >>E.txt &&
++	git add E.txt &&
++	test_tick &&
++	git commit -m E &&
++	cp E.txt F.txt &&
++	echo F >>F.txt &&
++	git add F.txt &&
++	test_tick &&
++	git commit -m F
++'
++
++test_expect_success 'create pack3, has objects reference to encrypt pack?' '
++	git repack &&
++	git prune --expire=now &&
++	PK3=$(ls .git/objects/pack/*pack | grep -v "$PK1" | grep -v "$PK2") &&
++	PK3=${PK3#*pack-} &&
++	PK3=${PK3%.pack}
++'
++
++test_expect_success 'verify pack3' '
++	git verify-pack \
++		".git/objects/pack/pack-${PK3}.pack"
++'
++
++cat >expect-1 <<-\EOF
++Header: encrypt (1), version: 81000002
++Number of objects: 9
++
++[obj 1] type: commit
++[obj 2] type: commit
++[obj 3] type: commit
++[obj 4] type: blob
++[obj 5] type: ofs-delta
++[obj 6] type: ofs-delta
++[obj 7] type: tree
++[obj 8] type: ofs-delta
++[obj 9] type: ofs-delta
++
++Checksum OK.
++EOF
++
++cat >expect-2 <<-\EOF
++Header: encrypt (2), version: 82000002
++Number of objects: 9
++
++[obj 1] type: commit
++[obj 2] type: commit
++[obj 3] type: commit
++[obj 4] type: blob
++[obj 5] type: ofs-delta
++[obj 6] type: ofs-delta
++[obj 7] type: tree
++[obj 8] type: ofs-delta
++[obj 9] type: ofs-delta
++
++Checksum OK.
++EOF
++
++cat >expect-64 <<-\EOF
++Header: encrypt (40), version: c0617202
++Number of objects: 9
++
++[obj 1] type: commit
++[obj 2] type: commit
++[obj 3] type: commit
++[obj 4] type: blob
++[obj 5] type: ofs-delta
++[obj 6] type: ofs-delta
++[obj 7] type: tree
++[obj 8] type: ofs-delta
++[obj 9] type: ofs-delta
++
++Checksum OK.
++EOF
++
++cat >expect-65 <<-\EOF
++Header: encrypt (41), version: c1617202
++Number of objects: 9
++
++[obj 1] type: commit
++[obj 2] type: commit
++[obj 3] type: commit
++[obj 4] type: blob
++[obj 5] type: ofs-delta
++[obj 6] type: ofs-delta
++[obj 7] type: tree
++[obj 8] type: ofs-delta
++[obj 9] type: ofs-delta
++
++Checksum OK.
++EOF
++
++test_expect_success 'inspect pack3' '
++	test-tool agit-inspect \
++		--no-show-size --no-show-crc --no-show-offset --show-version \
++		pack ".git/objects/pack/pack-${PK3}.pack" >actual &&
++	test_cmp expect-${GIT_TEST_CRYPTO_ALGORITHM_TYPE} actual
++'
++
++test_expect_success 'git-fsck' '
++	git fsck
++'
++
++test_expect_success 'create one packfile' '
++	git repack -Ad &&
++	git prune --expire=now &&
++	PK4=$(ls .git/objects/pack/*pack) &&
++	PK4=${PK4#*pack-} &&
++	PK4=${PK4%.pack}
++'
++
++cat >expect-1 <<-\EOF
++Header: encrypt (1), version: 81000002
++Number of objects: 21
++
++[obj 1] type: commit
++[obj 2] type: commit
++[obj 3] type: commit
++[obj 4] type: commit
++[obj 5] type: commit
++[obj 6] type: commit
++[obj 7] type: commit
++[obj 8] type: blob
++[obj 9] type: ofs-delta
++[obj 10] type: ofs-delta
++[obj 11] type: ofs-delta
++[obj 12] type: ofs-delta
++[obj 13] type: ofs-delta
++[obj 14] type: ofs-delta
++[obj 15] type: tree
++[obj 16] type: ofs-delta
++[obj 17] type: ofs-delta
++[obj 18] type: ofs-delta
++[obj 19] type: ofs-delta
++[obj 20] type: tree
++[obj 21] type: tree
++
++Checksum OK.
++EOF
++
++cat >expect-2 <<-\EOF
++Header: encrypt (2), version: 82000002
++Number of objects: 21
++
++[obj 1] type: commit
++[obj 2] type: commit
++[obj 3] type: commit
++[obj 4] type: commit
++[obj 5] type: commit
++[obj 6] type: commit
++[obj 7] type: commit
++[obj 8] type: blob
++[obj 9] type: ofs-delta
++[obj 10] type: ofs-delta
++[obj 11] type: ofs-delta
++[obj 12] type: ofs-delta
++[obj 13] type: ofs-delta
++[obj 14] type: ofs-delta
++[obj 15] type: tree
++[obj 16] type: ofs-delta
++[obj 17] type: ofs-delta
++[obj 18] type: ofs-delta
++[obj 19] type: ofs-delta
++[obj 20] type: tree
++[obj 21] type: tree
++
++Checksum OK.
++EOF
++
++cat >expect-64 <<-\EOF
++Header: encrypt (40), version: c0617202
++Number of objects: 21
++
++[obj 1] type: commit
++[obj 2] type: commit
++[obj 3] type: commit
++[obj 4] type: commit
++[obj 5] type: commit
++[obj 6] type: commit
++[obj 7] type: commit
++[obj 8] type: blob
++[obj 9] type: ofs-delta
++[obj 10] type: ofs-delta
++[obj 11] type: ofs-delta
++[obj 12] type: ofs-delta
++[obj 13] type: ofs-delta
++[obj 14] type: ofs-delta
++[obj 15] type: tree
++[obj 16] type: ofs-delta
++[obj 17] type: ofs-delta
++[obj 18] type: ofs-delta
++[obj 19] type: ofs-delta
++[obj 20] type: tree
++[obj 21] type: tree
++
++Checksum OK.
++EOF
++
++cat >expect-65 <<-\EOF
++Header: encrypt (41), version: c1617202
++Number of objects: 21
++
++[obj 1] type: commit
++[obj 2] type: commit
++[obj 3] type: commit
++[obj 4] type: commit
++[obj 5] type: commit
++[obj 6] type: commit
++[obj 7] type: commit
++[obj 8] type: blob
++[obj 9] type: ofs-delta
++[obj 10] type: ofs-delta
++[obj 11] type: ofs-delta
++[obj 12] type: ofs-delta
++[obj 13] type: ofs-delta
++[obj 14] type: ofs-delta
++[obj 15] type: tree
++[obj 16] type: ofs-delta
++[obj 17] type: ofs-delta
++[obj 18] type: ofs-delta
++[obj 19] type: ofs-delta
++[obj 20] type: tree
++[obj 21] type: tree
++
++Checksum OK.
++EOF
++
++test_expect_success 'inspect pack4' '
++	test-tool agit-inspect \
++		--no-show-size --no-show-crc --no-show-offset --show-version \
++		pack ".git/objects/pack/pack-${PK4}.pack" >actual &&
++	test_cmp expect-${GIT_TEST_CRYPTO_ALGORITHM_TYPE} actual
++'
++
++test_expect_success 'git-fsck' '
++	git fsck
++'
++
++test_expect_success NEED_GNU_DD 'create small binary file: blob-2m' '
++	cat >blob-2m <<-\EOF &&
++	blob-2m, which is smaller than 10MB (GIT_CRYPTO_ENCRYPT_LO_MAX_SIZE), will save to
++	encrypted loose object.
++	EOF
++	if type openssl
++	then
++		openssl enc -aes-256-ctr \
++			-pass pass:"$($DD if=/dev/urandom bs=128 count=1 2>/dev/null | base64)" \
++			-nosalt < /dev/zero | $DD bs=1024 count=2050 >>blob-2m
++	else
++		$DD if=/dev/random bs=1024 count=2050 >>blob-2m
++	fi
++'
++
++test_expect_success NEED_GNU_DD 'create commit with blob-2m' '
++	git add blob-2m &&
++	test_tick &&
++	git commit -m blob-2m
++'
++
++test_expect_success NEED_GNU_DD 'create blob-5m, which larger than bigfilethreshold' '
++	cat >blob-5m <<-\EOF &&
++	blob-5m, which larger than core.bigfilethreshold, and will be streamed
++	directly to packfile.
++	EOF
++	if type openssl
++	then
++		openssl enc -aes-256-ctr \
++			-pass pass:"$($DD if=/dev/urandom bs=128 count=1 2>/dev/null | base64)" \
++			-nosalt < /dev/zero | $DD bs=1024 count=5000 >>blob-5m
++	else
++		$DD if=/dev/random bs=1024 count=5000 >>blob-5m
++	fi
++'
++
++test_expect_success NEED_GNU_DD 'create commit for blob-5m' '
++	git add blob-5m &&
++	test_tick &&
++	git commit -m blob-5m
++'
++
++test_expect_success NEED_GNU_DD 'create one packfile with binary files' '
++	git repack -Ad &&
++	git prune --expire=now &&
++	PK5=$(ls .git/objects/pack/*pack) &&
++	PK5=${PK5#*pack-} &&
++	PK5=${PK5%.pack}
++'
++
++cat >expect-1 <<-\EOF
++Header: encrypt (1), version: 81000002
++Number of objects: 27
++
++[obj 1] type: commit
++[obj 2] type: commit
++[obj 3] type: commit
++[obj 4] type: commit
++[obj 5] type: commit
++[obj 6] type: commit
++[obj 7] type: commit
++[obj 8] type: commit
++[obj 9] type: commit
++[obj 10] type: blob
++[obj 11] type: ofs-delta
++[obj 12] type: ofs-delta
++[obj 13] type: ofs-delta
++[obj 14] type: ofs-delta
++[obj 15] type: ofs-delta
++[obj 16] type: ofs-delta
++[obj 17] type: blob
++[obj 18] type: blob
++[obj 19] type: tree
++[obj 20] type: ofs-delta
++[obj 21] type: ofs-delta
++[obj 22] type: ofs-delta
++[obj 23] type: ofs-delta
++[obj 24] type: ofs-delta
++[obj 25] type: ofs-delta
++[obj 26] type: tree
++[obj 27] type: tree
++
++Checksum OK.
++EOF
++
++cat >expect-2 <<-\EOF
++Header: encrypt (2), version: 82000002
++Number of objects: 27
++
++[obj 1] type: commit
++[obj 2] type: commit
++[obj 3] type: commit
++[obj 4] type: commit
++[obj 5] type: commit
++[obj 6] type: commit
++[obj 7] type: commit
++[obj 8] type: commit
++[obj 9] type: commit
++[obj 10] type: blob
++[obj 11] type: ofs-delta
++[obj 12] type: ofs-delta
++[obj 13] type: ofs-delta
++[obj 14] type: ofs-delta
++[obj 15] type: ofs-delta
++[obj 16] type: ofs-delta
++[obj 17] type: blob
++[obj 18] type: blob
++[obj 19] type: tree
++[obj 20] type: ofs-delta
++[obj 21] type: ofs-delta
++[obj 22] type: ofs-delta
++[obj 23] type: ofs-delta
++[obj 24] type: ofs-delta
++[obj 25] type: ofs-delta
++[obj 26] type: tree
++[obj 27] type: tree
++
++Checksum OK.
++EOF
++
++cat >expect-64 <<-\EOF
++Header: encrypt (40), version: c0617202
++Number of objects: 27
++
++[obj 1] type: commit
++[obj 2] type: commit
++[obj 3] type: commit
++[obj 4] type: commit
++[obj 5] type: commit
++[obj 6] type: commit
++[obj 7] type: commit
++[obj 8] type: commit
++[obj 9] type: commit
++[obj 10] type: blob
++[obj 11] type: ofs-delta
++[obj 12] type: ofs-delta
++[obj 13] type: ofs-delta
++[obj 14] type: ofs-delta
++[obj 15] type: ofs-delta
++[obj 16] type: ofs-delta
++[obj 17] type: blob
++[obj 18] type: blob
++[obj 19] type: tree
++[obj 20] type: ofs-delta
++[obj 21] type: ofs-delta
++[obj 22] type: ofs-delta
++[obj 23] type: ofs-delta
++[obj 24] type: ofs-delta
++[obj 25] type: ofs-delta
++[obj 26] type: tree
++[obj 27] type: tree
++
++Checksum OK.
++EOF
++
++cat >expect-65 <<-\EOF
++Header: encrypt (41), version: c1617202
++Number of objects: 27
++
++[obj 1] type: commit
++[obj 2] type: commit
++[obj 3] type: commit
++[obj 4] type: commit
++[obj 5] type: commit
++[obj 6] type: commit
++[obj 7] type: commit
++[obj 8] type: commit
++[obj 9] type: commit
++[obj 10] type: blob
++[obj 11] type: ofs-delta
++[obj 12] type: ofs-delta
++[obj 13] type: ofs-delta
++[obj 14] type: ofs-delta
++[obj 15] type: ofs-delta
++[obj 16] type: ofs-delta
++[obj 17] type: blob
++[obj 18] type: blob
++[obj 19] type: tree
++[obj 20] type: ofs-delta
++[obj 21] type: ofs-delta
++[obj 22] type: ofs-delta
++[obj 23] type: ofs-delta
++[obj 24] type: ofs-delta
++[obj 25] type: ofs-delta
++[obj 26] type: tree
++[obj 27] type: tree
++
++Checksum OK.
++EOF
++
++test_expect_success NEED_GNU_DD 'inspect pack5' '
++	test-tool agit-inspect \
++		--no-show-size --no-show-crc --no-show-offset --show-version \
++		pack ".git/objects/pack/pack-${PK5}.pack" >actual &&
++	test_cmp expect-${GIT_TEST_CRYPTO_ALGORITHM_TYPE} actual
++'
++
++test_expect_success NEED_GNU_DD 'git-fsck' '
++	git fsck
++'
+-- 
+2.34.1.51.g7e1f4e9345.agit.6.5.6
+

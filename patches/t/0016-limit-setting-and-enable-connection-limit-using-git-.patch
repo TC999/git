@@ -1,0 +1,430 @@
+From 0f75758b57ddd2a91a008eea662259f5133f44db Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Thu, 3 Jun 2021 17:09:49 +0800
+Subject: [PATCH 16/16] limit: setting and enable connection limit using git
+ config
+
+Loadavg connection limit is disabled by default, must enable explicitly
+by setting:
+
+    git config --system agit.loadAvgConnectionLimit 1
+
+Or enabled by set env:
+
+    AGIT_LOADAVG_ENABLED=1 git-receive-pack ...
+
+Administrator can also change it's settings using git-config:
+
+    git config agit.loadavgsoftlimit 150
+    git config agit.loadavghardlimit 300
+    git config agit.loadavgsleepmin  10
+    git config agit.loadavgsleepmax  60
+    git config agit.loadavgretry     3
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ limiting.c                      | 142 +++++++++++++++++---------------
+ limiting.h                      |   1 +
+ t/t0930-git-fetch-rate-limit.sh |  33 ++++----
+ t/t0931-git-push-rate-limit.sh  |  39 +++++----
+ 4 files changed, 114 insertions(+), 101 deletions(-)
+
+diff --git a/limiting.c b/limiting.c
+index c6b674c6de..be26c6b4d8 100644
+--- a/limiting.c
++++ b/limiting.c
+@@ -21,6 +21,7 @@
+ #include "run-command.h"
+ #include "pkt-line.h"
+ #include "sideband.h"
++#include "config.h"
+ 
+ #ifdef __APPLE__
+   #include <sys/sysctl.h>
+@@ -28,19 +29,70 @@
+   #include <sys/sysinfo.h>
+ #endif
+ 
+-static int getenv_int(char *env, int value)
++/* Disable loadavg connection limit by default. */
++static int load_avg_enabled;
++
++static int load_avg_soft_limit;
++static int load_avg_hard_limit;
++static int load_avg_sleep_min;
++static int load_avg_sleep_max;
++static int load_avg_retry;
++
++static void get_load_avg_settings_from_env(void)
+ {
+-	char *p = getenv(env);
++	load_avg_enabled = git_env_bool(ENV_LOADAVG_ENABLED,
++					load_avg_enabled);
++	load_avg_soft_limit = (int)git_env_ulong(ENV_LOADAVG_SOFT_LIMIT,
++						 DEFAULT_LOADAVG_SOFT_LIMIT);
++	load_avg_hard_limit = (int)git_env_ulong(ENV_LOADAVG_HARD_LIMIT,
++						 DEFAULT_LOADAVG_HARD_LIMIT);
++	load_avg_sleep_min = (int)git_env_ulong(ENV_LOADAVG_SLEEP_MIN,
++						DEFAULT_LOADAVG_SLEEP_MIN);
++	load_avg_sleep_max = (int)git_env_ulong(ENV_LOADAVG_SLEEP_MAX,
++						DEFAULT_LOADAVG_SLEEP_MAX);
++	load_avg_retry = (int)git_env_ulong(ENV_LOADAVG_RETRY,
++					    DEFAULT_LOADAVG_RETRY);
++}
+ 
+-	if (!p)
+-		return value;
++static int load_avg_config(const char *var, const char *value, void *cb)
++{
++	if (strcmp(var, "agit.loadavgenabled") == 0) {
++		load_avg_enabled = git_config_bool(var, value);
++		return 0;
++	}
+ 
+-	if (!strcmp(p, "yes") || !strcmp(p, "y") || !strcmp(p, "true") || !strcmp(p, "t"))
+-		return 1;
+-	else if (!strcmp(p, "no") || !strcmp(p, "n") || !strcmp(p, "false") || !strcmp(p, "f"))
++	if (strcmp(var, "agit.loadavgsoftlimit") == 0) {
++		load_avg_soft_limit = git_config_int(var, value);
++		return 0;
++	}
++
++	if (strcmp(var, "agit.loadavghardlimit") == 0) {
++		load_avg_hard_limit = git_config_int(var, value);
++		return 0;
++	}
++
++	if (strcmp(var, "agit.loadavgsleepmin") == 0) {
++		load_avg_sleep_min = git_config_int(var, value);
++		return 0;
++	}
++
++	if (strcmp(var, "agit.loadavgsleepmax") == 0) {
++		load_avg_sleep_max = git_config_int(var, value);
++		return 0;
++	}
++
++	if (strcmp(var, "agit.loadavgretry") == 0) {
++		load_avg_retry = git_config_int(var, value);
+ 		return 0;
++	}
++
++	return git_default_config(var, value, cb);
++}
+ 
+-	return atoi(p);
++static void get_load_avg_settings(void)
++{
++	get_load_avg_settings_from_env();
++	git_config(load_avg_config, NULL);
+ }
+ 
+ static int loadavg_test_dryrun(void)
+@@ -48,7 +100,7 @@ static int loadavg_test_dryrun(void)
+ 	static int n = -1;
+ 
+ 	if (n == -1)
+-		n = getenv_int(ENV_LOADAVG_TEST_DRYRUN, 0);
++		n = git_env_bool(ENV_LOADAVG_TEST_DRYRUN, 0);
+ 	return n;
+ }
+ 
+@@ -68,56 +120,6 @@ static int loadavg_test_mock(struct string_list *loadavg_list)
+ 	return 1;
+ }
+ 
+-static int get_loadavg_soft_limit(void)
+-{
+-	static int n = -1;
+-
+-	if (n == -1)
+-		n = getenv_int(ENV_LOADAVG_SOFT_LIMIT,
+-				 DEFAULT_LOADAVG_SOFT_LIMIT);
+-	return n;
+-}
+-
+-static int get_loadavg_hard_limit(void)
+-{
+-	static int n = -1;
+-
+-	if (n == -1)
+-		n = getenv_int(ENV_LOADAVG_HARD_LIMIT,
+-				 DEFAULT_LOADAVG_HARD_LIMIT);
+-	return n;
+-}
+-
+-static int get_loadavg_sleep_min(void)
+-{
+-	static int n = -1;
+-
+-	if (n == -1)
+-		n = getenv_int(ENV_LOADAVG_SLEEP_MIN,
+-				 DEFAULT_LOADAVG_SLEEP_MIN);
+-	return n;
+-}
+-
+-static int get_loadavg_sleep_max(void)
+-{
+-	static int n = -1;
+-
+-	if (n == -1)
+-		n = getenv_int(ENV_LOADAVG_SLEEP_MAX,
+-				 DEFAULT_LOADAVG_SLEEP_MAX);
+-	return n;
+-}
+-
+-static int get_loadavg_retry(void)
+-{
+-	static int n = -1;
+-
+-	if (n == -1)
+-		n = getenv_int(ENV_LOADAVG_RETRY,
+-				 DEFAULT_LOADAVG_RETRY);
+-	return n;
+-}
+-
+ static int get_loadavg(void)
+ {
+ 	struct strbuf buf = STRBUF_INIT;
+@@ -197,15 +199,14 @@ static int get_loadavg(void)
+ 	return percent;
+ }
+ 
+-
+ static int load_is_above_soft_limit(int load)
+ {
+-	return load >= get_loadavg_soft_limit();
++	return load >= load_avg_soft_limit;
+ }
+ 
+ static int load_is_above_hard_limit(int load)
+ {
+-	return load >= get_loadavg_hard_limit();
++	return load >= load_avg_hard_limit;
+ }
+ 
+ /* sideband: 2 - progress, 3- error */
+@@ -244,13 +245,18 @@ int wait_for_avail_loadavg(int use_sideband)
+ 	int sleep_secs;
+ 	int band = 0;
+ 
++	get_load_avg_settings();
++
++	if (!load_avg_enabled)
++		return 0;
++
+ 	while ((loadavg = get_loadavg())) {
+ 		if (!load_is_above_soft_limit(loadavg)) {
+ 			break;
+-		} else if (retries > get_loadavg_retry() || load_is_above_hard_limit(loadavg)) {
++		} else if (retries > load_avg_retry || load_is_above_hard_limit(loadavg)) {
+ 			if (use_sideband)
+ 				band = 3;
+-			if (retries > get_loadavg_retry())
++			if (retries > load_avg_retry)
+ 				sideband_printf(band,
+ 						"Server load (%d%%) is still high, quilt",
+ 						loadavg);
+@@ -261,9 +267,9 @@ int wait_for_avail_loadavg(int use_sideband)
+ 			return 1;
+ 		} else {
+ 			srand(time(NULL));
+-			sleep_secs = get_loadavg_sleep_min() + rand() % (
+-					get_loadavg_sleep_max() -
+-					get_loadavg_sleep_min() +
++			sleep_secs = load_avg_sleep_min + rand() % (
++					load_avg_sleep_max -
++					load_avg_sleep_min +
+ 					1);
+ 			if (use_sideband)
+ 				band = 2;
+@@ -272,7 +278,7 @@ int wait_for_avail_loadavg(int use_sideband)
+ 					loadavg,
+ 					sleep_secs,
+ 					retries,
+-					get_loadavg_retry());
++					load_avg_retry);
+ 			if (loadavg_test_dryrun())
+ 				sideband_printf(band, "Will sleep %d seconds...", sleep_secs);
+ 			else
+diff --git a/limiting.h b/limiting.h
+index 2f1c5e3958..feafa92348 100644
+--- a/limiting.h
++++ b/limiting.h
+@@ -20,6 +20,7 @@
+ #ifndef LIMITING_H
+ #define LIMITING_H
+ 
++#define ENV_LOADAVG_ENABLED		"AGIT_LOADAVG_ENABLED"
+ #define ENV_LOADAVG_SOFT_LIMIT		"AGIT_LOADAVG_SOFT_LIMIT"
+ #define ENV_LOADAVG_HARD_LIMIT		"AGIT_LOADAVG_HARD_LIMIT"
+ #define ENV_LOADAVG_SLEEP_MIN		"AGIT_LOADAVG_SLEEP_MIN"
+diff --git a/t/t0930-git-fetch-rate-limit.sh b/t/t0930-git-fetch-rate-limit.sh
+index 82f5d3784d..b853e6755e 100755
+--- a/t/t0930-git-fetch-rate-limit.sh
++++ b/t/t0930-git-fetch-rate-limit.sh
+@@ -47,16 +47,26 @@ create_commits_in () {
+ 		else
+ 			oid=$(echo $name | git -C "$repo" commit-tree -p $parent $T)
+ 		fi &&
+-		suffix=${oid#???????} &&
+-		eval $name=${oid%$suffix} &&
++		eval $name=$oid &&
+ 		parent=$oid &&
+ 		shift ||
+ 		return 1
+ 	done &&
+-	git -C "$repo" config agit.loadAvgConnectionLimit 1 &&
+ 	git -C "$repo" update-ref refs/heads/main $oid
+ }
+ 
++get_abbrev_oid () {
++	oid=$1 &&
++	suffix=${oid#???????} &&
++	oid=${oid%$suffix} &&
++	if test -n "$oid"
++	then
++		echo "$oid"
++	else
++		echo "undefined-oid"
++	fi
++}
++
+ # Format the output of git-push, git-show-ref and other commands to make a
+ # user-friendly and stable text.  We can easily prepare the expect text
+ # without having to worry about future changes of the commit ID and spaces
+@@ -66,22 +76,15 @@ create_commits_in () {
+ # redundant to the more machine-readable output the tests already assert.
+ make_user_friendly_and_stable_output () {
+ 	sed \
+-		-e "s/${A:-undef_rev}[0-9a-f]*/<COMMIT-A>/g" \
+-		-e "s/${B:-undef_rev}[0-9a-f]*/<COMMIT-B>/g" \
+-		-e "s/${C:-undef_rev}[0-9a-f]*/<COMMIT-C>/g"
+-}
+-
+-rev_parse_abbrev_oid () {
+-	repo=$1
+-	rev=$2
+-	oid=$(git -C "$repo" rev-parse $rev) &&
+-	suffix=${oid#???????} &&
+-	echo ${oid%$suffix}
++		-e "s/$(get_abbrev_oid $A)[0-9a-f]*/<COMMIT-A>/g" \
++		-e "s/$(get_abbrev_oid $B)[0-9a-f]*/<COMMIT-B>/g" \
++		-e "s/$(get_abbrev_oid $C)[0-9a-f]*/<COMMIT-C>/g"
+ }
+ 
+ test_expect_success setup '
+ 	create_bare_repo "$bare" &&
+ 	git -C "$bare" config core.abbrev 7 &&
++	git -C "$bare" config agit.loadavgEnabled 1 &&
+ 	create_commits_in "$bare" A B C
+ '
+ 
+@@ -116,7 +119,7 @@ test_expect_success "clone failed: hard limit" '
+ 		AGIT_LOADAVG_RETRY=3 \
+ 		AGIT_LOADAVG_TEST_DRYRUN=1 \
+ 		AGIT_LOADAVG_TEST_MOCK=220,350,500 \
+-		git clone --no-local $bare workcopy >out 2>&1 &&
++		git -c agit.loadavgEnabled=false clone --no-local $bare workcopy >out 2>&1 &&
+ 	sed -e "s/[0-9][0-9]* seconds/xx seconds/g" -e "s/  *$//g" < out >actual &&
+ 
+ 	grep "^remote:" actual >actual.1 &&
+diff --git a/t/t0931-git-push-rate-limit.sh b/t/t0931-git-push-rate-limit.sh
+index 845c79f3be..868f7cb1a4 100755
+--- a/t/t0931-git-push-rate-limit.sh
++++ b/t/t0931-git-push-rate-limit.sh
+@@ -47,8 +47,7 @@ create_commits_in () {
+ 		else
+ 			oid=$(echo $name | git -C "$repo" commit-tree -p $parent $T)
+ 		fi &&
+-		suffix=${oid#???????} &&
+-		eval $name=${oid%$suffix} &&
++		eval $name=$oid &&
+ 		parent=$oid &&
+ 		shift ||
+ 		return 1
+@@ -56,6 +55,18 @@ create_commits_in () {
+ 	git -C "$repo" update-ref refs/heads/main $oid
+ }
+ 
++get_abbrev_oid () {
++	oid=$1 &&
++	suffix=${oid#???????} &&
++	oid=${oid%$suffix} &&
++	if test -n "$oid"
++	then
++		echo "$oid"
++	else
++		echo "undefined-oid"
++	fi
++}
++
+ # Format the output of git-push, git-show-ref and other commands to make a
+ # user-friendly and stable text.  We can easily prepare the expect text
+ # without having to worry about future changes of the commit ID and spaces
+@@ -65,22 +76,14 @@ create_commits_in () {
+ # redundant to the more machine-readable output the tests already assert.
+ make_user_friendly_and_stable_output () {
+ 	sed \
+-		-e "s/${A:-undef_rev}[0-9a-f]*/<COMMIT-A>/g" \
+-		-e "s/${B:-undef_rev}[0-9a-f]*/<COMMIT-B>/g" \
+-		-e "s/${C:-undef_rev}[0-9a-f]*/<COMMIT-C>/g"
++		-e "s/$(get_abbrev_oid $A)[0-9a-f]*/<COMMIT-A>/g" \
++		-e "s/$(get_abbrev_oid $B)[0-9a-f]*/<COMMIT-B>/g" \
++		-e "s/$(get_abbrev_oid $C)[0-9a-f]*/<COMMIT-C>/g"
+ }
+ 
+-rev_parse_abbrev_oid () {
+-	repo=$1
+-	rev=$2
+-	oid=$(git -C "$repo" rev-parse $rev) &&
+-	suffix=${oid#???????} &&
+-	echo ${oid%$suffix}
+-}
+-
+-
+ test_expect_success setup '
+ 	create_bare_repo "$bare" &&
++	git -C "$bare" config agit.loadavgEnabled 1 &&
+ 	git clone --no-local $bare workcopy &&
+ 	create_commits_in workcopy A B C
+ '
+@@ -88,7 +91,7 @@ test_expect_success setup '
+ test_expect_success "push ok without rate limit" '
+ 	rm -r "$bare" &&
+ 	create_bare_repo "$bare" &&
+-	git -C "$bare" config agit.loadAvgConnectionLimit 1 &&
++	git -C "$bare" config agit.loadavgEnabled 1 &&
+ 	(
+ 		cd workcopy &&
+ 		env \
+@@ -126,7 +129,7 @@ test_expect_success "push ok without rate limit" '
+ test_expect_success "push failed: hard limit" '
+ 	rm -r "$bare" &&
+ 	create_bare_repo "$bare" &&
+-	git -C "$bare" config agit.loadAvgConnectionLimit 1 &&
++	git -C "$bare" config agit.loadavgEnabled 1 &&
+ 	(
+ 		cd workcopy &&
+ 		test_must_fail env \
+@@ -170,7 +173,7 @@ test_expect_success "push failed: hard limit" '
+ test_expect_success "push fail: all soft limit" '
+ 	rm -r "$bare" &&
+ 	create_bare_repo "$bare" &&
+-	git -C "$bare" config agit.loadAvgConnectionLimit 1 &&
++	git -C "$bare" config agit.loadavgEnabled 1 &&
+ 	(
+ 		cd workcopy &&
+ 		test_must_fail env \
+@@ -216,7 +219,7 @@ test_expect_success "push fail: all soft limit" '
+ test_expect_success "push ok: 3 soft limit, and ok" '
+ 	rm -r "$bare" &&
+ 	create_bare_repo "$bare" &&
+-	git -C "$bare" config agit.loadAvgConnectionLimit 1 &&
++	git -C "$bare" config agit.loadavgEnabled 1 &&
+ 	(
+ 		cd workcopy &&
+ 		env \
+-- 
+2.34.1.51.g7e1f4e9345.agit.6.5.6
+

@@ -1,0 +1,124 @@
+From 56d48f2bd90714e161c57425803ec42ec29256fd Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Thu, 8 Jul 2021 16:29:10 +0800
+Subject: [PATCH] revision: allow pseudo options after --end-of-options
+
+Options and revisions can be seperated by the option "--end-of-options"
+by introducing commit 19e8789b23 (revision: allow --end-of-options to
+end option parsing, 2019-08-06).  The following command will show
+revisions which have changes on file "bar" on a branch named "--foo":
+
+    git rev-list --oneline --end-of-options --foo -- bar
+
+If we want to see revisions between two revisions (rev1 and rev2), we
+can use the following command:
+
+    git rev-list --oneline --end-of-options rev1..rev2 --
+
+We know that "rev1..rev2" is a shorthand for "rev2 --not rev1", but
+we can not use the longer expression with option "--not" after the
+"--end-of-options" option.  This is because the parser will not consume
+revision pseudo options after seeing "--end-of-option".
+
+Allow parsing revision pseudo options after "--end-of-options", the
+following command is valid:
+
+    git rev-list --oneline --end-of-options rev2 --not rev2 --
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ revision.c               |  7 ++++---
+ t/t6000-rev-list-misc.sh | 45 ++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 49 insertions(+), 3 deletions(-)
+
+diff --git a/revision.c b/revision.c
+index 7d435f8048..181c935f38 100644
+--- a/revision.c
++++ b/revision.c
+@@ -2754,9 +2754,9 @@ int setup_revisions(int argc, const char **argv, struct rev_info *revs, struct s
+ 		revarg_opt |= REVARG_CANNOT_BE_FILENAME;
+ 	for (left = i = 1; i < argc; i++) {
+ 		const char *arg = argv[i];
+-		if (!seen_end_of_options && *arg == '-') {
+-			int opts;
++		int opts;
+ 
++		if (*arg == '-') {
+ 			opts = handle_revision_pseudo_opt(
+ 						revs, argv + i,
+ 						&flags);
+@@ -2764,7 +2764,9 @@ int setup_revisions(int argc, const char **argv, struct rev_info *revs, struct s
+ 				i += opts - 1;
+ 				continue;
+ 			}
++		}
+ 
++		if (!seen_end_of_options && *arg == '-') {
+ 			if (!strcmp(arg, "--stdin")) {
+ 				if (revs->disable_stdin) {
+ 					argv[left++] = arg;
+@@ -2792,7 +2794,6 @@ int setup_revisions(int argc, const char **argv, struct rev_info *revs, struct s
+ 			continue;
+ 		}
+ 
+-
+ 		if (handle_revision_arg(arg, revs, flags, revarg_opt)) {
+ 			int j;
+ 			if (seen_dashdash || *arg == '^')
+diff --git a/t/t6000-rev-list-misc.sh b/t/t6000-rev-list-misc.sh
+index 12def7bcbf..3b2ca10456 100755
+--- a/t/t6000-rev-list-misc.sh
++++ b/t/t6000-rev-list-misc.sh
+@@ -169,4 +169,49 @@ test_expect_success 'rev-list --count --objects' '
+ 	test_line_count = $count actual
+ '
+ 
++test_expect_success 'merge branch "--output=yikes" to main' '
++	git checkout main &&
++	git merge -m "Merge branch" \
++		--allow-unrelated-histories -- \
++		--output=yikes &&
++	echo three >> two/three &&
++	git add two/three &&
++	test_tick &&
++	git commit -m "three" &&
++	cat >expect <<-EOF &&
++	> three
++	> Merge branch
++	> another
++	> that
++	> two
++	> one
++	EOF
++	git log --pretty="%m %s" --end-of-options HEAD >actual &&
++	test_cmp expect actual
++'
++
++test_expect_success 'parse pseudo option "--branches" after "--end-of-options"' '
++	cat >expect <<-EOF &&
++	> three
++	> another
++	> Merge branch
++	> that
++	> two
++	> one
++	EOF
++	git log --pretty="%m %s" --end-of-options \
++		--branches -- >actual &&
++	test_cmp expect actual
++'
++
++test_expect_success 'parse pseudo option "--not" after "--end-of-options"' '
++	cat >expect <<-EOF &&
++	> three
++	EOF
++	git log --pretty="%m %s" --end-of-options \
++		HEAD --not --output=yikes -- \
++		two/three >actual &&
++	test_cmp expect actual
++'
++
+ test_done
+-- 
+2.34.1.51.g7e1f4e9345.agit.6.5.6
+

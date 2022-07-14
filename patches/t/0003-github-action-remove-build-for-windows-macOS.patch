@@ -1,0 +1,175 @@
+From 2d46e15722166529174670ffdc5fba30c5aae044 Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Wed, 2 Jun 2021 17:11:48 +0800
+Subject: [PATCH 3/3] github action: remove build for windows/macOS
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ .github/workflows/main.yml | 144 -------------------------------------
+ 1 file changed, 144 deletions(-)
+
+diff --git a/.github/workflows/main.yml b/.github/workflows/main.yml
+index c35200defb..bebaeee556 100644
+--- a/.github/workflows/main.yml
++++ b/.github/workflows/main.yml
+@@ -77,143 +77,6 @@ jobs:
+               core.warning(e);
+             }
+ 
+-  windows-build:
+-    name: win build
+-    needs: ci-config
+-    if: needs.ci-config.outputs.enabled == 'yes'
+-    runs-on: windows-latest
+-    steps:
+-    - uses: actions/checkout@v2
+-    - uses: git-for-windows/setup-git-for-windows-sdk@v1
+-    - name: build
+-      shell: bash
+-      env:
+-        HOME: ${{runner.workspace}}
+-        NO_PERL: 1
+-      run: . /etc/profile && ci/make-test-artifacts.sh artifacts
+-    - name: zip up tracked files
+-      run: git archive -o artifacts/tracked.tar.gz HEAD
+-    - name: upload tracked files and build artifacts
+-      uses: actions/upload-artifact@v2
+-      with:
+-        name: windows-artifacts
+-        path: artifacts
+-  windows-test:
+-    name: win test
+-    runs-on: windows-latest
+-    needs: [windows-build]
+-    strategy:
+-      fail-fast: false
+-      matrix:
+-        nr: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+-    steps:
+-    - name: download tracked files and build artifacts
+-      uses: actions/download-artifact@v2
+-      with:
+-        name: windows-artifacts
+-        path: ${{github.workspace}}
+-    - name: extract tracked files and build artifacts
+-      shell: bash
+-      run: tar xf artifacts.tar.gz && tar xf tracked.tar.gz
+-    - uses: git-for-windows/setup-git-for-windows-sdk@v1
+-    - name: test
+-      shell: bash
+-      run: . /etc/profile && ci/run-test-slice.sh ${{matrix.nr}} 10
+-    - name: ci/print-test-failures.sh
+-      if: failure()
+-      shell: bash
+-      run: ci/print-test-failures.sh
+-    - name: Upload failed tests' directories
+-      if: failure() && env.FAILED_TEST_ARTIFACTS != ''
+-      uses: actions/upload-artifact@v2
+-      with:
+-        name: failed-tests-windows
+-        path: ${{env.FAILED_TEST_ARTIFACTS}}
+-  vs-build:
+-    name: win+VS build
+-    needs: ci-config
+-    if: needs.ci-config.outputs.enabled == 'yes'
+-    env:
+-      NO_PERL: 1
+-      GIT_CONFIG_PARAMETERS: "'user.name=CI' 'user.email=ci@git'"
+-    runs-on: windows-latest
+-    steps:
+-    - uses: actions/checkout@v2
+-    - uses: git-for-windows/setup-git-for-windows-sdk@v1
+-    - name: initialize vcpkg
+-      uses: actions/checkout@v2
+-      with:
+-        repository: 'microsoft/vcpkg'
+-        path: 'compat/vcbuild/vcpkg'
+-    - name: download vcpkg artifacts
+-      shell: powershell
+-      run: |
+-        $urlbase = "https://dev.azure.com/git/git/_apis/build/builds"
+-        $id = ((Invoke-WebRequest -UseBasicParsing "${urlbase}?definitions=9&statusFilter=completed&resultFilter=succeeded&`$top=1").content | ConvertFrom-JSON).value[0].id
+-        $downloadUrl = ((Invoke-WebRequest -UseBasicParsing "${urlbase}/$id/artifacts").content | ConvertFrom-JSON).value[0].resource.downloadUrl
+-        (New-Object Net.WebClient).DownloadFile($downloadUrl, "compat.zip")
+-        Expand-Archive compat.zip -DestinationPath . -Force
+-        Remove-Item compat.zip
+-    - name: add msbuild to PATH
+-      uses: microsoft/setup-msbuild@v1
+-    - name: copy dlls to root
+-      shell: cmd
+-      run: compat\vcbuild\vcpkg_copy_dlls.bat release
+-    - name: generate Visual Studio solution
+-      shell: bash
+-      run: |
+-        cmake `pwd`/contrib/buildsystems/ -DCMAKE_PREFIX_PATH=`pwd`/compat/vcbuild/vcpkg/installed/x64-windows \
+-        -DNO_GETTEXT=YesPlease -DPERL_TESTS=OFF -DPYTHON_TESTS=OFF -DCURL_NO_CURL_CMAKE=ON
+-    - name: MSBuild
+-      run: msbuild git.sln -property:Configuration=Release -property:Platform=x64 -maxCpuCount:4 -property:PlatformToolset=v142
+-    - name: bundle artifact tar
+-      shell: bash
+-      env:
+-        MSVC: 1
+-        VCPKG_ROOT: ${{github.workspace}}\compat\vcbuild\vcpkg
+-      run: |
+-        mkdir -p artifacts &&
+-        eval "$(make -n artifacts-tar INCLUDE_DLLS_IN_ARTIFACTS=YesPlease ARTIFACTS_DIRECTORY=artifacts NO_GETTEXT=YesPlease 2>&1 | grep ^tar)"
+-    - name: zip up tracked files
+-      run: git archive -o artifacts/tracked.tar.gz HEAD
+-    - name: upload tracked files and build artifacts
+-      uses: actions/upload-artifact@v2
+-      with:
+-        name: vs-artifacts
+-        path: artifacts
+-  vs-test:
+-    name: win+VS test
+-    runs-on: windows-latest
+-    needs: vs-build
+-    strategy:
+-      fail-fast: false
+-      matrix:
+-        nr: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+-    steps:
+-    - uses: git-for-windows/setup-git-for-windows-sdk@v1
+-    - name: download tracked files and build artifacts
+-      uses: actions/download-artifact@v2
+-      with:
+-        name: vs-artifacts
+-        path: ${{github.workspace}}
+-    - name: extract tracked files and build artifacts
+-      shell: bash
+-      run: tar xf artifacts.tar.gz && tar xf tracked.tar.gz
+-    - name: test
+-      shell: bash
+-      env:
+-        NO_SVN_TESTS: 1
+-      run: . /etc/profile && ci/run-test-slice.sh ${{matrix.nr}} 10
+-    - name: ci/print-test-failures.sh
+-      if: failure()
+-      shell: bash
+-      run: ci/print-test-failures.sh
+-    - name: Upload failed tests' directories
+-      if: failure() && env.FAILED_TEST_ARTIFACTS != ''
+-      uses: actions/upload-artifact@v2
+-      with:
+-        name: failed-tests-windows
+-        path: ${{env.FAILED_TEST_ARTIFACTS}}
+   regular:
+     name: ${{matrix.vector.jobname}} (${{matrix.vector.pool}})
+     needs: ci-config
+@@ -238,13 +101,6 @@ jobs:
+             os: ubuntu
+             cc_package: gcc-8
+             pool: ubuntu-latest
+-          - jobname: osx-clang
+-            cc: clang
+-            pool: macos-latest
+-          - jobname: osx-gcc
+-            cc: gcc
+-            cc_package: gcc-9
+-            pool: macos-latest
+           - jobname: linux-gcc-default
+             cc: gcc
+             pool: ubuntu-latest
+-- 
+2.34.1.51.g7e1f4e9345.agit.6.5.6
+

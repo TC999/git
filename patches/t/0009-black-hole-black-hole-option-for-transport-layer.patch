@@ -1,0 +1,66 @@
+From 83a590452fd982937db1096ce406e546eacde450 Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Tue, 28 Jun 2022 18:51:29 +0800
+Subject: [PATCH 09/13] black-hole: "black-hole" option for transport layer
+
+The transport layer is an interface between the git front-end and the
+protocol helper. Add new "black-hole" option for the transport layer,
+and the option can be set using "set_git_option()".
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ transport.c |  5 +++++
+ transport.h | 14 ++++++++++++++
+ 2 files changed, 19 insertions(+)
+
+diff --git a/transport.c b/transport.c
+index 3d64a43ab3..4e4b0b9aad 100644
+--- a/transport.c
++++ b/transport.c
+@@ -209,6 +209,11 @@ static int set_git_option(struct git_transport_options *opts,
+ 	if (!strcmp(name, TRANS_OPT_UPLOADPACK)) {
+ 		opts->uploadpack = value;
+ 		return 0;
++	} else if (!strcmp(name, TRANS_OPT_BLACK_HOLE)) {
++		/* value is "1" or "2" */
++		if (value && *value)
++			opts->black_hole = *value - '0';
++		return 0;
+ 	} else if (!strcmp(name, TRANS_OPT_RECEIVEPACK)) {
+ 		opts->receivepack = value;
+ 		return 0;
+diff --git a/transport.h b/transport.h
+index 12bc08fc33..0daf78fd79 100644
+--- a/transport.h
++++ b/transport.h
+@@ -8,6 +8,15 @@
+ #include "string-list.h"
+ 
+ struct git_transport_options {
++	/*
++	 * Black hole mode is used for git test, will throw away any data received
++	 * from server.
++	 *
++	 *  1: throw away pack data but still try to verify.
++	 *  2: throw away pack data silently.
++	 */
++	unsigned black_hole : 2;
++
+ 	unsigned thin : 1;
+ 	unsigned keep : 1;
+ 	unsigned followtags : 1;
+@@ -172,6 +181,11 @@ void transport_check_allowed(const char *type);
+ 
+ /* Transport options which apply to git:// and scp-style URLs */
+ 
++/* We use black-hole mode to discard the received pack date,
++ * and we only used this for git test.
++ */
++#define TRANS_OPT_BLACK_HOLE			"black-hole"
++
+ /* The program to use on the remote side to send a pack */
+ #define TRANS_OPT_UPLOADPACK "uploadpack"
+ 
+-- 
+2.34.1.51.g7e1f4e9345.agit.6.5.6
+

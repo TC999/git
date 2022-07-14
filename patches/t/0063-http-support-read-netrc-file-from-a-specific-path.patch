@@ -1,0 +1,94 @@
+From 4f2bfdb2a439d47b2874f6c8e942e53edfd309ee Mon Sep 17 00:00:00 2001
+From: Chen Bojun <bojun.cbj@alibaba-inc.com>
+Date: Tue, 21 Jun 2022 21:01:38 +0800
+Subject: [PATCH] http: support read netrc file from a specific path
+
+Support setting the GIT_CURL_NETRC_FILE environment variable to provide
+the path (absolute or relative) to the netrc file that curl should use.
+
+Although the existing http.c code already support reading of netrc file,
+it only supports reading from the root path, because there is no option
+to set the CURLOPT_NETRC_FILE which can provide the path to cURL.
+
+At the same time, $HTTPD_HOST is extracted separately so that the
+environment variables of httpd host can be used in other test cases.
+
+Signed-off-by: Chen Bojun <bojun.cbj@alibaba-inc.com>
+---
+ http.c                          |  2 ++
+ t/lib-httpd.sh                  |  3 ++-
+ t/t5583-http-curl-netrc-file.sh | 35 +++++++++++++++++++++++++++++++++
+ 3 files changed, 39 insertions(+), 1 deletion(-)
+ create mode 100755 t/t5583-http-curl-netrc-file.sh
+
+diff --git a/http.c b/http.c
+index 3bdd71be5e..c2f5f4d337 100644
+--- a/http.c
++++ b/http.c
+@@ -786,6 +786,8 @@ static CURL *get_curl_handle(void)
+ #endif
+ 
+ 	curl_easy_setopt(result, CURLOPT_NETRC, CURL_NETRC_OPTIONAL);
++	if (getenv("GIT_CURL_NETRC_FILE"))
++		curl_easy_setopt(result, CURLOPT_NETRC_FILE, getenv("GIT_CURL_NETRC_FILE"));
+ 	curl_easy_setopt(result, CURLOPT_HTTPAUTH, CURLAUTH_ANY);
+ 
+ #ifdef CURLGSSAPI_DELEGATION_FLAG
+diff --git a/t/lib-httpd.sh b/t/lib-httpd.sh
+index 782891908d..6edcde377d 100644
+--- a/t/lib-httpd.sh
++++ b/t/lib-httpd.sh
+@@ -154,7 +154,8 @@ prepare_httpd() {
+ 	else
+ 		HTTPD_PROTO=http
+ 	fi
+-	HTTPD_DEST=127.0.0.1:$LIB_HTTPD_PORT
++	HTTPD_HOST=127.0.0.1
++	HTTPD_DEST=$HTTPD_HOST:$LIB_HTTPD_PORT
+ 	HTTPD_URL=$HTTPD_PROTO://$HTTPD_DEST
+ 	HTTPD_URL_USER=$HTTPD_PROTO://user%40host@$HTTPD_DEST
+ 	HTTPD_URL_USER_PASS=$HTTPD_PROTO://user%40host:pass%40host@$HTTPD_DEST
+diff --git a/t/t5583-http-curl-netrc-file.sh b/t/t5583-http-curl-netrc-file.sh
+new file mode 100755
+index 0000000000..5165e52874
+--- /dev/null
++++ b/t/t5583-http-curl-netrc-file.sh
+@@ -0,0 +1,35 @@
++#!/bin/sh
++
++test_description='test GIT_CURL_NETRC_FILE'
++GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
++export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
++
++. ./test-lib.sh
++. "$TEST_DIRECTORY"/lib-httpd.sh
++start_httpd
++
++setup_askpass_helper
++
++test_expect_success 'clone auth-fetch repository with specified netrc file' '
++	mkdir "$HTTPD_DOCUMENT_ROOT_PATH/repo.git" &&
++	git -C "$HTTPD_DOCUMENT_ROOT_PATH/repo.git" --bare init &&
++	echo "machine $HTTPD_HOST login user@host password pass@host" > git-netrc &&
++	set_askpass wrong &&
++	GIT_CURL_NETRC_FILE="git-netrc" git clone $HTTPD_URL/auth/smart/repo.git &&
++	expect_askpass none
++'
++
++test_expect_success 'push auth-fetch repository with specified netrc file' '
++	(
++		git init test-push &&
++		cd test-push &&
++		git remote add origin $HTTPD_URL/auth/smart/repo.git && 
++		test_commit first &&
++		echo "machine $HTTPD_HOST login user@host password pass@host" > git-netrc &&
++		set_askpass wrong &&
++		GIT_CURL_NETRC_FILE="git-netrc" git push origin HEAD:test &&
++		expect_askpass none
++	)
++'
++
++test_done
+-- 
+2.34.1.51.g7e1f4e9345.agit.6.5.6
+

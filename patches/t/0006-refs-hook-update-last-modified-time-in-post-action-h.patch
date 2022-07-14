@@ -1,0 +1,312 @@
+From 9719f52cd3c3a3023fcc689b209b3cee18dd4cbe Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Tue, 23 Oct 2018 11:18:16 +0800
+Subject: [PATCH 6/7] refs-hook: update last modified time in post-action hook
+
+When user update references (not including `git-gc` and `git-pack-refs`),
+update last-modified time for repo in file `.git/info/last-modified`.
+
+Add test cases in `t/t1490-last-modified.sh`.
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ refs/files-backend.c     |  93 ++++++++++++++++++++++
+ t/t0902-last-modified.sh | 168 +++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 261 insertions(+)
+ create mode 100755 t/t0902-last-modified.sh
+
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index 8db7882aac..94fc14c3a9 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -2843,6 +2843,8 @@ cleanup:
+ 	return ret;
+ }
+ 
++static void files_transaction_post_action_hook(struct ref_transaction *);
++
+ static int files_transaction_finish(struct ref_store *ref_store,
+ 				    struct ref_transaction *transaction,
+ 				    struct strbuf *err)
+@@ -2962,6 +2964,9 @@ static int files_transaction_finish(struct ref_store *ref_store,
+ 	clear_loose_ref_cache(refs);
+ 
+ cleanup:
++	/* Perform post-action for transaction (update last-modified, etc.) */
++	files_transaction_post_action_hook(transaction);
++
+ 	files_transaction_cleanup(refs, transaction);
+ 
+ 	for (i = 0; i < transaction->nr; i++) {
+@@ -3279,6 +3284,94 @@ static int files_init_db(struct ref_store *ref_store, struct strbuf *err)
+ 	return 0;
+ }
+ 
++static int files_transaction_ref_is_changed(struct ref_update *update, int filter_ref) {
++	struct ref_lock *lock = update->backend_data;
++
++	if (!lock)
++		return 0;
++
++	if (update->flags & REF_LOG_ONLY || update->flags & REF_IS_PRUNING)
++		return 0;
++
++	if (update->flags & REF_NEEDS_COMMIT ||
++		(update->flags & REF_DELETING && !is_null_oid(&(lock->old_oid)))) {
++		if (!filter_ref)
++			return 1;
++		if (!strncmp(update->refname, "refs/heads/", 11) ||
++			!strncmp(update->refname, "refs/tags/", 10) ||
++			!strncmp(update->refname, "refs/merge-requests/", 20) ||
++			!strncmp(update->refname, "refs/pull/", 10))
++		       return 1;
++	}
++
++	return 0;
++}
++
++static GIT_PATH_FUNC(git_path_info_last_modified, "info/last-modified")
++
++/*
++ * After ref_transaction finished successfully, run this post_action hook.
++ */
++static void files_transaction_post_action_hook(struct ref_transaction *transaction) {
++	const char *path = git_path_info_last_modified();
++	char *env = getenv("GIT_REFS_TXN_NO_HOOK");
++	struct stat fstat;
++	static int once = 0;
++	int fd;
++	int i;
++	int has_change = 0;
++
++	if ((env && !strcmp(env, "1")) || transaction->nr == 0)
++		return;
++
++	// Will execute twice, one for files_backend, another for packed_backend.
++	// Only execute for files_backend.
++	if (!strcmp(transaction->ref_store->be->name, "packed"))
++		return;
++
++	if (!the_repository->gitdir)
++		return;
++
++	if (once)
++		return;
++
++	for (i = 0; i < transaction->nr; i++) {
++		if (files_transaction_ref_is_changed(transaction->updates[i], 1)) {
++			has_change = 1;
++			break;
++		}
++	}
++	if (!has_change)
++		return;
++
++	once = 1;
++
++	/* Create .git/info/last-modified file if not exist */
++	if (access(path, F_OK)) {
++		fd = creat(path, 0666);
++		if (fd < 0)
++			error("fail to create file %s", path);
++		else {
++			close(fd);
++			adjust_shared_perm(path);
++		}
++		goto cleanup;
++	}
++
++	if (stat(path, &fstat)) {
++		error("fail to stat %s", path);
++		goto cleanup;
++	}
++
++	if (utimes(path, NULL)) {
++		error("fail to change mtime of %s", path);
++		goto cleanup;
++	}
++
++cleanup:
++	return;
++}
++
+ struct ref_storage_be refs_be_files = {
+ 	.next = NULL,
+ 	.name = "files",
+diff --git a/t/t0902-last-modified.sh b/t/t0902-last-modified.sh
+new file mode 100755
+index 0000000000..f7a425ad80
+--- /dev/null
++++ b/t/t0902-last-modified.sh
+@@ -0,0 +1,168 @@
++#!/bin/sh
++#
++# Copyright (c) 2018 Jiang Xin
++#
++
++test_description='Test git update-ref create last-modified timestamp'
++
++GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
++export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
++
++. ./test-lib.sh
++
++m=refs/heads/main
++topic=refs/heads/topic
++bare=bare-repo.git
++last_modified=info/last-modified
++
++create_bare_repo () {
++	test "$#" = 1 ||
++	BUG "not 1 parameter to test-create-repo"
++	repo="$1"
++	mkdir -p "$repo"
++	(
++		cd "$repo" || error "Cannot setup test environment"
++		git -c \
++			init.defaultBranch="${GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME-master}" \
++			init --bare \
++			"--template=$GIT_BUILD_DIR/templates/blt/" >&3 2>&4 ||
++		error "cannot run git init -- have you built things yet?"
++		mv hooks hooks-disabled &&
++		git config core.abbrev 7
++	) || exit
++}
++
++create_commits_in () {
++	repo="$1" &&
++	if ! parent=$(git -C "$repo" rev-parse HEAD^{} 2>/dev/null)
++	then
++		parent=
++	fi &&
++	T=$(git -C "$repo" write-tree) &&
++	shift &&
++	while test $# -gt 0
++	do
++		name=$1 &&
++		test_tick &&
++		if test -z "$parent"
++		then
++			oid=$(echo $name | git -C "$repo" commit-tree $T)
++		else
++			oid=$(echo $name | git -C "$repo" commit-tree -p $parent $T)
++		fi &&
++		eval $name=$oid &&
++		parent=$oid &&
++		shift ||
++		return 1
++	done &&
++	env GIT_REFS_TXN_NO_HOOK=1 git -C "$repo" update-ref $m $oid
++}
++
++restore_repo_last_modified () {
++	cp -p "$bare/$last_modified-1" "$bare/$last_modified" &&
++	test ! "$bare/$last_modified" -nt "$bare/$last_modified-1" &&
++	test ! "$bare/$last_modified" -ot "$bare/$last_modified-1"
++}
++
++test_expect_success setup '
++	create_bare_repo "$bare" &&
++	create_commits_in "$bare" A B C D E F &&
++	(
++		cd "$bare" &&
++		test -f HEAD &&
++		test -d info &&
++		test ! -f $last_modified
++	)
++'
++
++test_expect_success "create $m (bypass hook)" '
++	(
++		cd "$bare" &&
++		env GIT_REFS_TXN_NO_HOOK=1 git update-ref $m $A &&
++		test ! -f $last_modified
++	)
++'
++
++test_expect_success "change master to the same commit, won't trigger hook" '
++	(
++		cd "$bare" &&
++		git update-ref $m $A &&
++		test ! -f $last_modified
++	)
++'
++
++test_expect_success "remove no-exist branch, won't trigger hook" '
++	(
++		cd "$bare" &&
++		git update-ref -d refs/heads/non-exist &&
++		test ! -f $last_modified
++	)
++'
++
++test_expect_success "create $topic (run hook)" '
++	git -C "$bare" update-ref $topic $A &&
++	test -f "$bare/$last_modified"
++'
++
++test_expect_success "backup last-modified file" '
++	touch -t 200504071513.13 "$bare/$last_modified" &&
++	cp -p "$bare/$last_modified" "$bare/$last_modified-1" &&
++	test ! "$bare/$last_modified" -nt "$bare/$last_modified-1" &&
++	test ! "$bare/$last_modified" -ot "$bare/$last_modified-1"
++'
++
++test_expect_success "new ref refs/tmp/* won't change last-modified" '
++	git -C "$bare" update-ref refs/tmp/a $A &&
++	test ! "$bare/$last_modified" -nt "$bare/$last_modified-1" &&
++	test ! "$bare/$last_modified" -ot "$bare/$last_modified-1"
++'
++
++test_expect_success "new ref refs/keep-around/* won't change last-modified" '
++	git -C "$bare" update-ref refs/keep-around/abcdef0123456789/abcdef0123456789 $B &&
++	test ! "$bare/$last_modified" -nt "$bare/$last_modified-1" &&
++	test ! "$bare/$last_modified" -ot "$bare/$last_modified-1"
++'
++
++test_expect_success "new ref refs/tags/ will change last-modified" '
++	git -C "$bare" tag -m v1.0.0 v1.0.0 $A &&
++	test "$bare/$last_modified" -nt "$bare/$last_modified-1"
++'
++
++test_expect_success "restore last-modified" '
++	restore_repo_last_modified
++'
++
++test_expect_success "new ref refs/merge-requests/ will change last-modified" '
++	git -C "$bare" update-ref refs/merge-requests/123/head $A &&
++	test "$bare/$last_modified" -nt "$bare/$last_modified-1"
++'
++
++test_expect_success "restore last-modified" '
++	restore_repo_last_modified
++'
++
++test_expect_success "new ref refs/pull/* will change last-modified" '
++	git -C "$bare" update-ref refs/pull/12/123 $A &&
++	test "$bare/$last_modified" -nt "$bare/$last_modified-1"
++'
++
++test_expect_success "restore last-modified" '
++	restore_repo_last_modified
++'
++
++test_expect_success "update $topic and different last-modified" '
++	git -C "$bare" update-ref $topic $B &&
++	test "$bare/$last_modified" -nt "$bare/$last_modified-1"
++'
++
++test_expect_success "restore last-modified" '
++	restore_repo_last_modified
++'
++
++test_expect_success "set env, won't update last-modified" '
++	env GIT_REFS_TXN_NO_HOOK=1 git -C "$bare" update-ref $topic $C &&
++	test ! "$bare/$last_modified" -nt "$bare/$last_modified-1" &&
++	test ! "$bare/$last_modified" -ot "$bare/$last_modified-1"
++'
++
++test_done
+-- 
+2.34.1.51.g7e1f4e9345.agit.6.5.6
+

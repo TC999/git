@@ -1,0 +1,275 @@
+From 61abd20cc85c2dc5aa695a937922189d9b415996 Mon Sep 17 00:00:00 2001
+From: Han Xin <hanxin.hx@alibaba-inc.com>
+Date: Thu, 6 Jan 2022 17:56:36 +0800
+Subject: [PATCH 57/60] fetch-to-packed-refs: add extension for refs API
+
+Add new extension ".direct_to_packed_refs" to refs API, and we can call
+function "refs_direct_to_packed_refs()" to save references in the
+transaction into the "packed-refs" file.
+
+When we use "git fetch", references are always written as loose
+references. When using "git-fetch" to fetch from a repository with a
+large number of references, save the references as the same large number
+of loose reference files will result in an IO bottleneck.
+
+Inspired from "git clone" and "git pack-refs", we can add an additional
+parameters to save the fetched loose references directly into the
+"packed-refs" file.
+
+Signed-off-by: Han Xin <hanxin.hx@alibaba-inc.com>
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ refs.c                |  10 ++++
+ refs.h                |   7 +++
+ refs/debug.c          |  11 ++++
+ refs/files-backend.c  | 123 ++++++++++++++++++++++++++++++++++++++++++
+ refs/packed-backend.c |   1 +
+ refs/refs-internal.h  |   4 ++
+ 6 files changed, 156 insertions(+)
+
+diff --git a/refs.c b/refs.c
+index 9db66e9955..8169191fea 100644
+--- a/refs.c
++++ b/refs.c
+@@ -2009,6 +2009,16 @@ int refs_pack_refs(struct ref_store *refs, unsigned int flags)
+ 	return refs->be->pack_refs(refs, flags);
+ }
+ 
++int refs_direct_to_packed_refs(struct ref_transaction *transaction,
++			       struct strbuf *err)
++{
++	struct ref_store *refs = transaction->ref_store;
++
++	if (refs->be->direct_to_packed_refs)
++		return refs->be->direct_to_packed_refs(refs, transaction, err);
++	return 0;
++}
++
+ int peel_iterated_oid(const struct object_id *base, struct object_id *peeled)
+ {
+ 	if (current_ref_iter &&
+diff --git a/refs.h b/refs.h
+index 47cb9edbaa..ea69929e94 100644
+--- a/refs.h
++++ b/refs.h
+@@ -411,6 +411,13 @@ void warn_dangling_symrefs(FILE *fp, const char *msg_fmt,
+  */
+ int refs_pack_refs(struct ref_store *refs, unsigned int flags);
+ 
++/*
++ * Directly save refs in transaction into the "packed-refs" file,
++ * instead of saving them as loose references.
++ */
++int refs_direct_to_packed_refs(struct ref_transaction *transaction,
++			       struct strbuf *err);
++
+ /*
+  * Setup reflog before using. Fill in err and return -1 on failure.
+  */
+diff --git a/refs/debug.c b/refs/debug.c
+index eed8bc94b0..4fd0b839c2 100644
+--- a/refs/debug.c
++++ b/refs/debug.c
+@@ -129,6 +129,16 @@ static int debug_pack_refs(struct ref_store *ref_store, unsigned int flags)
+ 	return res;
+ }
+ 
++static int debug_direct_to_packed_refs(struct ref_store *ref_store,
++				       struct ref_transaction *transaction,
++				       struct strbuf *err)
++{
++	struct debug_ref_store *drefs = (struct debug_ref_store *)ref_store;
++	int res = drefs->refs->be->direct_to_packed_refs(drefs->refs, transaction, err);
++	trace_printf_key(&trace_refs, "direct_to_packed_refs: %d\n", res);
++	return res;
++}
++
+ static int debug_create_symref(struct ref_store *ref_store,
+ 			       const char *ref_name, const char *target,
+ 			       const char *logmsg)
+@@ -458,6 +468,7 @@ struct ref_storage_be refs_be_debug = {
+ 	.delete_refs = debug_delete_refs,
+ 	.rename_ref = debug_rename_ref,
+ 	.copy_ref = debug_copy_ref,
++	.direct_to_packed_refs = debug_direct_to_packed_refs,
+ 
+ 	.iterator_begin = debug_ref_iterator_begin,
+ 	.read_raw_ref = debug_read_raw_ref,
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index 8db7882aac..19cb525c12 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -1259,6 +1259,128 @@ static int files_pack_refs(struct ref_store *ref_store, unsigned int flags)
+ 	return 0;
+ }
+ 
++static int ref_contains(struct string_list *refnames,
++			const char *refname)
++{
++	size_t i, n = refnames->nr;
++
++	for (i = 0; i < n; i++) {
++		if (!strcmp(refname, refnames->items[i].string))
++			return 1;
++	}
++	return 0;
++}
++
++static int files_direct_to_packed_refs(struct ref_store *ref_store,
++				       struct ref_transaction *transaction,
++				       struct strbuf *err)
++{
++	struct files_ref_store *refs = files_downcast(
++		ref_store, REF_STORE_WRITE | REF_STORE_ODB, "direct_to_packed_refs");
++	struct ref_iterator *iter;
++	size_t i;
++	int ok, ret = 0;
++	struct string_list affected_refnames = STRING_LIST_INIT_NODUP;
++	struct ref_to_prune *refs_to_prune = NULL;
++	struct ref_transaction *packed_transaction = NULL;
++
++	assert(err);
++
++	if (transaction->state != REF_TRANSACTION_OPEN)
++		BUG("commit called for transaction that is not open");
++
++	/* Fail if a refname appears more than once in the transaction: */
++	for (i = 0; i < transaction->nr; i++)
++		string_list_append(&affected_refnames,
++				   transaction->updates[i]->refname);
++	string_list_sort(&affected_refnames);
++	if (ref_update_reject_duplicates(&affected_refnames, err)) {
++		ret = TRANSACTION_GENERIC_ERROR;
++		string_list_clear(&affected_refnames, 0);
++		goto cleanup;
++	}
++
++	packed_transaction =
++		ref_store_transaction_begin(refs->packed_ref_store, err);
++	if (!packed_transaction) {
++		ret = TRANSACTION_GENERIC_ERROR;
++		string_list_clear(&affected_refnames, 0);
++		return ret;
++	}
++
++	packed_refs_lock(refs->packed_ref_store, LOCK_DIE_ON_ERROR, err);
++
++	for (i = 0; i < transaction->nr; i++) {
++		struct ref_update *update = transaction->updates[i];
++
++		if (refs_verify_refname_available(&refs->base, update->refname,
++						  &affected_refnames, NULL,
++						  err)) {
++			ret = TRANSACTION_NAME_CONFLICT;
++			packed_refs_unlock(refs->packed_ref_store);
++			goto cleanup;
++		}
++
++		/*
++		 * Add a reference creation for this reference to the
++		 * packed-refs transaction:
++		 */
++		ref_transaction_add_update(packed_transaction, update->refname,
++					   update->flags & ~REF_HAVE_OLD,
++					   &update->new_oid, &update->old_oid,
++					   NULL);
++	}
++
++	iter = cache_ref_iterator_begin(get_loose_ref_cache(refs), NULL,
++					the_repository, 0);
++	while ((ok = ref_iterator_advance(iter)) == ITER_OK) {
++		struct ref_to_prune *n;
++
++		/* duplicate ref from loose items */
++		if (!ref_contains(&affected_refnames, iter->refname)) {
++			/*
++			 * If the loose reference can be packed, add an entry
++			 * in the packed ref cache. If the reference should be
++			 * pruned, also add it to refs_to_prune.
++			 */
++			if (!should_pack_ref(iter->refname, iter->oid,
++					     iter->flags, PACK_REFS_ALL))
++				continue;
++
++			/*
++			 * Add a reference creation for this reference to the
++			 * packed-refs transaction:
++			 */
++			if (ref_transaction_update(
++				    packed_transaction, iter->refname,
++				    iter->oid, NULL, REF_NO_DEREF, NULL, err))
++				die("failure preparing to create packed reference %s: %s",
++				    iter->refname, err->buf);
++		}
++
++		/* Schedule the loose reference for pruning if requested. */
++		FLEX_ALLOC_STR(n, name, iter->refname);
++		oidcpy(&n->oid, iter->oid);
++		n->next = refs_to_prune;
++		refs_to_prune = n;
++	}
++	if (ok != ITER_DONE)
++		die("error while iterating over references");
++
++	if (ref_transaction_commit(packed_transaction, err))
++		die("unable to write new packed-refs: %s", err->buf);
++
++	packed_refs_unlock(refs->packed_ref_store);
++
++	prune_refs(refs, &refs_to_prune);
++cleanup:
++	string_list_clear(&affected_refnames, 0);
++	if (packed_transaction)
++		ref_transaction_free(packed_transaction);
++	transaction->state = REF_TRANSACTION_CLOSED;
++	return ret;
++}
++
+ static int files_delete_refs(struct ref_store *ref_store, const char *msg,
+ 			     struct string_list *refnames, unsigned int flags)
+ {
+@@ -3294,6 +3416,7 @@ struct ref_storage_be refs_be_files = {
+ 	.delete_refs = files_delete_refs,
+ 	.rename_ref = files_rename_ref,
+ 	.copy_ref = files_copy_ref,
++	.direct_to_packed_refs = files_direct_to_packed_refs,
+ 
+ 	.iterator_begin = files_ref_iterator_begin,
+ 	.read_raw_ref = files_read_raw_ref,
+diff --git a/refs/packed-backend.c b/refs/packed-backend.c
+index 97b6837767..285f64ae45 100644
+--- a/refs/packed-backend.c
++++ b/refs/packed-backend.c
+@@ -1598,6 +1598,7 @@ struct ref_storage_be refs_be_packed = {
+ 	.delete_refs = packed_delete_refs,
+ 	.rename_ref = NULL,
+ 	.copy_ref = NULL,
++	.direct_to_packed_refs = NULL,
+ 
+ 	.iterator_begin = packed_ref_iterator_begin,
+ 	.read_raw_ref = packed_read_raw_ref,
+diff --git a/refs/refs-internal.h b/refs/refs-internal.h
+index 69f93b0e2a..c37cf779f3 100644
+--- a/refs/refs-internal.h
++++ b/refs/refs-internal.h
+@@ -561,6 +561,9 @@ typedef int rename_ref_fn(struct ref_store *ref_store,
+ typedef int copy_ref_fn(struct ref_store *ref_store,
+ 			  const char *oldref, const char *newref,
+ 			  const char *logmsg);
++typedef int direct_to_packed_refs_fn(struct ref_store *refs,
++				     struct ref_transaction *transaction,
++				     struct strbuf *err);
+ 
+ /*
+  * Iterate over the references in `ref_store` whose names start with
+@@ -679,6 +682,7 @@ struct ref_storage_be {
+ 	delete_refs_fn *delete_refs;
+ 	rename_ref_fn *rename_ref;
+ 	copy_ref_fn *copy_ref;
++	direct_to_packed_refs_fn *direct_to_packed_refs;
+ 
+ 	ref_iterator_begin_fn *iterator_begin;
+ 	read_raw_ref_fn *read_raw_ref;
+-- 
+2.34.1.51.g7e1f4e9345.agit.6.5.6
+

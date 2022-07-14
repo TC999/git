@@ -1,0 +1,79 @@
+From 515fb8f99eccd91fa8bdffe4985098a4092e5351 Mon Sep 17 00:00:00 2001
+From: Han Xin <hanxin.hx@alibaba-inc.com>
+Date: Tue, 9 Nov 2021 16:56:30 +0800
+Subject: [PATCH 44/52] object-file: refactor write_loose_object() to support
+ read from stream
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+We used to call "get_data()" in "unpack_non_delta_entry()" to read the
+entire contents of a blob object, no matter how big it is. This
+implementation may consume all the memory and cause OOM.
+
+This can be improved by feeding data to "write_loose_object()" in a
+stream. The input stream is implemented as an interface.
+
+In the first step, we add a new flag called "HASH_STREAM" and make a
+simple implementation, feeding the entire buffer in the stream to
+"write_loose_object()" as a refactor.
+
+Helped-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Helped-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Signed-off-by: Han Xin <hanxin.hx@alibaba-inc.com>
+---
+ cache.h        | 1 +
+ object-file.c  | 7 ++++++-
+ object-store.h | 6 ++++++
+ 3 files changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/cache.h b/cache.h
+index 595582becc..a1dc72b065 100644
+--- a/cache.h
++++ b/cache.h
+@@ -896,6 +896,7 @@ int ie_modified(struct index_state *, const struct cache_entry *, struct stat *,
+ #define HASH_FORMAT_CHECK 2
+ #define HASH_RENORMALIZE  4
+ #define HASH_SILENT 8
++#define HASH_STREAM 16
+ int index_fd(struct index_state *istate, struct object_id *oid, int fd, struct stat *st, enum object_type type, const char *path, unsigned flags);
+ int index_path(struct index_state *istate, struct object_id *oid, const char *path, struct stat *st, unsigned flags);
+ 
+diff --git a/object-file.c b/object-file.c
+index b5d1d12b68..c9eac41328 100644
+--- a/object-file.c
++++ b/object-file.c
+@@ -1987,7 +1987,12 @@ static int write_loose_object(const struct object_id *oid, char *hdr,
+ 	the_hash_algo->update_fn(&c, hdr, hdrlen);
+ 
+ 	/* Then the data itself.. */
+-	stream.next_in = (void *)buf;
++	if (flags & HASH_STREAM) {
++		struct input_stream *in_stream = (struct input_stream *)buf;
++		stream.next_in = (void *)in_stream->read(in_stream, &len);
++	} else {
++		stream.next_in = (void *)buf;
++	}
+ 	stream.avail_in = len;
+ 	do {
+ 		unsigned char *in0 = stream.next_in;
+diff --git a/object-store.h b/object-store.h
+index bd2322ed8c..a65e141218 100644
+--- a/object-store.h
++++ b/object-store.h
+@@ -46,6 +46,12 @@ struct object_directory {
+ 	char *path;
+ };
+ 
++struct input_stream {
++	const void *(*read)(struct input_stream *, unsigned long *len);
++	int is_finished;
++	void *data;
++};
++
+ KHASH_INIT(odb_path_map, const char * /* key: odb_path */,
+ 	struct object_directory *, 1, fspathhash, fspatheq)
+ 
+-- 
+2.34.1.51.g7e1f4e9345.agit.6.5.6
+

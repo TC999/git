@@ -1,0 +1,402 @@
+From 438d2b20cdeb8bc212d6782a9008487f13ea9c2f Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Mon, 23 Dec 2019 18:51:40 +0800
+Subject: [PATCH 7/7] refs-hook: generate checksum in post action hook
+
+call `git-checksum --update` in post action of refs_transaction to
+update checksum of repository.
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ builtin/receive-pack.c  |  15 +++
+ refs/files-backend.c    |  80 +++++++++++++-
+ t/t0903-git-checksum.sh | 240 ++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 332 insertions(+), 3 deletions(-)
+ create mode 100755 t/t0903-git-checksum.sh
+
+diff --git a/builtin/receive-pack.c b/builtin/receive-pack.c
+index 9aabffa1af..729ea7667b 100644
+--- a/builtin/receive-pack.c
++++ b/builtin/receive-pack.c
+@@ -1827,11 +1827,26 @@ static void warn_if_skipped_connectivity_check(struct command *commands,
+ 		BUG("connectivity check skipped???");
+ }
+ 
++static void execute_commands_atomic(struct command *commands, struct shallow_info *si);
+ static void execute_commands_non_atomic(struct command *commands,
+ 					struct shallow_info *si)
+ {
+ 	struct command *cmd;
+ 	struct strbuf err = STRBUF_INIT;
++	int count = 0;
++	int max_non_atomic_cmd = 100;
++
++	/* Add the following fallback code here,  not in execute_commands(),
++	 * because it will conflict with other patches.
++	 */
++	for (cmd = commands; cmd; cmd = cmd->next, count++);
++	if (count > max_non_atomic_cmd) {
++		rp_warning("too many references (%d > %d) to update, fallback to atomic push",
++				count,
++				max_non_atomic_cmd);
++		execute_commands_atomic(commands, si);
++		return;
++	}
+ 
+ 	for (cmd = commands; cmd; cmd = cmd->next) {
+ 		if (!should_process_cmd(cmd) || cmd->run_proc_receive)
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index 94fc14c3a9..c40f3a19fe 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -11,7 +11,8 @@
+ #include "../dir.h"
+ #include "../chdir-notify.h"
+ #include "worktree.h"
+-
++#include "run-command.h"
++#include "sigchain.h"
+ /*
+  * This backend uses the following flags in `ref_update::flags` for
+  * internal bookkeeping purposes. Their numerical values must not
+@@ -3310,9 +3311,9 @@ static int files_transaction_ref_is_changed(struct ref_update *update, int filte
+ static GIT_PATH_FUNC(git_path_info_last_modified, "info/last-modified")
+ 
+ /*
+- * After ref_transaction finished successfully, run this post_action hook.
++ * Create/update last_modified file for post action of files_transaction.
+  */
+-static void files_transaction_post_action_hook(struct ref_transaction *transaction) {
++static void files_transaction_post_action_hook_last_modified(struct ref_transaction *transaction) {
+ 	const char *path = git_path_info_last_modified();
+ 	char *env = getenv("GIT_REFS_TXN_NO_HOOK");
+ 	struct stat fstat;
+@@ -3372,6 +3373,79 @@ cleanup:
+ 	return;
+ }
+ 
++/*
++ * Update checksum file for a repository after writing references.
++ */
++static void files_transaction_post_action_hook_checksum(struct ref_transaction *transaction) {
++	struct child_process proc = CHILD_PROCESS_INIT;
++	struct strbuf sb = STRBUF_INIT;
++	int i = 0;
++
++	for (; i < transaction->nr; i++) {
++		if (files_transaction_ref_is_changed(transaction->updates[i], 0))
++			break;
++	}
++
++	/* Reference not changed. */
++	if (i >= transaction->nr)
++		return;
++
++	strvec_pushl(&proc.args, "git-checksum", "--update", "-q", NULL);
++	proc.in = -1;
++	proc.dir = the_repository->gitdir;
++	proc.stdout_to_stderr = 1;
++	proc.silent_exec_failure = 1;
++
++	if (start_command(&proc))
++		return;
++	sigchain_push(SIGPIPE, SIG_IGN);
++
++	for (; i < transaction->nr; i++) {
++		struct ref_update *update = transaction->updates[i];
++		struct ref_lock *lock = update->backend_data;
++
++		if (!files_transaction_ref_is_changed(update, 0))
++			continue;
++
++		strbuf_reset(&sb);
++		strbuf_addf(&sb, "%s %s %s\n",
++				oid_to_hex(&(lock->old_oid)),
++				oid_to_hex(&(update->new_oid)),
++				update->refname);
++		if (write_in_full(proc.in, sb.buf, sb.len) < 0) {
++			kill(proc.pid, SIGTERM);
++			break;
++		}
++		trace_printf("refs post-action: feed => %s\n", sb.buf);
++	}
++
++	strbuf_release(&sb);
++	close(proc.in);
++	sigchain_pop(SIGPIPE);
++	finish_command(&proc);
++}
++
++/*
++ * After ref_transaction finished successfully, run this post_action hook.
++ */
++static void files_transaction_post_action_hook(struct ref_transaction *transaction) {
++	char *env = getenv("GIT_REFS_TXN_NO_HOOK");
++
++	if ((env && !strcmp(env, "1")) || transaction->nr == 0)
++		return;
++
++	// Will execute twice, one for files_backend, another for packed_backend.
++	// Only execute for files_backend.
++	if (!strcmp(transaction->ref_store->be->name, "packed"))
++		return;
++
++	if (!the_repository->gitdir)
++		return;
++
++	files_transaction_post_action_hook_last_modified(transaction);
++	files_transaction_post_action_hook_checksum(transaction);
++}
++
+ struct ref_storage_be refs_be_files = {
+ 	.next = NULL,
+ 	.name = "files",
+diff --git a/t/t0903-git-checksum.sh b/t/t0903-git-checksum.sh
+new file mode 100755
+index 0000000000..3d1be24ef1
+--- /dev/null
++++ b/t/t0903-git-checksum.sh
+@@ -0,0 +1,240 @@
++#!/bin/sh
++#
++# Copyright (c) 2018 Jiang Xin
++#
++
++test_description='Test repository lock by pre-check-hook for ref_transaction_commit'
++
++GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
++export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
++
++. ./test-lib.sh
++
++m=refs/heads/main
++topic=refs/heads/topic
++bare=bare-repo.git
++lockfile=agit-repo.lock
++checksum=info/checksum
++
++if type git-checksum
++then
++	test_set_prereq GIT_CHECKSUM
++fi
++
++create_bare_repo () {
++	test "$#" = 1 ||
++	BUG "not 1 parameter to test-create-repo"
++	repo="$1"
++	mkdir -p "$repo"
++	(
++		cd "$repo" || error "Cannot setup test environment"
++		git -c \
++			init.defaultBranch="${GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME-master}" \
++			init --bare \
++			"--template=$GIT_BUILD_DIR/templates/blt/" >&3 2>&4 ||
++		error "cannot run git init -- have you built things yet?"
++		mv hooks hooks-disabled &&
++		git config core.abbrev 7
++	) || exit
++}
++
++create_commits_in () {
++	repo="$1" &&
++	if ! parent=$(git -C "$repo" rev-parse HEAD^{} 2>/dev/null)
++	then
++		parent=
++	fi &&
++	T=$(git -C "$repo" write-tree) &&
++	shift &&
++	while test $# -gt 0
++	do
++		name=$1 &&
++		test_tick &&
++		if test -z "$parent"
++		then
++			oid=$(echo $name | git -C "$repo" commit-tree $T)
++		else
++			oid=$(echo $name | git -C "$repo" commit-tree -p $parent $T)
++		fi &&
++		eval $name=$oid &&
++		parent=$oid &&
++		shift ||
++		return 1
++	done &&
++	git -C "$repo" update-ref $m $oid
++}
++
++# Format the output of git-push, git-show-ref and other commands to make a
++# user-friendly and stable text.  We can easily prepare the expect text
++# without having to worry about future changes of the commit ID and spaces
++# of the output.  Single quotes are replaced with double quotes, because
++# it is boring to prepare unquoted single quotes in expect text.  We also
++# remove some locale error messages. The emitted human-readable errors are
++# redundant to the more machine-readable output the tests already assert.
++make_user_friendly_and_stable_output () {
++	sed \
++		-e "s/${A:-undef_rev}/<COMMIT-A>/g" \
++		-e "s/${B:-undef_rev}/<COMMIT-B>/g" \
++		-e "s/${C:-undef_rev}/<COMMIT-C>/g" \
++		-e "s/${D:-undef_rev}/<COMMIT-D>/g" \
++		-e "s/${E:-undef_rev}/<COMMIT-E>/g" \
++		-e "s/${F:-undef_rev}/<COMMIT-F>/g"
++}
++
++test_expect_success GIT_CHECKSUM "create an empty checksum before commit" '
++	create_bare_repo "$bare" &&
++	(
++		cd "$bare" &&
++		touch $checksum &&
++		create_commits_in . A B C D E F &&
++		test -s $checksum &&
++		git-checksum
++	) >actual &&
++	cat >expect<<-EOF &&
++	a00dd5074d5493c2347986e6c40d2faf
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success GIT_CHECKSUM "re-create bare repo, no initial checksum, won't create checksum" '
++	test -f "$bare/HEAD" &&
++	rm -rf "$bare" &&
++	create_bare_repo "$bare" &&
++	create_commits_in "$bare" A B C D E F &&
++	test ! -f "$bare/$checksum" &&
++	test_must_fail git -C "$bare" checksum >actual 2>&1 &&
++	cat >expect<<-EOF &&
++	ERROR: checksum file does not exist, please run \`git-checksum --init\` to create one
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success GIT_CHECKSUM "git checksum --init" '
++	(
++		cd "$bare" &&
++		git-checksum --init &&
++		test -s $checksum &&
++		git-checksum
++	) >actual &&
++	cat >expect<<-EOF &&
++	a00dd5074d5493c2347986e6c40d2faf
++	EOF
++	test_cmp expect actual &&
++	git -C "$bare" checksum --verify
++'
++
++test_expect_success GIT_CHECKSUM "git pack-ref, won't change checksum" '
++	(
++		cd "$bare" &&
++		git pack-refs --all &&
++		git gc -q &&
++		git-checksum
++	) >actual &&
++	cat >expect<<-EOF &&
++	a00dd5074d5493c2347986e6c40d2faf
++	EOF
++	test_cmp expect actual &&
++	git -C "$bare" checksum --verify
++'
++
++test_expect_success GIT_CHECKSUM "clone to work" '
++	git clone --no-local "$bare" work
++'
++
++test_expect_success GIT_CHECKSUM "create new branch" '
++	(
++		cd work &&
++		git checkout -b next &&
++		git push -u origin HEAD
++	) &&
++	git -C "$bare" show-ref >out &&
++	make_user_friendly_and_stable_output <out >actual &&
++	cat >expect<<-EOF &&
++	<COMMIT-F> refs/heads/main
++	<COMMIT-F> refs/heads/next
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success GIT_CHECKSUM "verify checksum after new branch" '
++	git -C "$bare" checksum >actual &&
++	cat >expect<<-EOF &&
++	e5c68e5ed182b59a72ad65d6f84855ca
++	EOF
++	test_cmp expect actual &&
++	git -C "$bare" checksum -V
++'
++
++test_expect_success GIT_CHECKSUM "create other not well-known references" '
++	(
++		cd work &&
++		git push -u origin HEAD:refs/tmp/abc123456 &&
++		git push -u origin HEAD:refs/keep-around/577711d99f417fdc46fdbd13c1cc6361ed90283d &&
++		git push -u origin HEAD:refs/remotes/origin/pu
++	) &&
++	git -C "$bare" show-ref >out &&
++	make_user_friendly_and_stable_output <out >actual &&
++	cat >expect<<-EOF &&
++	<COMMIT-F> refs/heads/main
++	<COMMIT-F> refs/heads/next
++	<COMMIT-F> refs/keep-around/577711d99f417fdc46fdbd13c1cc6361ed90283d
++	<COMMIT-F> refs/remotes/origin/pu
++	<COMMIT-F> refs/tmp/abc123456
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success GIT_CHECKSUM "checksum not changed for not well-known refs" '
++	git -C "$bare" checksum >actual &&
++	cat >expect<<-EOF &&
++	e5c68e5ed182b59a72ad65d6f84855ca
++	EOF
++	test_cmp expect actual &&
++	git -C "$bare" checksum -V
++'
++
++test_expect_success GIT_CHECKSUM "remove branch next" '
++	(
++		cd work &&
++		git checkout main &&
++		git push origin :refs/heads/next &&
++		git push origin :refs/tmp/abc123456
++	) &&
++	git -C "$bare" show-ref >out &&
++	make_user_friendly_and_stable_output <out >actual &&
++	cat >expect<<-EOF &&
++	<COMMIT-F> refs/heads/main
++	<COMMIT-F> refs/keep-around/577711d99f417fdc46fdbd13c1cc6361ed90283d
++	<COMMIT-F> refs/remotes/origin/pu
++	EOF
++	test_cmp expect actual
++
++'
++
++test_expect_success GIT_CHECKSUM "verify checksum after remove branch" '
++	cat >expect<<-EOF &&
++	a00dd5074d5493c2347986e6c40d2faf
++	EOF
++	git -C "$bare" checksum >actual &&
++	test_cmp expect actual &&
++	git -C "$bare" checksum -V
++'
++
++test_expect_success GIT_CHECKSUM "remove checksum" '
++	rm "$bare/$checksum" &&
++	test_must_fail \
++	git -C "$bare" checksum -V
++'
++test_expect_success GIT_CHECKSUM "recreate checksum" '
++	test ! -e "$bare/$checksum" &&
++	git -C "$bare" checksum --init &&
++	test   -e "$bare/$checksum" &&
++	git -C "$bare" checksum >actual &&
++	cat >expect<<-EOF &&
++	a00dd5074d5493c2347986e6c40d2faf
++	EOF
++	test_cmp expect actual &&
++	git -C "$bare" checksum -V
++'
++
++test_done
+-- 
+2.34.1.51.g7e1f4e9345.agit.6.5.6
+

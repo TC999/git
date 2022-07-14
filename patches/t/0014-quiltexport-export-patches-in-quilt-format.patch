@@ -1,0 +1,433 @@
+From 74b4fe245e2448481218bf85f4c2997be61ddccc Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Tue, 30 Oct 2018 13:25:30 +0800
+Subject: [PATCH] quiltexport: export patches in quilt format
+
+Export commits in quilt format to "patches/" directory. All patches
+exported will be listed in file "patches/series".
+
+We can import these patches using `git-quiltimport` or `quilt` command.
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ .gitignore                        |   1 +
+ Documentation/git-quiltexport.txt |  39 +++++++
+ Makefile                          |   1 +
+ command-list.txt                  |   1 +
+ git-quiltexport.sh                | 127 ++++++++++++++++++++
+ t/t0920-quilt-export.sh           | 187 ++++++++++++++++++++++++++++++
+ 6 files changed, 356 insertions(+)
+ create mode 100644 Documentation/git-quiltexport.txt
+ create mode 100755 git-quiltexport.sh
+ create mode 100755 t/t0920-quilt-export.sh
+
+diff --git a/.gitignore b/.gitignore
+index e81de1063a..30fee4cb3e 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -124,6 +124,7 @@
+ /git-pull
+ /git-push
+ /git-quiltimport
++/git-quiltexport
+ /git-range-diff
+ /git-read-tree
+ /git-rebase
+diff --git a/Documentation/git-quiltexport.txt b/Documentation/git-quiltexport.txt
+new file mode 100644
+index 0000000000..a024d171db
+--- /dev/null
++++ b/Documentation/git-quiltexport.txt
+@@ -0,0 +1,39 @@
++git-quiltexport(1)
++==================
++
++NAME
++----
++git-quiltexport - Export a quilt patchset from the current branch
++
++
++SYNOPSIS
++--------
++[verse]
++'git quiltexport' [--patches <dir>] [--series <file>] <since> [HEAD]
++
++
++DESCRIPTION
++-----------
++Export a quilt patchset from the current Git branch, from <since>
++to <HEAD>.
++
++OPTIONS
++-------
++
++--patches <dir>::
++	The directory to find the quilt patches.
+++
++The default for the patch directory is patches
++or the value of the `$QUILT_PATCHES` environment
++variable.
++
++--series <file>::
++	The quilt series file.
+++
++The default for the series file is <patches>/series
++or the value of the `$QUILT_SERIES` environment
++variable.
++
++GIT
++---
++Part of the linkgit:git[1] suite
+diff --git a/Makefile b/Makefile
+index 61aadf3ce8..2df7282c22 100644
+--- a/Makefile
++++ b/Makefile
+@@ -619,6 +619,7 @@ SCRIPT_SH += git-merge-one-file.sh
+ SCRIPT_SH += git-merge-resolve.sh
+ SCRIPT_SH += git-mergetool.sh
+ SCRIPT_SH += git-quiltimport.sh
++SCRIPT_SH += git-quiltexport.sh
+ SCRIPT_SH += git-request-pull.sh
+ SCRIPT_SH += git-submodule.sh
+ SCRIPT_SH += git-web--browse.sh
+diff --git a/command-list.txt b/command-list.txt
+index 9bd6f3c48f..95a4f65cb1 100644
+--- a/command-list.txt
++++ b/command-list.txt
+@@ -142,6 +142,7 @@ git-prune-packed                        plumbingmanipulators
+ git-pull                                mainporcelain           remote
+ git-push                                mainporcelain           remote
+ git-quiltimport                         foreignscminterface
++git-quiltexport                         foreignscminterface
+ git-range-diff                          mainporcelain
+ git-read-tree                           plumbingmanipulators
+ git-rebase                              mainporcelain           history
+diff --git a/git-quiltexport.sh b/git-quiltexport.sh
+new file mode 100755
+index 0000000000..da7f44a0af
+--- /dev/null
++++ b/git-quiltexport.sh
+@@ -0,0 +1,127 @@
++#bin/sh
++
++OPTIONS_KEEPDASHDASH=
++OPTIONS_STUCKLONG=
++OPTIONS_SPEC="\
++git quiltexport [options] <since> [HEAD]
++--
++patches=      path to the quilt patches
++series=       path to the quilt series file
++"
++
++. git-sh-setup
++
++is_since=
++
++while test $# != 0
++do
++	case "$1" in
++	--patches)
++		shift
++		QUILT_PATCHES="$1"
++		;;
++	--series)
++		shift
++		QUILT_SERIES="$1"
++		;;
++	--)
++		shift
++		break;;
++	-*)
++		usage
++		;;
++	*)
++		break
++		;;
++	esac
++	shift
++done
++
++case "$#" in
++0)
++	usage
++	;;
++1)
++	case $1 in
++	*..*)
++		numOfCommits=$(git rev-list $1 | wc -l)
++		;;
++	^*)
++		numOfCommits=$(git rev-list $1 HEAD | wc -l)
++		;;
++	*)
++		numOfCommits=$(git rev-list $1..HEAD | wc -l)
++		is_since=Yes
++		;;
++	esac
++	;;
++*)
++	numOfCommits=$(git rev-list "$@" | wc -l)
++	;;
++esac
++
++if test $? -ne 0
++then
++	printf >&2 "ERROR: fail to find commits from: $@\n"
++	exit 1
++fi
++
++# Check number of pathes, no more than 100
++if test "$numOfCommits" -eq 0
++then
++	printf >&2 "Nothing to export.\n"
++	exit 0
++elif test "$numOfCommits" -gt 100
++then
++	printf "Found ${numOfCommits} commits to be exported, are you sure? (y/n) "
++	read input
++	case $input in
++	y|Y)
++		break
++		;;
++	*)
++		printf >&2 "Nothing to export.\n"
++		exit 0
++		;;
++	esac
++fi
++
++# Quilt patch directory
++: ${QUILT_PATCHES:=patches}
++if test ! -d "$QUILT_PATCHES"
++then
++	mkdir -p "$QUILT_PATCHES"
++fi
++
++# Quilt series file
++: ${QUILT_SERIES:=$QUILT_PATCHES/series}
++if test -e "$QUILT_SERIES"
++then
++	printf >&2 "ERROR: the \"$QUILT_SERIES\" file already exist, export failed.\n"
++	exit 1
++fi
++
++mkdir -p "$QUILT_PATCHES/t"
++printf "Export patches:\n"
++if test -z "$is_since"
++then
++	git format-patch -o "$QUILT_PATCHES/t" "$@" >"$QUILT_SERIES".lock &&
++	sed -e "s#^${QUILT_PATCHES}/##g" < "$QUILT_SERIES".lock > "$QUILT_SERIES" &&
++	rm "$QUILT_SERIES".lock
++else
++	git format-patch -o "$QUILT_PATCHES/t" $1..HEAD >"$QUILT_SERIES".lock &&
++	sed -e "s#^${QUILT_PATCHES}/##g" < "$QUILT_SERIES".lock > "$QUILT_SERIES" &&
++	rm "$QUILT_SERIES".lock
++fi
++
++if test $? -ne 0
++then
++	printf >&2 "ERROR: fail to run git-format-patch.\n"
++	rm -f "$QUILT_SERIES"
++	exit 1
++else
++	while read line
++	do
++		printf "\t$line\n"
++	done < "$QUILT_SERIES"
++fi
+diff --git a/t/t0920-quilt-export.sh b/t/t0920-quilt-export.sh
+new file mode 100755
+index 0000000000..996412bc0c
+--- /dev/null
++++ b/t/t0920-quilt-export.sh
+@@ -0,0 +1,187 @@
++#!/bin/sh
++#
++# Copyright (c) 2019 Jiang Xin
++#
++
++test_description='Test git quiltexport'
++
++GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
++export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
++
++. ./test-lib.sh
++
++bare=bare.git
++
++if test $(uname -s) = "Darwin"; then
++	STAT_PROGRAM=gstat
++else
++	STAT_PROGRAM=stat
++fi
++
++create_bare_repo () {
++	test "$#" = 1 ||
++	BUG "not 1 parameter to test-create-repo"
++	repo="$1"
++	mkdir -p "$repo"
++	(
++		cd "$repo" || error "Cannot setup test environment"
++		git -c \
++			init.defaultBranch="${GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME-master}" \
++			init --bare \
++			"--template=$GIT_BUILD_DIR/templates/blt/" >&3 2>&4 ||
++		error "cannot run git init -- have you built things yet?"
++		mv hooks hooks-disabled &&
++		git config core.abbrev 7
++	) || exit
++}
++
++create_commits_in () {
++	repo="$1" &&
++	if ! parent=$(git -C "$repo" rev-parse HEAD^{} 2>/dev/null)
++	then
++		parent=
++	fi &&
++	shift &&
++	while test $# -gt 0
++	do
++		name=$1 &&
++		H=$(echo $name | git -C "$repo" hash-object --stdin -t blob -w)
++		T=$(
++			(if test -n "$parent"; then
++				git -C "$repo" ls-tree $parent
++			 fi; printf "100644 blob $H\t$name.txt\n") |
++			git -C "$repo" mktree
++		) &&
++		test_tick &&
++		if test -z "$parent"
++		then
++			oid=$(echo $name | git -C "$repo" commit-tree $T)
++		else
++			oid=$(echo $name | git -C "$repo" commit-tree -p $parent $T)
++		fi &&
++		eval $name=$oid &&
++		parent=$oid &&
++		shift ||
++		return 1
++	done &&
++	git -C "$repo" update-ref refs/heads/main $oid
++}
++
++get_abbrev_oid () {
++	oid=$1 &&
++	suffix=${oid#???????} &&
++	oid=${oid%$suffix} &&
++	if test -n "$oid"
++	then
++		echo "$oid"
++	else
++		echo "undefined-oid"
++	fi
++}
++
++make_user_friendly_and_stable_output () {
++	sed \
++		-e "s/$(get_abbrev_oid $A)[0-9a-f]*/<COMMIT-A>/g" \
++		-e "s/$(get_abbrev_oid $B)[0-9a-f]*/<COMMIT-B>/g" \
++		-e "s/$(get_abbrev_oid $C)[0-9a-f]*/<COMMIT-C>/g" \
++		-e "s/$(get_abbrev_oid $D)[0-9a-f]*/<COMMIT-D>/g" \
++		-e "s/$(get_abbrev_oid $E)[0-9a-f]*/<COMMIT-E>/g" \
++		-e "s/$(get_abbrev_oid $F)[0-9a-f]*/<COMMIT-F>/g"
++}
++
++test_expect_success setup '
++	create_bare_repo "$bare" &&
++	create_commits_in "$bare" A B C D E F &&
++	git -C "$bare" update-ref refs/heads/test $B &&
++	test_tick &&
++	git -C "$bare" tag -m v1.0 v1.0 $C &&
++	git -C "$bare" tag -m v2.0 v2.0 $D
++'
++
++test_expect_success "clone" '
++	git clone "$bare" work
++'
++
++test_expect_success "git rev-list \$D..HEAD" '
++	git -C work log --oneline $D..HEAD -- >out &&
++	make_user_friendly_and_stable_output <out >actual &&
++	cat >expect<<-EOF &&
++	<COMMIT-F> F
++	<COMMIT-E> E
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success "git quiltexport \$D" '
++	git -C work quiltexport $D &&
++	cat >expect<<-EOF &&
++	t/0001-E.patch
++	t/0002-F.patch
++	EOF
++	test_cmp expect work/patches/series
++'
++
++test_expect_success "patch files exist" '
++	test -s work/patches/t/0001-E.patch &&
++	test -s work/patches/t/0002-F.patch &&
++	test -s work/patches/series
++'
++
++test_expect_success "git quiltexport ^\$B" '
++	git -C work quiltexport --patches patches-02 ^$B &&
++	cat >expect<<-EOF &&
++	t/0001-C.patch
++	t/0002-D.patch
++	t/0003-E.patch
++	t/0004-F.patch
++	EOF
++	test_cmp expect work/patches-02/series &&
++	test -f work/patches-02/t/0001-C.patch &&
++	test -f work/patches-02/t/0002-D.patch &&
++	test -f work/patches-02/t/0003-E.patch &&
++	test -f work/patches-02/t/0004-F.patch
++'
++
++test_expect_success "git quiltexport v2.0 ^v1.0" '
++	(
++		cd work &&
++		git quiltexport --patches patches-03 v2.0 ^v1.0
++	) &&
++	cat >expect<<-EOF &&
++	t/0001-D.patch
++	EOF
++	test_cmp expect work/patches-03/series &&
++	test -f work/patches-03/t/0001-D.patch
++'
++
++test_expect_success "git quiltexport \$A..v2.0" '
++	(
++		cd work &&
++		git quiltexport --patches patches-04 $A..v2.0
++	) &&
++	cat >expect<<-EOF &&
++	t/0001-B.patch
++	t/0002-C.patch
++	t/0003-D.patch
++	EOF
++	test_cmp expect work/patches-04/series &&
++	test -f work/patches-04/t/0001-B.patch &&
++	test -f work/patches-04/t/0002-C.patch &&
++	test -f work/patches-04/t/0003-D.patch
++'
++
++test_expect_success "git quiltexport --not \$1.0 --not \$v2.0" '
++	(
++		cd work &&
++		git quiltexport --patches patches-05 -- --not $B --not $D
++	) &&
++	cat >expect<<-EOF &&
++	t/0001-C.patch
++	t/0002-D.patch
++	EOF
++	test_cmp expect work/patches-05/series &&
++	test -f work/patches-05/t/0001-C.patch &&
++	test -f work/patches-05/t/0002-D.patch
++'
++
++test_done
+-- 
+2.34.1.51.g7e1f4e9345.agit.6.5.6
+

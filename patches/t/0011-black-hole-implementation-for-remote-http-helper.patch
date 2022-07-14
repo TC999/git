@@ -1,0 +1,64 @@
+From 1958fe99086d078c2cdfd8c47e12472d247149ee Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Tue, 28 Jun 2022 19:12:29 +0800
+Subject: [PATCH 11/13] black-hole: implementation for remote-http* helper
+
+"remote-curl.c" is the helper for HTTP(S) protocol. Pass the "black-hole"
+option from the transport layer to remote-http* helper, and call
+"fetch-pack" with proper "--black-hole*" option.
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ remote-curl.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/remote-curl.c b/remote-curl.c
+index 67f178b112..7908d2e02e 100644
+--- a/remote-curl.c
++++ b/remote-curl.c
+@@ -17,6 +17,7 @@
+ #include "protocol.h"
+ #include "quote.h"
+ #include "transport.h"
++#include "fetch-pack.h"
+ 
+ static struct remote *remote;
+ /* always ends with a trailing slash */
+@@ -29,6 +30,10 @@ struct options {
+ 	struct string_list deepen_not;
+ 	struct string_list push_options;
+ 	char *filter;
++
++	/* black hole: do not save pack file, used for test */
++	unsigned black_hole : 2;
++
+ 	unsigned progress : 1,
+ 		check_self_contained_and_connected : 1,
+ 		cloning : 1,
+@@ -62,6 +67,12 @@ static int set_option(const char *name, const char *value)
+ 		options.verbosity = v;
+ 		return 0;
+ 	}
++	else if (!strcmp(name, TRANS_OPT_BLACK_HOLE)) {
++		/* value is "1" or "2" */
++		if (value && *value)
++			options.black_hole = *value - '0';
++		return 0;
++	}
+ 	else if (!strcmp(name, "progress")) {
+ 		if (!strcmp(value, "true"))
+ 			options.progress = 1;
+@@ -1161,6 +1172,10 @@ static int fetch_git(struct discovery *heads,
+ 
+ 	strvec_pushl(&args, "fetch-pack", "--stateless-rpc",
+ 		     "--stdin", "--lock-pack", NULL);
++	if (options.black_hole == FETCH_PACK_OPT_BLACK_HOLE_VERIFY)
++		strvec_push(&args, "--black-hole-verify");
++	else if (options.black_hole == FETCH_PACK_OPT_BLACK_HOLE_NO_VERIFY)
++		strvec_push(&args, "--black-hole");
+ 	if (options.followtags)
+ 		strvec_push(&args, "--include-tag");
+ 	if (options.thin)
+-- 
+2.34.1.51.g7e1f4e9345.agit.6.5.6
+

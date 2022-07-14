@@ -1,0 +1,33 @@
+From 42fcb82b4ed13a8dd33a64fa475046e323f2c5a5 Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Wed, 2 Jun 2021 17:56:35 +0800
+Subject: [PATCH 2/3] github action: install openssl for macOS
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ ci/install-dependencies.sh | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/ci/install-dependencies.sh b/ci/install-dependencies.sh
+index 107757a1fe..d5ab90e0a1 100755
+--- a/ci/install-dependencies.sh
++++ b/ci/install-dependencies.sh
+@@ -53,6 +53,15 @@ macos-latest)
+ 		brew install "$BREW_PACKAGE"
+ 		brew link "$BREW_PACKAGE"
+ 	fi
++	brew install openssl
++	case "$jobname" in
++	osx-gcc)
++		brew install gcc@9
++		# Just in case the image is updated to contain gcc@9
++		# pre-installed but not linked.
++		brew link gcc@9
++		;;
++	esac
+ 	;;
+ esac
+ 
+-- 
+2.34.1.51.g7e1f4e9345.agit.6.5.6
+

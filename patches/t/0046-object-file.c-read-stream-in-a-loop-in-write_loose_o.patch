@@ -1,0 +1,75 @@
+From 41de8b99fb7e58888bf19baf4d8410aab8d06c87 Mon Sep 17 00:00:00 2001
+From: Han Xin <hanxin.hx@alibaba-inc.com>
+Date: Fri, 12 Nov 2021 12:34:18 +0800
+Subject: [PATCH 46/52] object-file.c: read stream in a loop in
+ write_loose_object()
+
+In order to prepare the stream version of "write_loose_object()", read
+the input stream in a loop in "write_loose_object()", so that we can
+feed the contents of large blob object to "write_loose_object()" using
+a small fixed buffer.
+
+Helped-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Signed-off-by: Han Xin <hanxin.hx@alibaba-inc.com>
+---
+ object-file.c | 28 ++++++++++++++++++++--------
+ 1 file changed, 20 insertions(+), 8 deletions(-)
+
+diff --git a/object-file.c b/object-file.c
+index df653aace5..3d73ea2b30 100644
+--- a/object-file.c
++++ b/object-file.c
+@@ -1971,7 +1971,7 @@ static int write_loose_object(struct object_id *oid, char *hdr,
+ 			      int hdrlen, const void *buf, unsigned long len,
+ 			      time_t mtime, unsigned flags)
+ {
+-	int fd, ret;
++	int fd, ret, flush = 0;
+ 	unsigned char compressed[4096];
+ 	git_zstream stream;
+ 	git_hash_ctx c;
+@@ -2011,22 +2011,34 @@ static int write_loose_object(struct object_id *oid, char *hdr,
+ 	the_hash_algo->update_fn(&c, hdr, hdrlen);
+ 
+ 	/* Then the data itself.. */
+-	if (flags & HASH_STREAM) {
+-		struct input_stream *in_stream = (struct input_stream *)buf;
+-		stream.next_in = (void *)in_stream->read(in_stream, &len);
+-	} else {
++	if (!(flags & HASH_STREAM)) {
+ 		stream.next_in = (void *)buf;
++		stream.avail_in = len;
++		flush = Z_FINISH;
+ 	}
+-	stream.avail_in = len;
+ 	do {
+ 		unsigned char *in0 = stream.next_in;
+-		ret = git_deflate(&stream, Z_FINISH);
++		if (flags & HASH_STREAM) {
++			struct input_stream *in_stream =
++				(struct input_stream *)buf;
++			if (!stream.avail_in &&
++			    in_stream->has_next(in_stream)) {
++				const void *in = in_stream->read(
++					in_stream, &stream.avail_in);
++				stream.next_in = (void *)in;
++				in0 = (unsigned char *)in;
++				/* All data has been read. */
++				if (!in_stream->has_next(in_stream))
++					flush = Z_FINISH;
++			}
++		}
++		ret = git_deflate(&stream, flush);
+ 		the_hash_algo->update_fn(&c, in0, stream.next_in - in0);
+ 		if (write_buffer(fd, compressed, stream.next_out - compressed) < 0)
+ 			die(_("unable to write loose object file"));
+ 		stream.next_out = compressed;
+ 		stream.avail_out = sizeof(compressed);
+-	} while (ret == Z_OK);
++	} while (ret == Z_OK || ret == Z_BUF_ERROR);
+ 
+ 	if (ret != Z_STREAM_END)
+ 		die(_("unable to deflate new object %s (%d)"), oid_to_hex(oid),
+-- 
+2.34.1.51.g7e1f4e9345.agit.6.5.6
+

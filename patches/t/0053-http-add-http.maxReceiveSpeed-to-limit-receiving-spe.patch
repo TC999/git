@@ -1,0 +1,89 @@
+From 33533dffbe2f6e85d583cdd22bc8198160b07e2e Mon Sep 17 00:00:00 2001
+From: "chenan.xxw" <chenan.xxw@alibaba-inc.com>
+Date: Fri, 7 May 2021 20:09:32 +0800
+Subject: [PATCH] http: add http.maxReceiveSpeed to limit receiving speed of
+ "git-receive-pack"
+
+In order to avoid hogging all the available network bandwidth, users may want to
+limit the speed of receiving traffic for "git clone" or "git fetch".
+
+Add `http.maxReceiveSpeed` to limit receiving speed of `git-receive-pack`.
+Can be overridden by `GIT_HTTP_MAX_RECEIVE_SPEED` environment variable.
+
+The default is unlimited, same if the value is 0. The default unit is Bytes/s,
+common unit suffixes of k, m, or g are supported.
+
+This configuration is valid for `clone`, `fetch`, `pull` commands of the https
+protocol.
+
+Signed-off-by: Xia Xiaowen <chenan.xxw@alibaba-inc.com>
+---
+ http.c | 24 +++++++++++++++++++++++-
+ 1 file changed, 23 insertions(+), 1 deletion(-)
+
+diff --git a/http.c b/http.c
+index 3bdd71be5e..a8b3150c9f 100644
+--- a/http.c
++++ b/http.c
+@@ -66,6 +66,9 @@ static const char *ssl_pinnedkey;
+ static const char *ssl_cainfo;
+ static long curl_low_speed_limit = -1;
+ static long curl_low_speed_time = -1;
++#if LIBCURL_VERSION_NUM >= 0x070f05
++static ssize_t curl_max_receive_speed = -1;
++#endif
+ static int curl_ftp_no_epsv;
+ static const char *curl_http_proxy;
+ static const char *http_proxy_authmethod;
+@@ -312,7 +315,12 @@ static int http_options(const char *var, const char *value, void *cb)
+ 		curl_low_speed_time = (long)git_config_int(var, value);
+ 		return 0;
+ 	}
+-
++#if LIBCURL_VERSION_NUM >= 0x070f05
++	if (!strcmp("http.maxreceivespeed", var)) {
++		curl_max_receive_speed = git_config_ssize_t(var, value);
++		return 0;
++	}
++#endif
+ 	if (!strcmp("http.noepsv", var)) {
+ 		curl_ftp_no_epsv = git_config_bool(var, value);
+ 		return 0;
+@@ -872,6 +880,12 @@ static CURL *get_curl_handle(void)
+ 				 curl_low_speed_time);
+ 	}
+ 
++#if LIBCURL_VERSION_NUM >= 0x070f05
++	if (curl_max_receive_speed > 0)
++		curl_easy_setopt(result, CURLOPT_MAX_RECV_SPEED_LARGE,
++				 curl_max_receive_speed);
++#endif
++
+ 	curl_easy_setopt(result, CURLOPT_MAXREDIRS, 20);
+ 	curl_easy_setopt(result, CURLOPT_POSTREDIR, CURL_REDIR_POST_ALL);
+ 	curl_easy_setopt(result, CURLOPT_REDIR_PROTOCOLS,
+@@ -989,6 +1003,9 @@ void http_init(struct remote *remote, const char *url, int proactive_auth)
+ {
+ 	char *low_speed_limit;
+ 	char *low_speed_time;
++#if LIBCURL_VERSION_NUM >= 0x070f05
++	char *max_receive_speed;
++#endif
+ 	char *normalized_url;
+ 	struct urlmatch_config config = URLMATCH_CONFIG_INIT;
+ 
+@@ -1074,6 +1091,11 @@ void http_init(struct remote *remote, const char *url, int proactive_auth)
+ 	low_speed_time = getenv("GIT_HTTP_LOW_SPEED_TIME");
+ 	if (low_speed_time != NULL)
+ 		curl_low_speed_time = strtol(low_speed_time, NULL, 10);
++#if LIBCURL_VERSION_NUM >= 0x070f05
++	max_receive_speed = getenv("GIT_HTTP_MAX_RECEIVE_SPEED");
++	if (max_receive_speed && !git_parse_ssize_t(max_receive_speed, &curl_max_receive_speed))
++		warning("failed to parse GIT_HTTP_MAX_RECEIVE_SPEED: %s", max_receive_speed);
++#endif
+ 
+ 	if (curl_ssl_verify == -1)
+ 		curl_ssl_verify = 1;
+-- 
+2.34.1.51.g7e1f4e9345.agit.6.5.6
+

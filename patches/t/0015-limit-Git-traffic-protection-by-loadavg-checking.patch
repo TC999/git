@@ -1,0 +1,1061 @@
+From 969dd7a23c0918aa94813eac7d4ef185b22568f3 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=E6=BE=B3=E6=98=8E?= <tenglong.tl@alibaba-inc.com>
+Date: Wed, 12 Dec 2018 17:16:13 +0800
+Subject: [PATCH 15/16] limit: Git traffic protection by loadavg checking
+
+Soft traffic limiting affects two parts git builtin commands:
+`git-upload-pack` and `git-receive-pack`. Before pack / unpack
+proceedings ,soft traffic limiting routine will check local
+system load average (load1), and then let client side waiting
+and auto retry once if load1 is too high.
+
+Signed-off-by: Dyrone Teng <tenglong.tl@alibaba-inc.com>
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ Makefile                        |   1 +
+ builtin/receive-pack.c          |   5 +
+ limiting.c                      | 284 ++++++++++++++++++++++++
+ limiting.h                      |  39 ++++
+ t/t0930-git-fetch-rate-limit.sh | 367 ++++++++++++++++++++++++++++++++
+ t/t0931-git-push-rate-limit.sh  | 260 ++++++++++++++++++++++
+ upload-pack.c                   |   4 +
+ 7 files changed, 960 insertions(+)
+ create mode 100644 limiting.c
+ create mode 100644 limiting.h
+ create mode 100755 t/t0930-git-fetch-rate-limit.sh
+ create mode 100755 t/t0931-git-push-rate-limit.sh
+
+diff --git a/Makefile b/Makefile
+index 61aadf3ce8..3f7517dde9 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1101,6 +1101,7 @@ LIB_OBJS += ws.o
+ LIB_OBJS += wt-status.o
+ LIB_OBJS += xdiff-interface.o
+ LIB_OBJS += zlib.o
++LIB_OBJS += limiting.o
+ 
+ BUILTIN_OBJS += builtin/add.o
+ BUILTIN_OBJS += builtin/am.o
+diff --git a/builtin/receive-pack.c b/builtin/receive-pack.c
+index 9aabffa1af..dd4f8fef40 100644
+--- a/builtin/receive-pack.c
++++ b/builtin/receive-pack.c
+@@ -1,6 +1,7 @@
+ #include "builtin.h"
+ #include "repository.h"
+ #include "config.h"
++#include "limiting.h"
+ #include "lockfile.h"
+ #include "pack.h"
+ #include "refs.h"
+@@ -2542,6 +2543,10 @@ int cmd_receive_pack(int argc, const char **argv, const char *prefix)
+ 		const char *unpack_status = NULL;
+ 		struct string_list push_options = STRING_LIST_INIT_DUP;
+ 
++		/* connection limit, for hooks also consume resources  */
++		if (wait_for_avail_loadavg(use_sideband))
++			die("failed to wait_for_avail_loadavg");
++
+ 		if (use_push_options)
+ 			read_push_options(&reader, &push_options);
+ 		if (!check_cert_push_options(&push_options)) {
+diff --git a/limiting.c b/limiting.c
+new file mode 100644
+index 0000000000..c6b674c6de
+--- /dev/null
++++ b/limiting.c
+@@ -0,0 +1,284 @@
++/*
++ * =====================================================================================
++ *
++ *       Filename:  limiting.c
++ *
++ *    Description:  git limiting protection
++ *
++ *        Version:  1.0
++ *        Created:  12/10/18 17:10:51
++ *       Revision:  1.0
++ *       Compiler:  gcc
++ *
++ *         Author:  dyrone (dyroneteng), tenglong.tl@alibaba-inc.com
++ *        Company:  Alibaba.com
++ *
++ * =====================================================================================
++ */
++
++#include "cache.h"
++#include "limiting.h"
++#include "run-command.h"
++#include "pkt-line.h"
++#include "sideband.h"
++
++#ifdef __APPLE__
++  #include <sys/sysctl.h>
++#else
++  #include <sys/sysinfo.h>
++#endif
++
++static int getenv_int(char *env, int value)
++{
++	char *p = getenv(env);
++
++	if (!p)
++		return value;
++
++	if (!strcmp(p, "yes") || !strcmp(p, "y") || !strcmp(p, "true") || !strcmp(p, "t"))
++		return 1;
++	else if (!strcmp(p, "no") || !strcmp(p, "n") || !strcmp(p, "false") || !strcmp(p, "f"))
++		return 0;
++
++	return atoi(p);
++}
++
++static int loadavg_test_dryrun(void)
++{
++	static int n = -1;
++
++	if (n == -1)
++		n = getenv_int(ENV_LOADAVG_TEST_DRYRUN, 0);
++	return n;
++}
++
++/* AGIT_LOADAVG_TEST_MOCK=90,80,70 */
++static int loadavg_test_mock(struct string_list *loadavg_list)
++{
++	char *item;
++	char *p;
++
++	if (loadavg_list->nr > 0)
++		return 1;
++	p = getenv(ENV_LOADAVG_TEST_MOCK);
++	if (!p)
++		return 0;
++	for (item = strtok(p, ","); item; item = strtok(NULL, ","))
++		string_list_append(loadavg_list, item);
++	return 1;
++}
++
++static int get_loadavg_soft_limit(void)
++{
++	static int n = -1;
++
++	if (n == -1)
++		n = getenv_int(ENV_LOADAVG_SOFT_LIMIT,
++				 DEFAULT_LOADAVG_SOFT_LIMIT);
++	return n;
++}
++
++static int get_loadavg_hard_limit(void)
++{
++	static int n = -1;
++
++	if (n == -1)
++		n = getenv_int(ENV_LOADAVG_HARD_LIMIT,
++				 DEFAULT_LOADAVG_HARD_LIMIT);
++	return n;
++}
++
++static int get_loadavg_sleep_min(void)
++{
++	static int n = -1;
++
++	if (n == -1)
++		n = getenv_int(ENV_LOADAVG_SLEEP_MIN,
++				 DEFAULT_LOADAVG_SLEEP_MIN);
++	return n;
++}
++
++static int get_loadavg_sleep_max(void)
++{
++	static int n = -1;
++
++	if (n == -1)
++		n = getenv_int(ENV_LOADAVG_SLEEP_MAX,
++				 DEFAULT_LOADAVG_SLEEP_MAX);
++	return n;
++}
++
++static int get_loadavg_retry(void)
++{
++	static int n = -1;
++
++	if (n == -1)
++		n = getenv_int(ENV_LOADAVG_RETRY,
++				 DEFAULT_LOADAVG_RETRY);
++	return n;
++}
++
++static int get_loadavg(void)
++{
++	struct strbuf buf = STRBUF_INIT;
++	char *loadavg, *p;
++	int percent;
++	int ncpu;
++	static int count = 0;
++	static struct string_list loadavg_list = STRING_LIST_INIT_DUP;
++
++#ifdef __APPLE__
++	struct child_process cmd = CHILD_PROCESS_INIT;
++#else
++	FILE *fp;
++#endif
++
++	if (loadavg_test_mock(&loadavg_list) && loadavg_list.nr >0) {
++		if (count >= loadavg_list.nr) {
++			count = loadavg_list.nr - 1;
++		}
++
++		percent = atoi(loadavg_list.items[count].string);
++		count++;
++		return percent;
++	}
++
++#ifdef __APPLE__
++	/* cmd `sysctl -n vm.loadavg` returns: { 1.92 2.17 2.19 } */
++	strvec_pushl(&cmd.args, "sysctl", "-n", "vm.loadavg", NULL);
++	cmd.git_cmd = 0;
++	cmd.in = 0;
++	cmd.out = -1;
++
++	if (start_command(&cmd))
++		die("unable to spawn sysctl");
++
++	if (strbuf_read(&buf, cmd.out, 20) < 0)
++		die_errno("unable to read from sysctl");
++	close(cmd.out);
++
++	if (finish_command(&cmd))
++		die("fail to finish sysctl");
++#else
++	fp = fopen("/proc/loadavg","r");
++	if (fp == NULL)
++		return -1;
++	if (!strbuf_fread(&buf, 20, fp)) {
++		fclose(fp);
++		return 0;
++	}
++	fclose(fp);
++#endif
++
++/* Get cpu core number */
++#ifdef __APPLE__
++	{
++		size_t len = sizeof(ncpu);
++		sysctlbyname("hw.ncpu", &ncpu, &len, NULL, 0);
++	}
++#else
++	ncpu = get_nprocs();
++#endif
++
++	p = buf.buf;
++	while (*p && (*p == '{' || *p == ' ')) {
++		p++;
++	};
++	loadavg = p;
++	while (*(++p)) {
++		if (*p == ' ') {
++			*p = '\0';
++			break;
++		}
++	}
++
++	percent = 100 * atof(loadavg) / ncpu;
++	strbuf_release(&buf);
++	return percent;
++}
++
++
++static int load_is_above_soft_limit(int load)
++{
++	return load >= get_loadavg_soft_limit();
++}
++
++static int load_is_above_hard_limit(int load)
++{
++	return load >= get_loadavg_hard_limit();
++}
++
++/* sideband: 2 - progress, 3- error */
++static void sideband_printf(int band, const char *fmt, ...)
++{
++	int sz = 0;
++	char msg[4096];
++	va_list params;
++
++	bzero(msg, 4096);
++	va_start(params, fmt);
++
++	if (band != 2 && band != 3) {
++		xwrite(2, msg, sz);
++	}
++
++	if (band == 3) {
++		sz = xsnprintf(msg, sizeof(msg), "%s", "ERROR: ");
++	} else {
++		sz = xsnprintf(msg, sizeof(msg), "%s", "WARN: ");
++	}
++	sz += vsnprintf(msg + sz, sizeof(msg) - sz, fmt, params);
++	if (sz > (sizeof(msg) - 1))
++		sz = sizeof(msg) - 1;
++	msg[sz++] = '\n';
++
++	send_sideband(1, band, msg, sz, LARGE_PACKET_MAX);
++
++	va_end(params);
++}
++
++int wait_for_avail_loadavg(int use_sideband)
++{
++	int retries = 1;
++	int loadavg;
++	int sleep_secs;
++	int band = 0;
++
++	while ((loadavg = get_loadavg())) {
++		if (!load_is_above_soft_limit(loadavg)) {
++			break;
++		} else if (retries > get_loadavg_retry() || load_is_above_hard_limit(loadavg)) {
++			if (use_sideband)
++				band = 3;
++			if (retries > get_loadavg_retry())
++				sideband_printf(band,
++						"Server load (%d%%) is still high, quilt",
++						loadavg);
++			else
++				sideband_printf(band,
++						"Server load (%d%%) is too high, quilt",
++						loadavg);
++			return 1;
++		} else {
++			srand(time(NULL));
++			sleep_secs = get_loadavg_sleep_min() + rand() % (
++					get_loadavg_sleep_max() -
++					get_loadavg_sleep_min() +
++					1);
++			if (use_sideband)
++				band = 2;
++			sideband_printf(band,
++					"Server load (%d%%) is high, waiting %d seconds [loop %d/%d]...",
++					loadavg,
++					sleep_secs,
++					retries,
++					get_loadavg_retry());
++			if (loadavg_test_dryrun())
++				sideband_printf(band, "Will sleep %d seconds...", sleep_secs);
++			else
++				sleep(sleep_secs);
++		}
++		retries++;
++	}
++	return 0;
++}
+diff --git a/limiting.h b/limiting.h
+new file mode 100644
+index 0000000000..2f1c5e3958
+--- /dev/null
++++ b/limiting.h
+@@ -0,0 +1,39 @@
++/*
++ * =====================================================================================
++ *
++ *       Filename:  limiting.h
++ *
++ *    Description:  git limiting protection
++ *
++ *        Version:  1.0
++ *        Created:  12/10/18 17:08:03
++ *       Revision:  1.0
++ *       Compiler:  gcc
++ *
++ *         Author:  dyrone (dyroneteng), tenglong.tl@alibaba-inc.com
++ *        Company:  Alibaba.com
++ *
++ * =====================================================================================
++ */
++
++
++#ifndef LIMITING_H
++#define LIMITING_H
++
++#define ENV_LOADAVG_SOFT_LIMIT		"AGIT_LOADAVG_SOFT_LIMIT"
++#define ENV_LOADAVG_HARD_LIMIT		"AGIT_LOADAVG_HARD_LIMIT"
++#define ENV_LOADAVG_SLEEP_MIN		"AGIT_LOADAVG_SLEEP_MIN"
++#define ENV_LOADAVG_SLEEP_MAX		"AGIT_LOADAVG_SLEEP_MAX"
++#define ENV_LOADAVG_RETRY		"AGIT_LOADAVG_RETRY"
++#define ENV_LOADAVG_TEST_DRYRUN		"AGIT_LOADAVG_TEST_DRYRUN"
++#define ENV_LOADAVG_TEST_MOCK		"AGIT_LOADAVG_TEST_MOCK"
++
++#define DEFAULT_LOADAVG_SOFT_LIMIT	150
++#define DEFAULT_LOADAVG_HARD_LIMIT	300
++#define DEFAULT_LOADAVG_SLEEP_MIN	10
++#define DEFAULT_LOADAVG_SLEEP_MAX	60
++#define DEFAULT_LOADAVG_RETRY 		3
++
++extern int wait_for_avail_loadavg(int);
++
++#endif
+diff --git a/t/t0930-git-fetch-rate-limit.sh b/t/t0930-git-fetch-rate-limit.sh
+new file mode 100755
+index 0000000000..82f5d3784d
+--- /dev/null
++++ b/t/t0930-git-fetch-rate-limit.sh
+@@ -0,0 +1,367 @@
++#!/bin/sh
++#
++# Copyright (c) 2018 Jiang Xin
++#
++
++test_description='Test rate limit for repository fetch'
++
++GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
++export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
++
++. ./test-lib.sh
++
++bare=bare.git
++
++create_bare_repo () {
++	test "$#" = 1 ||
++	BUG "not 1 parameter to test-create-repo"
++	repo="$1"
++	mkdir -p "$repo"
++	(
++		cd "$repo" || error "Cannot setup test environment"
++		git -c \
++			init.defaultBranch="${GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME-master}" \
++			init --bare \
++			"--template=$GIT_BUILD_DIR/templates/blt/" >&3 2>&4 ||
++		error "cannot run git init -- have you built things yet?"
++		mv hooks hooks-disabled &&
++		git config core.abbrev 7
++	) || exit
++}
++
++create_commits_in () {
++	repo="$1" &&
++	if ! parent=$(git -C "$repo" rev-parse HEAD^{} 2>/dev/null)
++	then
++		parent=
++	fi &&
++	T=$(git -C "$repo" write-tree) &&
++	shift &&
++	while test $# -gt 0
++	do
++		name=$1 &&
++		test_tick &&
++		if test -z "$parent"
++		then
++			oid=$(echo $name | git -C "$repo" commit-tree $T)
++		else
++			oid=$(echo $name | git -C "$repo" commit-tree -p $parent $T)
++		fi &&
++		suffix=${oid#???????} &&
++		eval $name=${oid%$suffix} &&
++		parent=$oid &&
++		shift ||
++		return 1
++	done &&
++	git -C "$repo" config agit.loadAvgConnectionLimit 1 &&
++	git -C "$repo" update-ref refs/heads/main $oid
++}
++
++# Format the output of git-push, git-show-ref and other commands to make a
++# user-friendly and stable text.  We can easily prepare the expect text
++# without having to worry about future changes of the commit ID and spaces
++# of the output.  Single quotes are replaced with double quotes, because
++# it is boring to prepare unquoted single quotes in expect text.  We also
++# remove some locale error messages. The emitted human-readable errors are
++# redundant to the more machine-readable output the tests already assert.
++make_user_friendly_and_stable_output () {
++	sed \
++		-e "s/${A:-undef_rev}[0-9a-f]*/<COMMIT-A>/g" \
++		-e "s/${B:-undef_rev}[0-9a-f]*/<COMMIT-B>/g" \
++		-e "s/${C:-undef_rev}[0-9a-f]*/<COMMIT-C>/g"
++}
++
++rev_parse_abbrev_oid () {
++	repo=$1
++	rev=$2
++	oid=$(git -C "$repo" rev-parse $rev) &&
++	suffix=${oid#???????} &&
++	echo ${oid%$suffix}
++}
++
++test_expect_success setup '
++	create_bare_repo "$bare" &&
++	git -C "$bare" config core.abbrev 7 &&
++	create_commits_in "$bare" A B C
++'
++
++test_expect_success "clone ok without rate limit" '
++	env \
++		AGIT_LOADAVG_SOFT_LIMIT=200 \
++		AGIT_LOADAVG_HARD_LIMIT=400 \
++		AGIT_LOADAVG_RETRY=3 \
++		AGIT_LOADAVG_TEST_DRYRUN=1 \
++		AGIT_LOADAVG_TEST_MOCK=30 \
++		git clone --no-local $bare workcopy >actual 2>&1 &&
++	cat >expect <<-EOF &&
++	Cloning into '"'"'workcopy'"'"'...
++	EOF
++	test_cmp expect actual &&
++	test -d workcopy &&
++	git -C workcopy log --oneline >out &&
++	make_user_friendly_and_stable_output <out >actual &&
++	cat >expect <<-EOF &&
++	<COMMIT-C> C
++	<COMMIT-B> B
++	<COMMIT-A> A
++	EOF
++	test_cmp expect actual &&
++	rm -rf workcopy
++'
++
++test_expect_success "clone failed: hard limit" '
++	test_must_fail env \
++		AGIT_LOADAVG_SOFT_LIMIT=200 \
++		AGIT_LOADAVG_HARD_LIMIT=400 \
++		AGIT_LOADAVG_RETRY=3 \
++		AGIT_LOADAVG_TEST_DRYRUN=1 \
++		AGIT_LOADAVG_TEST_MOCK=220,350,500 \
++		git clone --no-local $bare workcopy >out 2>&1 &&
++	sed -e "s/[0-9][0-9]* seconds/xx seconds/g" -e "s/  *$//g" < out >actual &&
++
++	grep "^remote:" actual >actual.1 &&
++	cat >expect.1 <<-\EOF &&
++	remote: WARN: Server load (220%) is high, waiting xx seconds [loop 1/3]...
++	remote: WARN: Will sleep xx seconds...
++	remote: WARN: Server load (350%) is high, waiting xx seconds [loop 2/3]...
++	remote: WARN: Will sleep xx seconds...
++	remote: ERROR: Server load (500%) is too high, quilt
++	EOF
++	test_cmp expect.1 actual.1 &&
++
++	grep "^fatal:" actual | sort >actual.2 &&
++	cat >expect.2 <<-\EOF &&
++	fatal: early EOF
++	fatal: failed to wait_for_avail_loadavg
++	fatal: fetch-pack: invalid index-pack output
++	EOF
++	test_cmp expect.2 actual.2 &&
++
++	test ! -d workcopy
++'
++
++test_expect_success "clone failed: all soft limit" '
++	test_must_fail env \
++		AGIT_LOADAVG_SOFT_LIMIT=200 \
++		AGIT_LOADAVG_HARD_LIMIT=400 \
++		AGIT_LOADAVG_RETRY=3 \
++		AGIT_LOADAVG_TEST_DRYRUN=1 \
++		AGIT_LOADAVG_TEST_MOCK=220,350 \
++		git clone --no-local $bare workcopy >out 2>&1 &&
++	sed -e "s/[0-9][0-9]* seconds/xx seconds/g" -e "s/  *$//g" < out >actual &&
++
++	grep "^remote:" actual >actual.1 &&
++	cat >expect.1 <<-\EOF &&
++	remote: WARN: Server load (220%) is high, waiting xx seconds [loop 1/3]...
++	remote: WARN: Will sleep xx seconds...
++	remote: WARN: Server load (350%) is high, waiting xx seconds [loop 2/3]...
++	remote: WARN: Will sleep xx seconds...
++	remote: WARN: Server load (350%) is high, waiting xx seconds [loop 3/3]...
++	remote: WARN: Will sleep xx seconds...
++	remote: ERROR: Server load (350%) is still high, quilt
++	EOF
++	test_cmp expect.1 actual.1 &&
++
++	grep "^fatal:" actual | sort >actual.2 &&
++	cat >expect.2 <<-\EOF &&
++	fatal: early EOF
++	fatal: failed to wait_for_avail_loadavg
++	fatal: fetch-pack: invalid index-pack output
++	EOF
++	test_cmp expect.2 actual.2 &&
++
++	test ! -d workcopy
++'
++
++test_expect_success "clone ok: 3 soft limit, and ok" '
++	env \
++		AGIT_LOADAVG_SOFT_LIMIT=200 \
++		AGIT_LOADAVG_HARD_LIMIT=400 \
++		AGIT_LOADAVG_RETRY=3 \
++		AGIT_LOADAVG_TEST_DRYRUN=1 \
++		AGIT_LOADAVG_TEST_MOCK=220,350,380,100 \
++		git clone --no-local $bare workcopy >out 2>&1 &&
++	sed -e "s/[0-9][0-9]* seconds/xx seconds/g" -e "s/  *$//g" < out >actual &&
++	cat >expect <<-EOF &&
++	Cloning into '"'"'workcopy'"'"'...
++	remote: WARN: Server load (220%) is high, waiting xx seconds [loop 1/3]...
++	remote: WARN: Will sleep xx seconds...
++	remote: WARN: Server load (350%) is high, waiting xx seconds [loop 2/3]...
++	remote: WARN: Will sleep xx seconds...
++	remote: WARN: Server load (380%) is high, waiting xx seconds [loop 3/3]...
++	remote: WARN: Will sleep xx seconds...
++	EOF
++	test_cmp expect actual &&
++	test -d workcopy
++'
++
++test_expect_success "check clone history, and cleanup" '
++	(
++		cd workcopy &&
++		git log --oneline
++	) >out &&
++	make_user_friendly_and_stable_output <out >actual &&
++	cat >expect <<-EOF &&
++	<COMMIT-C> C
++	<COMMIT-B> B
++	<COMMIT-A> A
++	EOF
++	test_cmp expect actual &&
++	rm -r workcopy
++'
++
++test_expect_success "fetch ok without rate limit" '
++	test_create_repo workcopy &&
++	(
++		cd workcopy &&
++		git remote add origin ../$bare &&
++		env \
++			AGIT_LOADAVG_SOFT_LIMIT=200 \
++			AGIT_LOADAVG_HARD_LIMIT=400 \
++			AGIT_LOADAVG_RETRY=3 \
++			AGIT_LOADAVG_TEST_DRYRUN=1 \
++			AGIT_LOADAVG_TEST_MOCK=30 \
++			git fetch origin 2>&1 &&
++			git merge --ff-only origin/main
++	) >actual &&
++	cat >expect <<-EOF &&
++	From ../bare
++	 * [new branch]      main       -> origin/main
++	EOF
++	test_cmp expect actual &&
++	test -d workcopy &&
++	git -C workcopy log --oneline >out &&
++	make_user_friendly_and_stable_output <out >actual &&
++	cat >expect <<-EOF &&
++	<COMMIT-C> C
++	<COMMIT-B> B
++	<COMMIT-A> A
++	EOF
++	test_cmp expect actual &&
++	rm -rf workcopy
++'
++
++test_expect_success "fetch failed: hard limit" '
++	test_create_repo workcopy &&
++	(
++		cd workcopy &&
++		git remote add origin ../$bare &&
++		test_must_fail env \
++			AGIT_LOADAVG_SOFT_LIMIT=200 \
++			AGIT_LOADAVG_HARD_LIMIT=400 \
++			AGIT_LOADAVG_RETRY=3 \
++			AGIT_LOADAVG_TEST_DRYRUN=1 \
++			AGIT_LOADAVG_TEST_MOCK=220,350,500 \
++			git fetch origin 2>&1
++	) >out &&
++	sed -e "s/[0-9][0-9]* seconds/xx seconds/g" -e "s/  *$//g" < out >actual &&
++
++	grep "^remote:" actual >actual.1 &&
++	cat >expect.1 <<-\EOF &&
++	remote: WARN: Server load (220%) is high, waiting xx seconds [loop 1/3]...
++	remote: WARN: Will sleep xx seconds...
++	remote: WARN: Server load (350%) is high, waiting xx seconds [loop 2/3]...
++	remote: WARN: Will sleep xx seconds...
++	remote: ERROR: Server load (500%) is too high, quilt
++	EOF
++	test_cmp expect.1 actual.1 &&
++
++	grep "^fatal:" actual | sort >actual.2 &&
++	cat >expect.2 <<-\EOF &&
++	fatal: failed to wait_for_avail_loadavg
++	fatal: protocol error: bad pack header
++	EOF
++	test_cmp expect.2 actual.2 &&
++
++	find workcopy/.git/objects -type f >actual &&
++	cat >expect <<-EOF &&
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success "fetch failed: all soft limit" '
++	rm -rf workcopy &&
++	test_create_repo workcopy &&
++	(
++		cd workcopy &&
++		git remote add origin ../$bare &&
++		test_must_fail env \
++			AGIT_LOADAVG_SOFT_LIMIT=200 \
++			AGIT_LOADAVG_HARD_LIMIT=400 \
++			AGIT_LOADAVG_RETRY=3 \
++			AGIT_LOADAVG_TEST_DRYRUN=1 \
++			AGIT_LOADAVG_TEST_MOCK=220,350 \
++			git fetch origin 2>&1
++	) >out &&
++	sed -e "s/[0-9][0-9]* seconds/xx seconds/g" -e "s/  *$//g" < out >actual &&
++
++	grep "^remote:" actual >actual.1 &&
++	cat >expect.1 <<-\EOF &&
++	remote: WARN: Server load (220%) is high, waiting xx seconds [loop 1/3]...
++	remote: WARN: Will sleep xx seconds...
++	remote: WARN: Server load (350%) is high, waiting xx seconds [loop 2/3]...
++	remote: WARN: Will sleep xx seconds...
++	remote: WARN: Server load (350%) is high, waiting xx seconds [loop 3/3]...
++	remote: WARN: Will sleep xx seconds...
++	remote: ERROR: Server load (350%) is still high, quilt
++	EOF
++	test_cmp expect.1 actual.1 &&
++
++	grep "^fatal:" actual | sort >actual.2 &&
++	cat >expect.2 <<-\EOF &&
++	fatal: failed to wait_for_avail_loadavg
++	fatal: protocol error: bad pack header
++	EOF
++	test_cmp expect.2 actual.2 &&
++
++	find workcopy/.git/objects -type f >actual &&
++	cat >expect <<-EOF &&
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success "fetch ok: 3 soft limit, and ok" '
++	rm -rf workcopy &&
++	test_create_repo workcopy &&
++	(
++		cd workcopy &&
++		git remote add origin ../$bare &&
++		env \
++			AGIT_LOADAVG_SOFT_LIMIT=200 \
++			AGIT_LOADAVG_HARD_LIMIT=400 \
++			AGIT_LOADAVG_RETRY=3 \
++			AGIT_LOADAVG_TEST_DRYRUN=1 \
++			AGIT_LOADAVG_TEST_MOCK=220,350,380,100 \
++			git fetch origin 2>&1 &&
++			git merge --ff-only origin/main
++	) >out &&
++	sed -e "s/[0-9][0-9]* seconds/xx seconds/g" -e "s/  *$//g" < out >actual &&
++	cat >expect <<-EOF &&
++	remote: WARN: Server load (220%) is high, waiting xx seconds [loop 1/3]...
++	remote: WARN: Will sleep xx seconds...
++	remote: WARN: Server load (350%) is high, waiting xx seconds [loop 2/3]...
++	remote: WARN: Will sleep xx seconds...
++	remote: WARN: Server load (380%) is high, waiting xx seconds [loop 3/3]...
++	remote: WARN: Will sleep xx seconds...
++	From ../bare
++	 * [new branch]      main       -> origin/main
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success "check fetched history, and cleanup" '
++	(
++		cd workcopy &&
++		git log --oneline
++	) >out &&
++	make_user_friendly_and_stable_output <out >actual &&
++	cat >expect <<-EOF &&
++	<COMMIT-C> C
++	<COMMIT-B> B
++	<COMMIT-A> A
++	EOF
++	test_cmp expect actual &&
++	rm -r workcopy
++'
++
++test_done
+diff --git a/t/t0931-git-push-rate-limit.sh b/t/t0931-git-push-rate-limit.sh
+new file mode 100755
+index 0000000000..845c79f3be
+--- /dev/null
++++ b/t/t0931-git-push-rate-limit.sh
+@@ -0,0 +1,260 @@
++#!/bin/sh
++#
++# Copyright (c) 2018 Jiang Xin
++#
++
++test_description='Test rate limit for repository push'
++
++GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
++export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
++
++. ./test-lib.sh
++
++bare=bare.git
++
++create_bare_repo () {
++	test "$#" = 1 ||
++	BUG "not 1 parameter to test-create-repo"
++	repo="$1"
++	mkdir -p "$repo"
++	(
++		cd "$repo" || error "Cannot setup test environment"
++		git -c \
++			init.defaultBranch="${GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME-master}" \
++			init --bare \
++			"--template=$GIT_BUILD_DIR/templates/blt/" >&3 2>&4 ||
++		error "cannot run git init -- have you built things yet?"
++		mv hooks hooks-disabled &&
++		git config core.abbrev 7
++	) || exit
++}
++
++create_commits_in () {
++	repo="$1" &&
++	if ! parent=$(git -C "$repo" rev-parse HEAD^{} 2>/dev/null)
++	then
++		parent=
++	fi &&
++	T=$(git -C "$repo" write-tree) &&
++	shift &&
++	while test $# -gt 0
++	do
++		name=$1 &&
++		test_tick &&
++		if test -z "$parent"
++		then
++			oid=$(echo $name | git -C "$repo" commit-tree $T)
++		else
++			oid=$(echo $name | git -C "$repo" commit-tree -p $parent $T)
++		fi &&
++		suffix=${oid#???????} &&
++		eval $name=${oid%$suffix} &&
++		parent=$oid &&
++		shift ||
++		return 1
++	done &&
++	git -C "$repo" update-ref refs/heads/main $oid
++}
++
++# Format the output of git-push, git-show-ref and other commands to make a
++# user-friendly and stable text.  We can easily prepare the expect text
++# without having to worry about future changes of the commit ID and spaces
++# of the output.  Single quotes are replaced with double quotes, because
++# it is boring to prepare unquoted single quotes in expect text.  We also
++# remove some locale error messages. The emitted human-readable errors are
++# redundant to the more machine-readable output the tests already assert.
++make_user_friendly_and_stable_output () {
++	sed \
++		-e "s/${A:-undef_rev}[0-9a-f]*/<COMMIT-A>/g" \
++		-e "s/${B:-undef_rev}[0-9a-f]*/<COMMIT-B>/g" \
++		-e "s/${C:-undef_rev}[0-9a-f]*/<COMMIT-C>/g"
++}
++
++rev_parse_abbrev_oid () {
++	repo=$1
++	rev=$2
++	oid=$(git -C "$repo" rev-parse $rev) &&
++	suffix=${oid#???????} &&
++	echo ${oid%$suffix}
++}
++
++
++test_expect_success setup '
++	create_bare_repo "$bare" &&
++	git clone --no-local $bare workcopy &&
++	create_commits_in workcopy A B C
++'
++
++test_expect_success "push ok without rate limit" '
++	rm -r "$bare" &&
++	create_bare_repo "$bare" &&
++	git -C "$bare" config agit.loadAvgConnectionLimit 1 &&
++	(
++		cd workcopy &&
++		env \
++			AGIT_LOADAVG_SOFT_LIMIT=200 \
++			AGIT_LOADAVG_HARD_LIMIT=400 \
++			AGIT_LOADAVG_RETRY=3 \
++			AGIT_LOADAVG_TEST_DRYRUN=1 \
++			AGIT_LOADAVG_TEST_MOCK=30 \
++			git push origin HEAD 2>&1
++	) >out &&
++	sed -e "s/[0-9][0-9]* seconds/xx seconds/g" \
++		-e "s/  *$//g" \
++		-e "s/fetch-pack [0-9][0-9]* on [a-zA-Z0-9._-]*/fetch-pack <pid> on <host>/g" \
++		-e "s#agent=git/[^ ]*#agent=git/x.x.x#g" \
++		-e "s#/.*/bare.git#/path/to/bare.git#g" \
++		< out >actual &&
++	cat >expect <<-EOF &&
++	To /path/to/bare.git
++	 * [new branch]      HEAD -> main
++	EOF
++	test_cmp expect actual &&
++	(
++		cd $bare &&
++		git log main --oneline
++	) >out &&
++	make_user_friendly_and_stable_output <out >actual &&
++	cat >expect <<-EOF &&
++	<COMMIT-C> C
++	<COMMIT-B> B
++	<COMMIT-A> A
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success "push failed: hard limit" '
++	rm -r "$bare" &&
++	create_bare_repo "$bare" &&
++	git -C "$bare" config agit.loadAvgConnectionLimit 1 &&
++	(
++		cd workcopy &&
++		test_must_fail env \
++			AGIT_LOADAVG_SOFT_LIMIT=200 \
++			AGIT_LOADAVG_HARD_LIMIT=400 \
++			AGIT_LOADAVG_RETRY=3 \
++			AGIT_LOADAVG_TEST_DRYRUN=1 \
++			AGIT_LOADAVG_TEST_MOCK=220,350,500 \
++			git push origin HEAD 2>&1
++	) >out &&
++	sed -e "s/[0-9][0-9]* seconds/xx seconds/g" \
++		-e "s/  *$//g" \
++		-e "s/fetch-pack [0-9][0-9]* on [a-zA-Z0-9._-]*/fetch-pack <pid> on <host>/g" \
++		-e "s#agent=git/[^ ]*#agent=git/x.x.x#g" \
++		-e "s#/.*/bare.git#/path/to/bare.git#g" \
++		<out >actual &&
++
++	grep "^remote:" actual >actual.1 &&
++	cat >expect.1 <<-\EOF &&
++	remote: WARN: Server load (220%) is high, waiting xx seconds [loop 1/3]...
++	remote: WARN: Will sleep xx seconds...
++	remote: WARN: Server load (350%) is high, waiting xx seconds [loop 2/3]...
++	remote: WARN: Will sleep xx seconds...
++	remote: ERROR: Server load (500%) is too high, quilt
++	EOF
++	test_cmp expect.1 actual.1 &&
++
++	grep "^fatal:" actual | sort >actual.2 &&
++	cat >expect.2 <<-\EOF &&
++	fatal: failed to wait_for_avail_loadavg
++	fatal: the remote end hung up unexpectedly
++	EOF
++	test_cmp expect.2 actual.2 &&
++
++	find $bare/objects -type f >actual.files 2>&1 &&
++	cat >expect.files <<-EOF &&
++	EOF
++	test_cmp expect.files actual.files
++'
++
++test_expect_success "push fail: all soft limit" '
++	rm -r "$bare" &&
++	create_bare_repo "$bare" &&
++	git -C "$bare" config agit.loadAvgConnectionLimit 1 &&
++	(
++		cd workcopy &&
++		test_must_fail env \
++			AGIT_LOADAVG_SOFT_LIMIT=200 \
++			AGIT_LOADAVG_HARD_LIMIT=400 \
++			AGIT_LOADAVG_RETRY=3 \
++			AGIT_LOADAVG_TEST_DRYRUN=1 \
++			AGIT_LOADAVG_TEST_MOCK=220,350 \
++			git push origin HEAD 2>&1
++	) >out &&
++	sed -e "s/[0-9][0-9]* seconds/xx seconds/g" \
++		-e "s/  *$//g" \
++		-e "s/fetch-pack [0-9][0-9]* on [a-zA-Z0-9._-]*/fetch-pack <pid> on <host>/g" \
++		-e "s#agent=git/[^ ]*#agent=git/x.x.x#g" \
++		-e "s#/.*/bare.git#/path/to/bare.git#g" \
++		< out >actual &&
++
++	grep "^remote:" actual >actual.1 &&
++	cat >expect.1 <<-\EOF &&
++	remote: WARN: Server load (220%) is high, waiting xx seconds [loop 1/3]...
++	remote: WARN: Will sleep xx seconds...
++	remote: WARN: Server load (350%) is high, waiting xx seconds [loop 2/3]...
++	remote: WARN: Will sleep xx seconds...
++	remote: WARN: Server load (350%) is high, waiting xx seconds [loop 3/3]...
++	remote: WARN: Will sleep xx seconds...
++	remote: ERROR: Server load (350%) is still high, quilt
++	EOF
++	test_cmp expect.1 actual.1 &&
++
++	grep "^fatal:" actual | sort >actual.2 &&
++	cat >expect.2 <<-\EOF &&
++	fatal: failed to wait_for_avail_loadavg
++	fatal: the remote end hung up unexpectedly
++	EOF
++	test_cmp expect.2 actual.2 &&
++
++	find $bare/objects -type f >actual.files 2>&1 &&
++	cat >expect.files <<-EOF &&
++	EOF
++	test_cmp expect.files actual.files
++'
++
++test_expect_success "push ok: 3 soft limit, and ok" '
++	rm -r "$bare" &&
++	create_bare_repo "$bare" &&
++	git -C "$bare" config agit.loadAvgConnectionLimit 1 &&
++	(
++		cd workcopy &&
++		env \
++			AGIT_LOADAVG_SOFT_LIMIT=200 \
++			AGIT_LOADAVG_HARD_LIMIT=400 \
++			AGIT_LOADAVG_RETRY=3 \
++			AGIT_LOADAVG_TEST_DRYRUN=1 \
++			AGIT_LOADAVG_TEST_MOCK=220,350,380,100 \
++			git push origin HEAD 2>&1
++	) >out &&
++	sed -e "s/[0-9][0-9]* seconds/xx seconds/g" \
++		-e "s/  *$//g" \
++		-e "s/fetch-pack [0-9][0-9]* on [a-zA-Z0-9._-]*/fetch-pack <pid> on <host>/g" \
++		-e "s#agent=git/[^ ]*#agent=git/x.x.x#g" \
++		-e "s#/.*/bare.git#/path/to/bare.git#g" \
++		< out >actual &&
++	cat >expect <<-EOF &&
++	remote: WARN: Server load (220%) is high, waiting xx seconds [loop 1/3]...
++	remote: WARN: Will sleep xx seconds...
++	remote: WARN: Server load (350%) is high, waiting xx seconds [loop 2/3]...
++	remote: WARN: Will sleep xx seconds...
++	remote: WARN: Server load (380%) is high, waiting xx seconds [loop 3/3]...
++	remote: WARN: Will sleep xx seconds...
++	To /path/to/bare.git
++	 * [new branch]      HEAD -> main
++	EOF
++	test_cmp expect actual &&
++	(
++		cd $bare &&
++		git log main --oneline
++	) >out &&
++	make_user_friendly_and_stable_output <out >actual &&
++	cat >expect <<-EOF &&
++	<COMMIT-C> C
++	<COMMIT-B> B
++	<COMMIT-A> A
++	EOF
++	test_cmp expect actual
++'
++
++test_done
+diff --git a/upload-pack.c b/upload-pack.c
+index 3a851b3606..320328ba03 100644
+--- a/upload-pack.c
++++ b/upload-pack.c
+@@ -10,6 +10,7 @@
+ #include "commit.h"
+ #include "diff.h"
+ #include "revision.h"
++#include "limiting.h"
+ #include "list-objects.h"
+ #include "list-objects-filter.h"
+ #include "list-objects-filter-options.h"
+@@ -283,6 +284,9 @@ static void create_pack_file(struct upload_pack_data *pack_data,
+ 	int i;
+ 	FILE *pipe_fd;
+ 
++	if (wait_for_avail_loadavg(pack_data->use_sideband))
++		die("failed to wait_for_avail_loadavg");
++
+ 	if (!pack_data->pack_objects_hook)
+ 		pack_objects.git_cmd = 1;
+ 	else {
+-- 
+2.34.1.51.g7e1f4e9345.agit.6.5.6
+

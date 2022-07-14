@@ -1,19 +1,34 @@
 How to merge all topic branches
 ===============================
 
-Release all topic branches to master branch based on v2.34.0:
-
-	$ sh agit-release.sh master refs/tags/v2.34.0
+Release all topic branches to agit-master branch based on v2.36.2 and agit version 6.5.9:
+1. Update GIT-VERSION contents to v2.36.2
+2. Update PATCH-VERSION contents to 6.5.9
+3. Run make, will build 'patchwork' binary
+4. Export patches:
+```shell
+./patchwork export-patches
+```
+5. Apply patches:
+```shell
+./patchwork apply-patches --apply-to <the git repo path>
+```
 
 AGIT Release Notes
 ==================
 
+v6.5.9
+* builtin/repack.c: ensure that names is sorted
+* http: support read netrc file from a specific path
+
 v6.5.6
+------
 * receive-pack: record large blobs into "info/large-blobs" and add
   "receive.maxInputBlobSize" in addtion to
   "receive.maxInputObjectSize".
 
 v6.5.5
+------
 * unpack-objects: unpack large blob in stream.
 
 v6.5.4

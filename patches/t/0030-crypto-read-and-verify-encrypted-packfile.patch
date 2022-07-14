@@ -1,0 +1,430 @@
+From 81a1e39def367be1746d98ca8933c448b45cf860 Mon Sep 17 00:00:00 2001
+From: Han Xin <hanxin.hx@alibaba-inc.com>
+Date: Thu, 7 Jan 2021 17:38:38 +0800
+Subject: [PATCH 30/42] crypto: read and verify encrypted packfile
+
+If packfile is encrypted, try to decrypt when call use_pack().
+
+Signed-off-by: Han Xin <hanxin.hx@alibaba-inc.com>
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ builtin/pack-objects.c                   | 111 ++++++++++++++++++++---
+ object-store.h                           |   1 +
+ pack-check.c                             |   4 +
+ packfile.c                               |  70 ++++++++++++--
+ streaming.c                              |   4 +
+ t/t0940/test-0020-read-write-packfile.sh |  14 ++-
+ 6 files changed, 182 insertions(+), 22 deletions(-)
+
+diff --git a/builtin/pack-objects.c b/builtin/pack-objects.c
+index 9f1ef4b12d..b7cbb6b468 100644
+--- a/builtin/pack-objects.c
++++ b/builtin/pack-objects.c
+@@ -389,6 +389,10 @@ static int check_pack_inflate(struct packed_git *p,
+ 	git_inflate_init(&stream);
+ 	do {
+ 		in = use_pack(p, w_curs, offset, &stream.avail_in);
++		if (p->cryptor) {
++			stream.cryptor = p->cryptor;
++			stream.cryptor->byte_counter = offset;
++		}
+ 		stream.next_in = in;
+ 		stream.next_out = fakebuf;
+ 		stream.avail_out = sizeof(fakebuf);
+@@ -409,12 +413,33 @@ static void copy_pack_data(struct hashfile *f,
+ {
+ 	unsigned char *in;
+ 	unsigned long avail;
++	unsigned char decrypt_buffer[4096];
+ 
++	if (p->cryptor)
++		p->cryptor->byte_counter = offset;
+ 	while (len) {
+ 		in = use_pack(p, w_curs, offset, &avail);
+ 		if (avail > len)
+ 			avail = (unsigned long)len;
+-		hashwrite_try_encrypt(f, in, avail);
++		if (!p->cryptor) {
++			hashwrite_try_encrypt(f, in, avail);
++		} else {
++			unsigned long remains = avail;
++			while (remains) {
++				unsigned long decrypt_size =
++					sizeof(decrypt_buffer);
++
++				if (decrypt_size > remains)
++					decrypt_size = remains;
++				p->cryptor->decrypt(p->cryptor, in,
++						    decrypt_buffer,
++						    decrypt_size, decrypt_size);
++				hashwrite_try_encrypt(f, decrypt_buffer,
++						      decrypt_size);
++				remains -= decrypt_size;
++				in += decrypt_size;
++			}
++		}
+ 		offset += avail;
+ 		len -= avail;
+ 	}
+@@ -691,8 +716,13 @@ static off_t write_object(struct hashfile *f,
+ 	if (usable_delta)
+ 		written_delta++;
+ 	written++;
+-	if (!pack_to_stdout)
++	if (!pack_to_stdout) {
+ 		entry->idx.crc32 = crc32_end(f);
++		trace_printf_key(&trace_crypto_key,
++			"pack-object.c: write-object: crc32 = %x, file: %s\n",
++			htonl(entry->idx.crc32),
++			f->name);
++	}
+ 	return len;
+ }
+ 
+@@ -1077,6 +1107,7 @@ static void write_reused_pack_one(size_t pos, struct hashfile *out,
+ 	copy_pack_data(out, reuse_packfile, w_curs, offset, next - offset);
+ }
+ 
++/* TODO: add test case for this function */
+ static size_t write_reused_pack_verbatim(struct hashfile *out,
+ 					 struct pack_window **w_curs)
+ {
+@@ -1088,16 +1119,34 @@ static size_t write_reused_pack_verbatim(struct hashfile *out,
+ 
+ 	if (pos) {
+ 		off_t to_write;
++		unsigned int inpack_hdr_size, outpack_hdr_size;
++
++		if (open_packed_git_once(reuse_packfile))
++			die("cannot open packfile '%s' for reuse", reuse_packfile->pack_name);
++		if (reuse_packfile->cryptor &&
++		    crypto_pack_has_longer_nonce_for_algo(
++			    reuse_packfile->cryptor->algorithm))
++			inpack_hdr_size = sizeof(struct pack_header_with_nonce);
++		else
++			inpack_hdr_size = sizeof(struct pack_header);
++		if (out->cryptor &&
++		    crypto_pack_has_longer_nonce_for_algo(
++			    out->cryptor->algorithm))
++			outpack_hdr_size = sizeof(struct pack_header_with_nonce);
++		else
++			outpack_hdr_size = sizeof(struct pack_header);
+ 
+ 		written = (pos * BITS_IN_EWORD);
+ 		to_write = pack_pos_to_offset(reuse_packfile, written)
+-			- sizeof(struct pack_header);
++			- inpack_hdr_size;
+ 
+ 		/* We're recording one chunk, not one object. */
+-		record_reused_object(sizeof(struct pack_header), 0);
++		/* The 2nd argument ('offset') should be the header size of original packfile
++		 * minus the header size of the generated packfile.
++		 */
++		record_reused_object(inpack_hdr_size, inpack_hdr_size - outpack_hdr_size);
+ 		hashflush(out);
+-		copy_pack_data(out, reuse_packfile, w_curs,
+-			sizeof(struct pack_header), to_write);
++		copy_pack_data(out, reuse_packfile, w_curs, inpack_hdr_size, to_write);
+ 
+ 		display_progress(progress_state, written);
+ 	}
+@@ -1942,8 +1991,16 @@ static void check_object(struct object_entry *entry, uint32_t object_index)
+ 		unsigned char *buf, c;
+ 		enum object_type type;
+ 		unsigned long in_pack_size;
++		unsigned char decrypt_header[32];
+ 
+ 		buf = use_pack(p, &w_curs, entry->in_pack_offset, &avail);
++		if (p->cryptor) {
++			p->cryptor->byte_counter = entry->in_pack_offset;
++			p->cryptor->decrypt(p->cryptor, buf, decrypt_header,
++					    avail,
++					    sizeof(decrypt_header));
++			buf = decrypt_header;
++		}
+ 
+ 		/*
+ 		 * We want in_pack_type even if we do not reuse delta
+@@ -1976,17 +2033,39 @@ static void check_object(struct object_entry *entry, uint32_t object_index)
+ 			return;
+ 		case OBJ_REF_DELTA:
+ 			if (reuse_delta && !entry->preferred_base) {
+-				oidread(&base_ref,
+-					use_pack(p, &w_curs,
+-						 entry->in_pack_offset + used,
+-						 NULL));
++				buf = use_pack(p, &w_curs,
++					       entry->in_pack_offset + used,
++					       NULL);
++				if (p->cryptor) {
++					/* At least one full hash after the offset is available
++					 * in buf. */
++					p->cryptor->byte_counter =
++						entry->in_pack_offset + used;
++					p->cryptor->decrypt(
++						p->cryptor, buf, decrypt_header,
++						the_hash_algo->rawsz,
++						sizeof(decrypt_header));
++					buf = decrypt_header;
++				}
++				oidread(&base_ref, buf);
+ 				have_base = 1;
+ 			}
+ 			entry->in_pack_header_size = used + the_hash_algo->rawsz;
+ 			break;
+ 		case OBJ_OFS_DELTA:
+-			buf = use_pack(p, &w_curs,
+-				       entry->in_pack_offset + used, NULL);
++			buf = use_pack(p, &w_curs, entry->in_pack_offset + used,
++				       NULL);
++			if (p->cryptor) {
++				/* At least one full hash after the offset is available
++				 * in buf. */
++				p->cryptor->byte_counter =
++					entry->in_pack_offset + used;
++				p->cryptor->decrypt(p->cryptor, buf,
++						    decrypt_header,
++						    the_hash_algo->rawsz,
++						    sizeof(decrypt_header));
++				buf = decrypt_header;
++			}
+ 			used_0 = 0;
+ 			c = buf[used_0++];
+ 			ofs = c & 127;
+@@ -2429,6 +2508,7 @@ unsigned long oe_get_size_slow(struct packing_data *pack,
+ 	unsigned char *buf;
+ 	enum object_type type;
+ 	unsigned long used, avail, size;
++	unsigned char decrypt_header[32];
+ 
+ 	if (e->type_ != OBJ_OFS_DELTA && e->type_ != OBJ_REF_DELTA) {
+ 		packing_data_lock(&to_pack);
+@@ -2446,6 +2526,13 @@ unsigned long oe_get_size_slow(struct packing_data *pack,
+ 	packing_data_lock(&to_pack);
+ 	w_curs = NULL;
+ 	buf = use_pack(p, &w_curs, e->in_pack_offset, &avail);
++	if (p->cryptor) {
++		p->cryptor->byte_counter = e->in_pack_offset;
++		p->cryptor->decrypt(p->cryptor, buf, decrypt_header,
++				    avail,
++				    sizeof(decrypt_header));
++		buf = decrypt_header;
++	}
+ 	used = unpack_object_header_buffer(buf, avail, &type, &size);
+ 	if (used == 0)
+ 		die(_("unable to parse object header of %s"),
+diff --git a/object-store.h b/object-store.h
+index bd2322ed8c..82bab3c59f 100644
+--- a/object-store.h
++++ b/object-store.h
+@@ -116,6 +116,7 @@ struct packed_git {
+ 		 do_not_close:1,
+ 		 pack_promisor:1,
+ 		 multi_pack_index:1;
++	git_cryptor *cryptor;	/* for crypto.c */
+ 	unsigned char hash[GIT_MAX_RAWSZ];
+ 	struct revindex_entry *revindex;
+ 	const uint32_t *revindex_data;
+diff --git a/pack-check.c b/pack-check.c
+index bfb593ba72..d9f8387ea7 100644
+--- a/pack-check.c
++++ b/pack-check.c
+@@ -40,6 +40,10 @@ int check_pack_crc(struct packed_git *p, struct pack_window **w_curs,
+ 
+ 	index_crc = p->index_data;
+ 	index_crc += 2 + 256 + (size_t)p->num_objects * (the_hash_algo->rawsz/4) + nr;
++	trace_printf_key(
++		&trace_crypto_key,
++		"pack-check.c: check_pack_crc: data_crc: %x, index_crc: %x\n",
++		htonl(data_crc), *index_crc);
+ 
+ 	return data_crc != ntohl(*index_crc);
+ }
+diff --git a/packfile.c b/packfile.c
+index d5bc4632b9..2563035f05 100644
+--- a/packfile.c
++++ b/packfile.c
+@@ -520,7 +520,7 @@ const char *pack_basename(struct packed_git *p)
+ static int open_packed_git_1(struct packed_git *p)
+ {
+ 	struct stat st;
+-	struct pack_header hdr;
++	union extend_pack_header h;
+ 	unsigned char hash[GIT_MAX_RAWSZ];
+ 	unsigned char *idx_hash;
+ 	ssize_t read_result;
+@@ -556,23 +556,41 @@ static int open_packed_git_1(struct packed_git *p)
+ 		return error("packfile %s size changed", p->pack_name);
+ 
+ 	/* Verify we recognize this pack file format. */
+-	read_result = read_in_full(p->pack_fd, &hdr, sizeof(hdr));
++	read_result = read_in_full(p->pack_fd, &h.hdr, sizeof(h.hdr));
+ 	if (read_result < 0)
+ 		return error_errno("error reading from %s", p->pack_name);
+-	if (read_result != sizeof(hdr))
++	if (read_result != sizeof(h.hdr))
+ 		return error("file %s is far too short to be a packfile", p->pack_name);
+-	if (hdr.hdr_signature != htonl(PACK_SIGNATURE))
++	if (h.hdr.hdr_signature != htonl(PACK_SIGNATURE))
+ 		return error("file %s is not a GIT packfile", p->pack_name);
+-	if (!pack_version_ok(hdr.hdr_version))
++	if (!pack_version_ok(h.hdr.hdr_version))
+ 		return error("packfile %s is version %"PRIu32" and not"
+ 			" supported (try upgrading GIT to a newer version)",
+-			p->pack_name, ntohl(hdr.hdr_version));
++			p->pack_name, ntohl(h.hdr.hdr_version));
++	if (git_crypto_pack_is_encrypt(h.hdr.hdr_version)) {
++		p->cryptor = xmalloc(sizeof(*p->cryptor));
++		if (crypto_pack_has_longer_nonce_for_version(
++			    h.hdr.hdr_version)) {
++			read_result = read_in_full(p->pack_fd, &h.ehdr.nonce,
++						   NONCE_LEN);
++			if (read_result < 0)
++				return error_errno("error reading nonce from %s",
++						p->pack_name);
++			git_decryptor_init_or_die(
++				p->cryptor, h.ehdr.hdr_version, h.ehdr.nonce);
++		} else {
++			git_decryptor_init_or_die(p->cryptor, h.hdr.hdr_version,
++						  NULL);
++		}
++	} else {
++		p->cryptor = NULL;
++	}
+ 
+ 	/* Verify the pack matches its index. */
+-	if (p->num_objects != ntohl(hdr.hdr_entries))
++	if (p->num_objects != ntohl(h.hdr.hdr_entries))
+ 		return error("packfile %s claims to have %"PRIu32" objects"
+ 			     " while index indicates %"PRIu32" objects",
+-			     p->pack_name, ntohl(hdr.hdr_entries),
++			     p->pack_name, ntohl(h.hdr.hdr_entries),
+ 			     p->num_objects);
+ 	read_result = pread_in_full(p->pack_fd, hash, hashsz,
+ 					p->pack_size - hashsz);
+@@ -1105,6 +1123,10 @@ unsigned long get_size_from_delta(struct packed_git *p,
+ 	git_inflate_init(&stream);
+ 	do {
+ 		in = use_pack(p, w_curs, curpos, &stream.avail_in);
++		if (p->cryptor) {
++			stream.cryptor = p->cryptor;
++			stream.cryptor->byte_counter = curpos;
++		}
+ 		stream.next_in = in;
+ 		/*
+ 		 * Note: the window section returned by use_pack() must be
+@@ -1153,6 +1175,7 @@ int unpack_object_header(struct packed_git *p,
+ 	unsigned long left;
+ 	unsigned long used;
+ 	enum object_type type;
++	unsigned char decrypt_header[20];
+ 
+ 	/* use_pack() assures us we have [base, base + 20) available
+ 	 * as a range that we can look at.  (Its actually the hash
+@@ -1161,7 +1184,15 @@ int unpack_object_header(struct packed_git *p,
+ 	 * insane, so we know won't exceed what we have been given.
+ 	 */
+ 	base = use_pack(p, w_curs, *curpos, &left);
+-	used = unpack_object_header_buffer(base, left, &type, sizep);
++	if (p->cryptor) {
++		p->cryptor->byte_counter = *curpos;
++		p->cryptor->decrypt(p->cryptor, base, decrypt_header, left,
++				    sizeof(decrypt_header));
++		used = unpack_object_header_buffer(
++			decrypt_header, sizeof(decrypt_header), &type, sizep);
++	} else {
++		used = unpack_object_header_buffer(base, left, &type, sizep);
++	}
+ 	if (!used) {
+ 		type = OBJ_BAD;
+ 	} else
+@@ -1194,6 +1225,15 @@ off_t get_delta_base(struct packed_git *p,
+ {
+ 	unsigned char *base_info = use_pack(p, w_curs, *curpos, NULL);
+ 	off_t base_offset;
++	unsigned char decrypt_buffer[32];
++
++	if (p->cryptor) {
++		p->cryptor->byte_counter = *curpos;
++		p->cryptor->decrypt(p->cryptor, base_info, decrypt_buffer,
++				    the_hash_algo->rawsz,
++				    sizeof(decrypt_buffer));
++		base_info = decrypt_buffer;
++	}
+ 
+ 	/* use_pack() assured us we have [base_info, base_info + 20)
+ 	 * as a range that we can look at without walking off the
+@@ -1239,7 +1279,15 @@ static int get_delta_base_oid(struct packed_git *p,
+ 			      off_t delta_obj_offset)
+ {
+ 	if (type == OBJ_REF_DELTA) {
++		unsigned char decrypt_buffer[32];
+ 		unsigned char *base = use_pack(p, w_curs, curpos, NULL);
++		if (p->cryptor) {
++			p->cryptor->byte_counter = curpos;
++			p->cryptor->decrypt(p->cryptor, base, decrypt_buffer,
++					    the_hash_algo->rawsz,
++					    sizeof(decrypt_buffer));
++			base = decrypt_buffer;
++		}
+ 		oidread(oid, base);
+ 		return 0;
+ 	} else if (type == OBJ_OFS_DELTA) {
+@@ -1612,6 +1660,10 @@ static void *unpack_compressed_entry(struct packed_git *p,
+ 	git_inflate_init(&stream);
+ 	do {
+ 		in = use_pack(p, w_curs, curpos, &stream.avail_in);
++		if (p->cryptor) {
++			stream.cryptor = p->cryptor;
++			stream.cryptor->byte_counter = curpos;
++		}
+ 		stream.next_in = in;
+ 		/*
+ 		 * Note: we must ensure the window section returned by
+diff --git a/streaming.c b/streaming.c
+index fe54665d86..3a9290e7bf 100644
+--- a/streaming.c
++++ b/streaming.c
+@@ -288,6 +288,10 @@ static ssize_t read_istream_pack_non_delta(struct git_istream *st, char *buf,
+ 
+ 		mapped = use_pack(st->u.in_pack.pack, &window,
+ 				  st->u.in_pack.pos, &st->z.avail_in);
++		if (st->u.in_pack.pack->cryptor) {
++			st->z.cryptor = st->u.in_pack.pack->cryptor;
++			st->z.cryptor->byte_counter = st->u.in_pack.pos;
++		}
+ 
+ 		st->z.next_out = (unsigned char *)buf + total_read;
+ 		st->z.avail_out = sz - total_read;
+diff --git a/t/t0940/test-0020-read-write-packfile.sh b/t/t0940/test-0020-read-write-packfile.sh
+index 4794579ab0..fc5d57960b 100644
+--- a/t/t0940/test-0020-read-write-packfile.sh
++++ b/t/t0940/test-0020-read-write-packfile.sh
+@@ -89,7 +89,11 @@ test_expect_success 'index-pack on encrypted packfile' '
+ 	test -f index-pack.1/.git/objects/pack/pack-$pack.pack
+ '
+ 
+-test_expect_failure 'verify-pack on encrypted packfile' '
++test_expect_success 'fsck on encrypted packfile' '
++	git -C index-pack.1 fsck
++'
++
++test_expect_success 'verify-pack on encrypted packfile' '
+ 	git -C index-pack.1 verify-pack .git/objects/pack/pack-$pack.pack
+ '
+ 
+@@ -110,3 +114,11 @@ test_expect_success 'index-pack on unencrypted packfile to encrypted packfile' '
+ 	pack=${pack#pack?} &&
+ 	test -f index-pack.2/.git/objects/pack/pack-$pack.pack
+ '
++
++test_expect_success 'fsck on unencrypted packfile to encrypted packfile' '
++	git -C index-pack.2 fsck
++'
++
++test_expect_success 'verify-pack on unencrypted packfile to encrypted packfile' '
++	git -C index-pack.2 verify-pack .git/objects/pack/pack-$pack.pack
++'
+-- 
+2.34.1.51.g7e1f4e9345.agit.6.5.6
+
