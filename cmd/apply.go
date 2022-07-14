@@ -42,7 +42,7 @@ func init() {
 		&agitOptions.ReleaseBranch,
 		"release-branch",
 		"r",
-		"",
+		"agit-master",
 		"the release branch name",
 	)
 
