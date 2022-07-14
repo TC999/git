@@ -57,6 +57,15 @@ func (t *TaskApplyTopic) amPatches(o *Options, taskContext *TaskContext) error {
 		return err
 	}
 
+	// Reset current branch to GitTargetVersion
+	// NOTES: It must after CheckoutBranch method
+	if o.ForceResetReleaseBranch {
+		fmt.Printf("Reminding: will reset current branch to %s\n", o.GitVersion)
+		if err = ResetCurrentBranch(o.CurrentPath, o.GitVersion); err != nil {
+			return err
+		}
+	}
+
 	// When finished, checkout back
 	defer func() {
 		if err = CheckoutBranch(o.CurrentPath, currentBranch); err != nil {
