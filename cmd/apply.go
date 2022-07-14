@@ -46,5 +46,13 @@ func init() {
 		"the release branch name",
 	)
 
+	applyCmd.Flags().BoolVarP(
+		&agitOptions.ForceResetReleaseBranch,
+		"force",
+		"f",
+		false,
+		"force reset release branch to git version",
+	)
+
 	rootCmd.AddCommand(applyCmd)
 }
