@@ -1,4 +1,5 @@
 TARGETS := patchwork
+FIND := find
 PKG := golang.aliyun-inc.com/agit/patchwork
 GOBUILD := @go build -mod=vendor
 GOTEST := @go test -mod=vendor
