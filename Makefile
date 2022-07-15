@@ -10,7 +10,7 @@ all:
 .PHONY: all
 
 util/patchwork:
-	make -C util
+	@make -C util 2>/dev/null
 
 .PHONY: util/patchwork
 
@@ -20,12 +20,24 @@ patchwork: util/patchwork
 export-patches: patchwork
 	@./patchwork export-patches
 
+define check_dest_envvar
+	$(if $(DEST), \
+                $(if $(filter ../% /%,$(DEST)), , \
+			$(error DEST should be a directory outside current dir (start with "../" or "/"))), \
+		$(error DEST is not defined))
+endef
+
 apply-patches: patchwork
-	@if test -z $(repo); then \
-  		echo "need provide repo argument"; \
-  		exit 128; \
-  	fi
-	@./patchwork apply-patches --apply-to $(repo)
+	@$(check_dest_envvar)
+	@if test -z $(DEST); then \
+		echo >&2 "Error: no target repo dir is provided."; \
+		echo >&2 "Please use: make apply-patches DEST=<target-dir>"; \
+		exit 1; \
+	elif ! test -d $(DEST); then \
+		echo >&2 "Error: path \"$(DEST)\" not exist"; \
+		exit 1; \
+	fi
+	@./patchwork apply-patches --apply-to $(DEST)
 
 clean:
 	@rm -rf patchwork
