@@ -56,7 +56,7 @@ func (t *TaskGenerateTestScriptList) writeTestScriptsFile(o *Options, taskContex
 
 	os.Remove(testSeriesFilePath)
 
-	contents := strings.Join(testFiles, "\n")
+	contents := strings.Join(testFiles, "\n") + "\n"
 
 	fmt.Printf("Starting to write %s file", _testScriptList)
 
