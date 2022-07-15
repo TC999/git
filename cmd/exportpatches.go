@@ -9,7 +9,7 @@ import (
 )
 
 var exportPatchCmd = &cobra.Command{
-	Use:   "export-patch",
+	Use:   "export-patches",
 	Short: "",
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := validateOptions(); err != nil {
