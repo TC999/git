@@ -63,7 +63,7 @@ func (t *TaskApplyTopic) amPatches(o *Options, taskContext *TaskContext) error {
 		return err
 	}
 
-	fmt.Printf("Will applying to '%s' branch...\n", o.ReleaseBranch)
+	fmt.Printf("Will applying to '%0.70s'...\n", o.ApplyTo)
 	defer fmt.Printf("All patches apply successfully\n\n")
 
 	for _, s := range series {
