@@ -57,5 +57,5 @@ func init() {
 		"the git version, such as v2.36.1",
 	)
 
-	rootCmd.AddCommand(exportTestCmd)
+	//rootCmd.AddCommand(exportTestCmd)
 }

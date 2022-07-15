@@ -116,7 +116,7 @@ func init() {
 		"the agit version, such as 6.5.9",
 	)
 
-	rootCmd.AddCommand(autoCmd)
+	//rootCmd.AddCommand(autoCmd)
 }
 
 func validateOptions() error {
