@@ -1,10 +1,21 @@
 PATCHWORK := patchwork
 
-all: export-patches
+all:
+	@echo "Available make targets:"
+	@echo
+	@echo "    patchwork     : build and install tool: patchwork"
+	@echo "    export-patches: export patches to patches/ directory."
+	@echo "    apply-patches : apply patches to tree in another workdir"
 
-patchwork: clean
-	@make -C util
-	@cp util/patchwork .
+.PHONY: all
+
+util/patchwork:
+	make -C util
+
+.PHONY: util/patchwork
+
+patchwork: util/patchwork
+	@cp $< $@
 
 export-patches: patchwork
 	@./patchwork export-patches
