@@ -20,5 +20,4 @@ t5593-fetch-write-packed-refs.sh
 t5594-remote-update-write-packed-refs.sh
 t6500-gc.sh
 t7703-repack-geometric.sh
-lib-httpd.sh
 t5583-http-curl-netrc-file.sh
