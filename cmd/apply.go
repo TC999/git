@@ -9,13 +9,16 @@ import (
 )
 
 var applyCmd = &cobra.Command{
-	Use:   "apply",
+	Use:   "apply-patches",
 	Short: "",
 	Run: func(cmd *cobra.Command, args []string) {
 		taskContext := &patchwork.TaskContext{}
 		tasks := &patchwork.ReleaseScheduler{}
+		readVersion := &patchwork.AGitVersion{}
 		applyTopic := &patchwork.TaskApplyTopic{}
-		tasks.Next(applyTopic, "apply_topic")
+		tasks.Next(readVersion, "read_version")
+		readVersion.Next(applyTopic, "apply_topic")
+
 		if err := tasks.Do(&agitOptions, taskContext); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
@@ -39,19 +42,11 @@ func init() {
 	)
 
 	applyCmd.Flags().StringVarP(
-		&agitOptions.ReleaseBranch,
-		"release-branch",
-		"r",
-		"agit-master",
-		"the release branch name",
-	)
-
-	applyCmd.Flags().BoolVarP(
-		&agitOptions.ForceResetReleaseBranch,
-		"force",
-		"f",
-		false,
-		"force reset release branch to git version",
+		&agitOptions.ApplyTo,
+		"apply-to",
+		"",
+		"",
+		"the folder to apply(It must be a git repo and have the git tags)",
 	)
 
 	rootCmd.AddCommand(applyCmd)

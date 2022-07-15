@@ -38,54 +38,44 @@ func (t *TaskApplyTopic) Next(scheduler Scheduler, name string) error {
 }
 
 func (t *TaskApplyTopic) amPatches(o *Options, taskContext *TaskContext) error {
-	currentPatchFolder := filepath.Join(o.CurrentPath, "patches", "t")
-	currentBranch, err := GetCurrentBranchName(o.CurrentPath)
+	seriesFile := filepath.Join(o.CurrentPath, _seriesFile)
+	patchesPath := filepath.Join(o.CurrentPath, "patches")
+
+	series, err := SeriesParse(seriesFile)
 	if err != nil {
 		return err
 	}
 
-	tmpFolder, err := os.MkdirTemp("", "patchwork-*")
-	if err != nil {
+	// Check apply to is or not clean in index
+	if err = CheckWorkTreeClean(o.ApplyTo); err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmpFolder)
 
-	fmt.Printf("Will applying to '%s' branch...\n", o.ReleaseBranch)
-
-	// Checkout branch
-	if err = CheckoutBranch(o.CurrentPath, o.ReleaseBranch); err != nil {
+	// Checkout branch to git tag on applyTo
+	if err = CheckoutBranch(o.ApplyTo, o.GitVersion); err != nil {
 		return err
 	}
 
 	// Reset current branch to GitTargetVersion
 	// NOTES: It must after CheckoutBranch method
-	if o.ForceResetReleaseBranch {
-		fmt.Printf("Reminding: will reset current branch to %s\n", o.GitVersion)
-		if err = ResetCurrentBranch(o.CurrentPath, o.GitVersion); err != nil {
-			return err
-		}
-	}
-
-	// When finished, checkout back
-	defer func() {
-		if err = CheckoutBranch(o.CurrentPath, currentBranch); err != nil {
-			fmt.Println("cannot checkout back: ", err.Error())
-		}
-	}()
-
-	patchFiles, err := t.copyFilesToFolder(currentPatchFolder, tmpFolder)
-	if err != nil {
+	fmt.Printf("Reminding: will reset current branch to %s\n", o.GitVersion)
+	if err = ResetCurrentBranch(o.ApplyTo, o.GitVersion); err != nil {
 		return err
 	}
 
-	for _, patchFile := range patchFiles {
+	fmt.Printf("Will applying to '%s' branch...\n", o.ReleaseBranch)
+	defer fmt.Printf("All patches apply successfully\n\n")
+
+	for _, s := range series {
+		tmpPatchPath := filepath.Join(patchesPath, s.PatchName)
+
 		// If not '.patch' file will ignore
-		if !strings.HasSuffix(patchFile, ".patch") {
+		if !strings.HasSuffix(tmpPatchPath, ".patch") {
 			continue
 		}
 
 		// Start apply patch
-		if err = t.amPatch(o, patchFile); err != nil {
+		if err = t.amPatch(o.ApplyTo, tmpPatchPath); err != nil {
 			return err
 		}
 	}
@@ -93,7 +83,7 @@ func (t *TaskApplyTopic) amPatches(o *Options, taskContext *TaskContext) error {
 	return nil
 }
 
-func (t *TaskApplyTopic) amPatch(o *Options, patchFile string) error {
+func (t *TaskApplyTopic) amPatch(repoPath, patchFile string) error {
 	var (
 		stdout bytes.Buffer
 		stderr bytes.Buffer
@@ -104,7 +94,7 @@ func (t *TaskApplyTopic) amPatch(o *Options, patchFile string) error {
 
 	fmt.Printf("Appling %0.70s...", filepath.Base(patchFile))
 
-	cmd, err := NewCommand(ctx, o.CurrentPath, nil, nil, &stdout, &stderr,
+	cmd, err := NewCommand(ctx, repoPath, nil, nil, &stdout, &stderr,
 		"git", "am", "-3", patchFile)
 	if err != nil {
 		return fmt.Errorf("apply patch failed, current patch: %s, err: %v", patchFile, err)
@@ -112,7 +102,7 @@ func (t *TaskApplyTopic) amPatch(o *Options, patchFile string) error {
 
 	if err = cmd.Wait(); err != nil {
 		defer func() {
-			if err := t.amAbort(o); err != nil {
+			if err := t.amAbort(repoPath); err != nil {
 				fmt.Println("cannot abort apply, you need to abort manually, err: ", err.Error())
 			}
 		}()
@@ -150,12 +140,12 @@ func (t *TaskApplyTopic) copyFilesToFolder(srcFolder, dstFolder string) ([]strin
 
 // When applying failed, then need abort.
 // if not do this, it will be failed on the next time.
-func (t *TaskApplyTopic) amAbort(o *Options) error {
+func (t *TaskApplyTopic) amAbort(repoPath string) error {
 	var stderr bytes.Buffer
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
-	cmd, err := NewCommand(ctx, o.CurrentPath, nil, nil, nil, &stderr,
+	cmd, err := NewCommand(ctx, repoPath, nil, nil, nil, &stderr,
 		"git", "am", "--abort")
 	if err != nil {
 		return fmt.Errorf("abort apply failed, err: %v", err)

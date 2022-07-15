@@ -22,4 +22,6 @@ type Options struct {
 	// Just used for internal
 	GitVersion  string
 	AGitVersion string
+
+	ApplyTo string
 }

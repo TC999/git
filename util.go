@@ -176,3 +176,25 @@ func CopyFile(src, dst string) error {
 
 	return nil
 }
+
+// CheckWorkTreeClean check current repo worktree is or not clean
+func CheckWorkTreeClean(repoPath string) error {
+	var (
+		stderr bytes.Buffer
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	cmd, err := NewCommand(ctx, repoPath, nil, nil, nil, &stderr,
+		"/bin/sh", "-c", "git diff --quiet HEAD && git diff --quiet --cached")
+	if err != nil {
+		return fmt.Errorf("the repo index not clean or not a git repo, err: %v", err)
+	}
+
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("the repo index not clean or not a git repo, stderr: %s, err: %v", stderr.String(), err)
+	}
+
+	return nil
+}
