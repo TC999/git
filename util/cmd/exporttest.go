@@ -20,7 +20,7 @@ var exportTestCmd = &cobra.Command{
 		readTopic := &patchwork.AGitTopicScheduler{}
 		topicVerify := &patchwork.TopicVerify{}
 		topicSort := &patchwork.TaskTopicSort{}
-		taskExportTest := &patchwork.TaskTopicTest{}
+		taskExportTest := &patchwork.TaskGenerateTestScriptList{}
 
 		tasks.Next(readVersion, "read_version")
 		readVersion.Next(taskRemoteName, "get_remote_name")

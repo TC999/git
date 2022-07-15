@@ -16,16 +16,16 @@ const (
 )
 
 const (
-	_testSeriesFile = "patches/series_test"
+	_testScriptList = "patches/test-scripts"
 )
 
-type TaskTopicTest struct {
+type TaskGenerateTestScriptList struct {
 	next     Scheduler
 	nextName string
 }
 
-func (t *TaskTopicTest) Do(o *Options, taskContext *TaskContext) error {
-	if err := t.writeTestSeriesFile(o, taskContext); err != nil {
+func (t *TaskGenerateTestScriptList) Do(o *Options, taskContext *TaskContext) error {
+	if err := t.writeTestScriptsFile(o, taskContext); err != nil {
 		return err
 	}
 
@@ -36,7 +36,7 @@ func (t *TaskTopicTest) Do(o *Options, taskContext *TaskContext) error {
 	return nil
 }
 
-func (t *TaskTopicTest) Next(scheduler Scheduler, name string) error {
+func (t *TaskGenerateTestScriptList) Next(scheduler Scheduler, name string) error {
 	if scheduler == nil {
 		return fmt.Errorf("the scheduler named '%s' is nil", name)
 	}
@@ -46,19 +46,19 @@ func (t *TaskTopicTest) Next(scheduler Scheduler, name string) error {
 	return nil
 }
 
-func (t *TaskTopicTest) writeTestSeriesFile(o *Options, taskContext *TaskContext) error {
+func (t *TaskGenerateTestScriptList) writeTestScriptsFile(o *Options, taskContext *TaskContext) error {
 	testFiles, err := t.getTestListFromTopic(o, taskContext)
 	if err != nil {
 		return err
 	}
 
-	testSeriesFilePath := filepath.Join(o.CurrentPath, _testSeriesFile)
+	testSeriesFilePath := filepath.Join(o.CurrentPath, _testScriptList)
 
 	os.Remove(testSeriesFilePath)
 
 	contents := strings.Join(testFiles, "\n")
 
-	fmt.Print("Starting to write t/series_test file")
+	fmt.Printf("Starting to write %s file", _testScriptList)
 
 	f, err := os.OpenFile(testSeriesFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
@@ -72,7 +72,7 @@ func (t *TaskTopicTest) writeTestSeriesFile(o *Options, taskContext *TaskContext
 	return nil
 }
 
-func (t *TaskTopicTest) getTestListFromTopic(o *Options, taskContext *TaskContext) ([]string, error) {
+func (t *TaskGenerateTestScriptList) getTestListFromTopic(o *Options, taskContext *TaskContext) ([]string, error) {
 	var res []string
 	if len(taskContext.topics) == 0 {
 		return nil, fmt.Errorf("not found topic")
@@ -97,7 +97,7 @@ func (t *TaskTopicTest) getTestListFromTopic(o *Options, taskContext *TaskContex
 // getTopicTestFiles get test files from topic
 // it just gets the first level on test which path start with 't/',
 // such as 't/t0940-crypto-repository.sh'
-func (t *TaskTopicTest) getTopicTestFiles(o *Options, topicBranchName string) ([]string, error) {
+func (t *TaskGenerateTestScriptList) getTopicTestFiles(o *Options, topicBranchName string) ([]string, error) {
 	var (
 		stdout bytes.Buffer
 		stderr bytes.Buffer
