@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	_testFileReg = "t/([^/]*.sh)"
+	_testFileReg = "t/(t[0-9]{4,}-[^/]*.sh)"
 )
 
 const (
