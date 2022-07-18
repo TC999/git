@@ -96,5 +96,13 @@ func init() {
 		"the agit version, such as 6.5.9",
 	)
 
+	exportPatchCmd.Flags().StringVarP(
+		&agitOptions.PatchFolder,
+		"patches",
+		"",
+		"",
+		"the patches path, if not set, it will use current patches folder",
+	)
+
 	rootCmd.AddCommand(exportPatchCmd)
 }
