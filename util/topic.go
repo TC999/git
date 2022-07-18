@@ -351,13 +351,17 @@ func (a *AGitTopicScheduler) choiceBranch(o *Options, topicName string, localTop
 				" plese use '--use-local' or '--use-remote'", topicName)
 		}
 
-		if tmpLocalBranch == nil || tmpRemoteBranch == nil {
-			// tmpLocalBranch or tmpRemoteBranch is nil
-			return nil, 0, fmt.Errorf("the topic '%s' local and remote are inconsistent,"+
-				" please use '--use-local' or '--use-remote'", topicName)
+		if tmpLocalBranch != nil {
+			return tmpLocalBranch, _branchLocalType, nil
 		}
 
-		return tmpLocalBranch, _branchLocalType, nil
+		if tmpRemoteBranch != nil {
+			return tmpRemoteBranch, _branchRemoteType, nil
+		}
+
+		// tmpLocalBranch and tmpRemoteBranch is nil
+		return nil, 0, fmt.Errorf("the topic '%s' local and remote are inconsistent,"+
+			" please use '--use-local' or '--use-remote'", topicName)
 	}
 
 	return nil, 0, fmt.Errorf("BUG: branch mode invalid")
