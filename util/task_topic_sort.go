@@ -153,6 +153,5 @@ func sortDependTopics(dependTopicDesc []*dependDesc) ([]*dependDesc, error) {
 		result = append(result, links...)
 	}
 
-	// TODO 由于顺序变更，depend index 是错的，需要校正
 	return result, nil
 }
