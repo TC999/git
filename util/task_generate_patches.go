@@ -111,6 +111,11 @@ func (g *GeneratePatches) Generate(o *Options, taskContext *TaskContext) error {
 				}
 			}
 
+			// Replace patch client git version
+			if err = g.ReplaceClientGitVersion(o, tmpPatchName); err != nil {
+				return err
+			}
+
 			if strings.HasPrefix(tmpPatchName, "patches/") {
 				tmpPatchName = strings.Replace(tmpPatchName, "patches/", "", 1)
 			}
@@ -125,6 +130,21 @@ func (g *GeneratePatches) Generate(o *Options, taskContext *TaskContext) error {
 	}
 
 	fmt.Printf("Successfully generate all the patches\n\n")
+	return nil
+}
+
+// ReplaceClientGitVersion replace the patches last line version
+func (g *GeneratePatches) ReplaceClientGitVersion(o *Options, patchName string) error {
+	patchPath := filepath.Join(o.CurrentPath, patchName)
+	currentVersion, err := GetCurrentGitVersion(o.CurrentPath)
+	if err != nil {
+		return err
+	}
+
+	if err := FindLastLineFromEndAndReplace(patchPath, currentVersion, "patchwork"); err != nil {
+		return err
+	}
+
 	return nil
 }
 
