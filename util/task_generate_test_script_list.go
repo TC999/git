@@ -16,7 +16,7 @@ const (
 )
 
 const (
-	_testScriptList = "patches/test-scripts"
+	_testScriptList = "test-scripts"
 )
 
 type TaskGenerateTestScriptList struct {
@@ -47,15 +47,24 @@ func (t *TaskGenerateTestScriptList) Next(scheduler Scheduler, name string) erro
 }
 
 func (t *TaskGenerateTestScriptList) writeTestScriptsFile(o *Options, taskContext *TaskContext) error {
+	var (
+		testSeriesFilePath string
+		patchFolder        = filepath.Join(o.CurrentPath, "patches")
+	)
+
 	testFiles, err := t.getTestListFromTopic(o, taskContext)
 	if err != nil {
 		return err
 	}
 
-	testSeriesFilePath := filepath.Join(o.CurrentPath, _testScriptList)
+	if len(o.PatchFolder) > 0 {
+		patchFolder = o.PatchFolder
+	}
 
+	testSeriesFilePath = filepath.Join(patchFolder, _testScriptList)
+
+	// TODO 需要检查一下用户指定的目录是否为空，不为空则提醒
 	os.Remove(testSeriesFilePath)
-
 	contents := strings.Join(testFiles, "\n") + "\n"
 
 	fmt.Printf("Starting to write %s file", _testScriptList)
