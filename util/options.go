@@ -24,4 +24,7 @@ type Options struct {
 	AGitVersion string
 
 	ApplyTo string
+
+	// User custom folder for patch generate
+	PatchFolder string
 }
