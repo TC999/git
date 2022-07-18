@@ -198,3 +198,81 @@ func CheckWorkTreeClean(repoPath string) error {
 
 	return nil
 }
+
+// FindLastLineFromEndAndReplace will read the file last line, but expect the '\r' or '\n'
+// If the last line equal with old, then will replace with new
+func FindLastLineFromEndAndReplace(filePath string, old, new string) error {
+	var (
+		line     bytes.Buffer
+		res      []byte
+		cursor   int64
+		fileSize int64
+		fileStat os.FileInfo
+		oneChar  = make([]byte, 1)
+	)
+
+	f, err := os.OpenFile(filePath, os.O_RDWR, 0o644)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	fileStat, err = f.Stat()
+	if err != nil {
+		return err
+	}
+
+	fileSize = fileStat.Size()
+
+	for {
+		cursor -= 1
+		_, err = f.Seek(cursor, io.SeekEnd)
+		if err != nil {
+			return err
+		}
+
+		_, err = f.Read(oneChar)
+		if err != nil {
+			return err
+		}
+
+		// Get '\r' or '\n'
+		if cursor != -1 && (oneChar[0] == 10 || oneChar[0] == 13) && line.Len() != 0 {
+			if line.Len() == 1 {
+				line.Reset()
+				continue
+			}
+
+			break
+		}
+
+		line.Write(oneChar)
+
+		// Read the file head
+		if cursor == -fileSize {
+			break
+		}
+	}
+
+	res = bytes.TrimSpace(line.Bytes())
+	for i, j := 0, len(res)-1; i < j; i, j = i+1, j-1 {
+		res[i], res[j] = res[j], res[i]
+	}
+
+	// Find the text and append new, remove old
+	if string(res) == old {
+		index := fileSize + cursor + 1
+		n, err := f.WriteAt([]byte(new+"\n"), index)
+		if err != nil {
+			return err
+		}
+
+		if err = f.Truncate(index + int64(n)); err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	return fmt.Errorf("the old string not found at the file end, old: %s", old)
+}
