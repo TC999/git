@@ -63,7 +63,6 @@ func (t *TaskGenerateTestScriptList) writeTestScriptsFile(o *Options, taskContex
 
 	testSeriesFilePath = filepath.Join(patchFolder, _testScriptList)
 
-	// TODO 需要检查一下用户指定的目录是否为空，不为空则提醒
 	os.Remove(testSeriesFilePath)
 	contents := strings.Join(testFiles, "\n") + "\n"
 
