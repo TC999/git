@@ -299,3 +299,31 @@ func GetCurrentGitVersion(repoPath string) (string, error) {
 
 	return strings.TrimSpace(strings.Replace(stdout.String(), "git version ", "", 1)), nil
 }
+
+// CheckFolderIsHaveFiles check the folder is or not have files
+func CheckFolderIsHaveFiles(patch string) (bool, error) {
+	files, err := os.ReadDir(patch)
+	if err != nil {
+		return false, err
+	}
+
+	return len(files) > 0, nil
+}
+
+// ConsoleConfirm will ask user to choice y/n
+func ConsoleConfirm() bool {
+	var (
+		confirm string
+	)
+	
+	fmt.Println(" (y/N): ")
+
+	if _, err := fmt.Scan(&confirm); err != nil {
+		// There will be panic while user stdin got error.
+		panic(err)
+	}
+
+	confirm = strings.TrimSpace(strings.ToLower(confirm))
+
+	return confirm == "y" || confirm == "yes"
+}
