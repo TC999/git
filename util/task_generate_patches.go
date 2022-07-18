@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	_outputFolderName = "patches/t"
-	_seriesFile       = "patches/series"
+	_outputFolderName = "t"
+	_seriesFile       = "series"
 )
 
 const (
@@ -49,7 +49,10 @@ func (g *GeneratePatches) Next(scheduler Scheduler, name string) error {
 }
 
 func (g *GeneratePatches) Generate(o *Options, taskContext *TaskContext) error {
-	var patchNumber = 1
+	var (
+		patchNumber = 1
+		patchFolder = filepath.Join(o.CurrentPath, "patches")
+	)
 
 	if len(taskContext.topics) <= 0 {
 		return fmt.Errorf("the topic is empty")
@@ -58,11 +61,15 @@ func (g *GeneratePatches) Generate(o *Options, taskContext *TaskContext) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
-	if err := createPatchFolder(o); err != nil {
+	if len(strings.TrimSpace(o.PatchFolder)) > 0 {
+		patchFolder = o.PatchFolder
+	}
+
+	if err := g.createPatchFolder(patchFolder, ""); err != nil {
 		return err
 	}
 
-	f, err := os.OpenFile(filepath.Join(o.CurrentPath, _seriesFile), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	f, err := os.OpenFile(filepath.Join(patchFolder, _seriesFile), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return fmt.Errorf("write series file failed, err: %v", err)
 	}
@@ -89,7 +96,7 @@ func (g *GeneratePatches) Generate(o *Options, taskContext *TaskContext) error {
 		}
 
 		cmd, err := NewCommand(ctx, o.CurrentPath, nil, nil, &stdout, &stderr,
-			"git", "format-patch", "-o", _outputFolderName,
+			"git", "format-patch", "-o", filepath.Join(patchFolder, _outputFolderName),
 			fmt.Sprintf("--start-number=%04d", patchNumber), rangeArgument)
 		if err != nil {
 			return fmt.Errorf("generate patch failed, err: %v", err)
@@ -102,25 +109,22 @@ func (g *GeneratePatches) Generate(o *Options, taskContext *TaskContext) error {
 		scanner := bufio.NewScanner(bytes.NewReader(stdout.Bytes()))
 
 		for scanner.Scan() {
-			tmpPatchName := scanner.Text()
+			tmpPatchPath := scanner.Text()
 
 			// Replace agit version
 			if isReplaceAgitVersion {
-				if err = setAgitVersionOnPatch(o, tmpPatchName); err != nil {
+				if err = g.setAgitVersionOnPatch(o, tmpPatchPath); err != nil {
 					return err
 				}
 			}
 
 			// Replace patch client git version
-			if err = g.ReplaceClientGitVersion(o, tmpPatchName); err != nil {
+			if err = g.ReplaceClientGitVersion(o, tmpPatchPath); err != nil {
 				return err
 			}
 
-			if strings.HasPrefix(tmpPatchName, "patches/") {
-				tmpPatchName = strings.Replace(tmpPatchName, "patches/", "", 1)
-			}
-
-			f.WriteString(fmt.Sprintf("%s\n", tmpPatchName))
+			patchName := filepath.Join(_outputFolderName, filepath.Base(tmpPatchPath))
+			f.WriteString(fmt.Sprintf("%s\n", patchName))
 			patchNumber++
 		}
 
@@ -134,8 +138,7 @@ func (g *GeneratePatches) Generate(o *Options, taskContext *TaskContext) error {
 }
 
 // ReplaceClientGitVersion replace the patches last line version
-func (g *GeneratePatches) ReplaceClientGitVersion(o *Options, patchName string) error {
-	patchPath := filepath.Join(o.CurrentPath, patchName)
+func (g *GeneratePatches) ReplaceClientGitVersion(o *Options, patchPath string) error {
 	currentVersion, err := GetCurrentGitVersion(o.CurrentPath)
 	if err != nil {
 		return err
@@ -148,10 +151,8 @@ func (g *GeneratePatches) ReplaceClientGitVersion(o *Options, patchName string) 
 	return nil
 }
 
-// setAgitVersionOnPatch will replace 'agit.dev' to really agit verison
-func setAgitVersionOnPatch(o *Options, patchName string) error {
-	patchPath := filepath.Join(o.CurrentPath, patchName)
-
+// setAgitVersionOnPatch will replace 'agit.dev' to really agit version
+func (g *GeneratePatches) setAgitVersionOnPatch(o *Options, patchPath string) error {
 	contents, err := os.ReadFile(patchPath)
 	if err != nil {
 		return err
@@ -162,8 +163,15 @@ func setAgitVersionOnPatch(o *Options, patchName string) error {
 	return os.WriteFile(patchPath, []byte(newContents), 0o644)
 }
 
-func createPatchFolder(o *Options) error {
-	patchFolder := filepath.Join(o.CurrentPath, "patches", "t")
+func (g *GeneratePatches) createPatchFolder(patchPath, prefix string) error {
+	tmpPatchArray := []string{patchPath}
+	prefixArray := strings.Split(prefix, "/")
+	tmpPatchArray = append(tmpPatchArray, prefixArray...)
+
+	// Why have t folder? the t folder will save all the patches files.
+	tmpPatchArray = append(tmpPatchArray, "t")
+
+	patchFolder := filepath.Join(tmpPatchArray...)
 	_, err := os.Stat(patchFolder)
 	if err == nil {
 		return nil
