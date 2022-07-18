@@ -276,3 +276,26 @@ func FindLastLineFromEndAndReplace(filePath string, old, new string) error {
 
 	return fmt.Errorf("the old string not found at the file end, old: %s", old)
 }
+
+// GetCurrentGitVersion get current git version
+func GetCurrentGitVersion(repoPath string) (string, error) {
+	var (
+		stdout bytes.Buffer
+		stderr bytes.Buffer
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	cmd, err := NewCommand(ctx, repoPath, nil, nil, &stdout, &stderr,
+		"git", "version")
+	if err != nil {
+		return "", fmt.Errorf("get git version failed, err: %v", err)
+	}
+
+	if err = cmd.Wait(); err != nil {
+		return "", fmt.Errorf("get git version failed, stderr: %s, err: %v", stderr.String(), err)
+	}
+
+	return strings.TrimSpace(strings.Replace(stdout.String(), "git version ", "", 1)), nil
+}
