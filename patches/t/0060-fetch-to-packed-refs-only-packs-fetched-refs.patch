@@ -797,5 +797,4 @@ index 75ebaa0c29..7ed073e376 100755
  	test_cmp expect actual
  '
 -- 
-2.34.1.51.g7e1f4e9345.agit.6.5.6
-
+patchwork

@@ -300,5 +300,4 @@ index 0b0e987fdb..13c06e2c4f 100755
  
  test_expect_success "create known-size (1024 bytes) commit" '
 -- 
-2.34.1.51.g7e1f4e9345.agit.6.5.6
-
+patchwork

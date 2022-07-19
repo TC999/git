@@ -85,5 +85,4 @@ index 3bdd71be5e..a8b3150c9f 100644
  	if (curl_ssl_verify == -1)
  		curl_ssl_verify = 1;
 -- 
-2.34.1.51.g7e1f4e9345.agit.6.5.6
-
+patchwork

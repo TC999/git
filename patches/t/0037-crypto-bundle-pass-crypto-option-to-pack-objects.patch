@@ -100,5 +100,4 @@ index a2064766fd..5159fd8e92 100644
  		cd repo2.git &&
  		git fetch ../4.bundle "+refs/*:refs/*"
 -- 
-2.34.1.51.g7e1f4e9345.agit.6.5.6
-
+patchwork

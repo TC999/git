@@ -63,5 +63,4 @@ index 0e28da2ce9..dd6bbad44e 100644
  		make_user_friendly_and_stable_output >actual &&
  	cat >expect <<-EOF &&
 -- 
-2.34.1.51.g7e1f4e9345.agit.6.5.6
-
+patchwork

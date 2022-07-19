@@ -136,5 +136,4 @@ index cd6c53360d..dcd940002f 100755
  	GIT_PROGRESS_DELAY=0 git -c gc.writeCommitGraph=true gc --no-quiet >stdout 2>stderr &&
  	test_must_be_empty stdout &&
 -- 
-2.34.1.51.g7e1f4e9345.agit.6.5.6
-
+patchwork

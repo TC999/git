@@ -316,5 +316,4 @@ index 0000000000..d7b30c1e8f
 +	grep "fail to run proc-receive hook" actual
 +'
 -- 
-2.34.1.51.g7e1f4e9345.agit.6.5.6
-
+patchwork

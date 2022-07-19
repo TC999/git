@@ -54,5 +54,4 @@ index a06d8d0c0a..c36802aa92 100644
  
  test_expect_success 'will fail with too short secret (with --mmap)' '
 -- 
-2.34.1.51.g7e1f4e9345.agit.6.5.6
-
+patchwork

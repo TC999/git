@@ -47,5 +47,4 @@ index 3d73ea2b30..44ebf76063 100644
  	/* Normally if we have it in the pack then we do not bother writing
  	 * it out into .git/objects/??/?{38} file.
 -- 
-2.34.1.51.g7e1f4e9345.agit.6.5.6
-
+patchwork

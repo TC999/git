@@ -339,5 +339,4 @@ index c36802aa92..98d474b6e7 100644
  	GIT_TEST_CRYPTO_ALGORITHM_TYPE=64 GIT_TRACE_CRYPTO=1 \
  		test-tool agit-crypto --mmap -z \
 -- 
-2.34.1.51.g7e1f4e9345.agit.6.5.6
-
+patchwork

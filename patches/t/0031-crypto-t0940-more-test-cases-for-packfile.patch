@@ -603,5 +603,4 @@ index 0000000000..d5c975ba5c
 +
 +test_on_restore_repo_from_packs -C restore-encrypted --fix-thin
 -- 
-2.34.1.51.g7e1f4e9345.agit.6.5.6
-
+patchwork
