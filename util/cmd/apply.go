@@ -49,5 +49,13 @@ func init() {
 		"the folder to apply(It must be a git repo and have the git tags)",
 	)
 
+	applyCmd.Flags().StringVarP(
+		&agitOptions.PatchFolder,
+		"patches",
+		"",
+		"",
+		"the patches path, if not set, it will use current patches folder",
+	)
+
 	rootCmd.AddCommand(applyCmd)
 }

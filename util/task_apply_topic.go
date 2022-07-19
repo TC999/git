@@ -38,8 +38,19 @@ func (t *TaskApplyTopic) Next(scheduler Scheduler, name string) error {
 }
 
 func (t *TaskApplyTopic) amPatches(o *Options, taskContext *TaskContext) error {
-	seriesFile := filepath.Join(o.CurrentPath, _seriesFile)
-	patchesPath := filepath.Join(o.CurrentPath, "patches")
+	var (
+		patchFolder = filepath.Join(o.CurrentPath, "patches")
+	)
+
+	if len(o.PatchFolder) > 0 {
+		patchFolder = o.PatchFolder
+	}
+
+	if _, err := os.Stat(patchFolder); err != nil {
+		return fmt.Errorf("ERROR: the patch '%s' not exist", patchFolder)
+	}
+
+	seriesFile := filepath.Join(patchFolder, _seriesFile)
 
 	series, err := SeriesParse(seriesFile)
 	if err != nil {
@@ -67,7 +78,7 @@ func (t *TaskApplyTopic) amPatches(o *Options, taskContext *TaskContext) error {
 	defer fmt.Printf("All patches apply successfully\n\n")
 
 	for _, s := range series {
-		tmpPatchPath := filepath.Join(patchesPath, s.PatchName)
+		tmpPatchPath := filepath.Join(patchFolder, s.PatchName)
 
 		// If not '.patch' file will ignore
 		if !strings.HasSuffix(tmpPatchPath, ".patch") {
