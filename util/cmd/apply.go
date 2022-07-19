@@ -42,6 +42,22 @@ func init() {
 	)
 
 	applyCmd.Flags().StringVarP(
+		&agitOptions.GitVersion,
+		"git-version",
+		"",
+		"",
+		"the git version, such as v2.36.1",
+	)
+
+	applyCmd.Flags().StringVarP(
+		&agitOptions.AGitVersion,
+		"agit-version",
+		"",
+		"",
+		"the agit version, such as 6.5.9",
+	)
+
+	applyCmd.Flags().StringVarP(
 		&agitOptions.ApplyTo,
 		"apply-to",
 		"",
