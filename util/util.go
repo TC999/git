@@ -315,7 +315,7 @@ func ConsoleConfirm() bool {
 	var (
 		confirm string
 	)
-	
+
 	fmt.Println(" (y/N): ")
 
 	if _, err := fmt.Scan(&confirm); err != nil {
@@ -326,4 +326,21 @@ func ConsoleConfirm() bool {
 	confirm = strings.TrimSpace(strings.ToLower(confirm))
 
 	return confirm == "y" || confirm == "yes"
+}
+
+// MkdirDirAll will check the folder whether exist, if not, will
+// create it.
+func MkdirDirAll(folderPath string) error {
+	_, err := os.Stat(folderPath)
+	if os.IsNotExist(err) {
+		fmt.Printf("WARNING: the folder '%s' not exist, patchwork will create it\n", folderPath)
+		return os.MkdirAll(folderPath, 0o755)
+	}
+
+	// Other errors will return
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

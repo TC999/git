@@ -35,7 +35,7 @@ var exportPatchCmd = &cobra.Command{
 		taskTopicTest.Next(nil, "no_task")
 
 		if err := tasks.Do(&agitOptions, taskContext); err != nil {
-			fmt.Printf("%s", err.Error())
+			fmt.Printf("%s\n", err.Error())
 			os.Exit(1)
 		}
 	},

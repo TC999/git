@@ -65,23 +65,19 @@ func (g *GeneratePatches) Generate(o *Options, taskContext *TaskContext) error {
 		patchFolder = o.PatchFolder
 	}
 
-	// If user provide '--patches', will check folder whether folder have files.
-	// If have some filed, then will confirm user whether continue or cancel.
-	if len(o.PatchFolder) > 0 {
-		isHaveFile, err := CheckFolderIsHaveFiles(o.PatchFolder)
-		if err != nil {
-			return err
-		}
+	// If the patchFolder not exit, will try to create
+	if err := MkdirDirAll(patchFolder); err != nil {
+		return err
+	}
 
-		if isHaveFile {
-			fmt.Printf("The folder: %s not empty, do you want to overwrite?", o.PatchFolder)
-			confirmRes := ConsoleConfirm()
-			if !confirmRes {
-				return fmt.Errorf("patchwork canceled")
-			}
+	isHaveFile, err := CheckFolderIsHaveFiles(patchFolder)
+	if err != nil {
+		return err
+	}
 
-			os.RemoveAll(patchFolder)
-		}
+	if isHaveFile {
+		return fmt.Errorf("ERROR: the patch '%s' is not empty, please manually delete the contents",
+			patchFolder)
 	}
 
 	if err := g.createPatchFolder(patchFolder, ""); err != nil {
