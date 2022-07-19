@@ -18,6 +18,7 @@ patchwork: util/patchwork
 	@cp $< $@
 
 export-patches: patchwork
+	@rm -rf patches
 	@./patchwork export-patches
 
 define check_dest_envvar
