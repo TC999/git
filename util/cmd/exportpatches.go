@@ -66,7 +66,7 @@ func init() {
 
 	exportPatchCmd.Flags().BoolVarP(
 		&agitOptions.UseLocal,
-		"user-local",
+		"use-local",
 		"",
 		false,
 		"if local and remote not same, then user local branch",
