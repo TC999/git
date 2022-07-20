@@ -2,3 +2,5 @@
 DS_Store
 main
 patchwork
+/test/trash directory*
+/test/test-results
