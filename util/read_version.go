@@ -18,6 +18,28 @@ type AGitVersion struct {
 }
 
 func (a *AGitVersion) Do(o *Options, taskContext *TaskContext) error {
+	if err := a.readVersion(o, taskContext); err != nil {
+		return err
+	}
+
+	if a.next != nil {
+		return a.next.Do(o, taskContext)
+	}
+
+	return nil
+}
+
+func (a *AGitVersion) Next(scheduler Scheduler, name string) error {
+	if scheduler == nil {
+		return fmt.Errorf("the %s is nil", name)
+	}
+
+	a.next = scheduler
+	a.nextName = name
+	return nil
+}
+
+func (a *AGitVersion) readVersion(o *Options, taskContext *TaskContext) error {
 	if o.GitVersion != "" && o.AGitVersion != "" {
 		return nil
 	}
@@ -55,19 +77,5 @@ func (a *AGitVersion) Do(o *Options, taskContext *TaskContext) error {
 	o.GitVersion = string(gitVersion)
 	o.AGitVersion = string(agitVersion)
 
-	if a.next != nil {
-		return a.next.Do(o, taskContext)
-	}
-
-	return nil
-}
-
-func (a *AGitVersion) Next(scheduler Scheduler, name string) error {
-	if scheduler == nil {
-		return fmt.Errorf("the %s is nil", name)
-	}
-
-	a.next = scheduler
-	a.nextName = name
 	return nil
 }
