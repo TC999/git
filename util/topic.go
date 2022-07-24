@@ -52,7 +52,7 @@ type AGitTopicScheduler struct {
 	topics []*Topic
 
 	// It is used to check local and remote, internal field
-	preTopics map[string]struct{}
+	preTopics map[string]int
 
 	localTopicBranches  map[string]*Branch
 	remoteTopicBranches map[string]*Branch
@@ -61,7 +61,11 @@ type AGitTopicScheduler struct {
 // preReadTopicFiles this method will pre-read topic.txt, it just used for ignore the remote
 // and local not contains topics in topic.txt
 func (a *AGitTopicScheduler) preReadTopicFiles(o *Options) error {
-	res := make(map[string]struct{})
+	var (
+		res       = make(map[string]int)
+		index int = -1
+	)
+
 	topicFilePath := path.Join(o.CurrentPath, _topicName)
 	contents, err := os.ReadFile(topicFilePath)
 	if err != nil {
@@ -70,6 +74,7 @@ func (a *AGitTopicScheduler) preReadTopicFiles(o *Options) error {
 
 	scanner := bufio.NewScanner(bytes.NewReader(contents))
 	for scanner.Scan() {
+		index++
 		tmpTopic := strings.TrimSpace(scanner.Text())
 
 		// Current line is code comment, just ignore it
@@ -88,7 +93,7 @@ func (a *AGitTopicScheduler) preReadTopicFiles(o *Options) error {
 			return fmt.Errorf("the topic '%s' exists multiple times, please check it again", tmpTopic)
 		}
 
-		res[tmpTopic] = struct{}{}
+		res[tmpTopic] = index
 	}
 
 	a.preTopics = res
@@ -226,12 +231,6 @@ func (a *AGitTopicScheduler) ReadRemoteTopicBranch(o *Options) error {
 
 // GetTopics about to depend, just support one depend topic
 func (a *AGitTopicScheduler) GetTopics(o *Options) error {
-	var (
-		// Just used to record the index for depends
-		tmpCache = make(map[string]int)
-		index    int
-	)
-
 	topicFilePath := path.Join(o.CurrentPath, _topicName)
 
 	if err := CheckFileExist(topicFilePath); err != nil {
@@ -292,10 +291,9 @@ func (a *AGitTopicScheduler) GetTopics(o *Options) error {
 			}
 
 			if len(topicName) > 0 {
-				if v, ok := tmpCache[noNumberDependBranch]; ok {
+				if v, ok := a.preTopics[noNumberDependBranch]; ok {
 					tmpDependIndex = v
 				}
-
 			}
 
 			a.topics = append(a.topics,
@@ -305,10 +303,6 @@ func (a *AGitTopicScheduler) GetTopics(o *Options) error {
 					BranchType:  tmpBranchType,
 					GitBranch:   tmpBranch,
 				})
-
-			tmpCache[topicName] = index
-
-			index++
 		}
 	}
 

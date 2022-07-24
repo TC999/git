@@ -109,8 +109,9 @@ func sortDependTopics(dependTopicDesc []*dependDesc) ([]*dependDesc, error) {
 	}
 
 	sort.Slice(dependTopicDesc, func(i, j int) bool {
-		return dependTopicDesc[i].CurrentIndex < dependTopicDesc[j].CurrentIndex &&
-			dependTopicDesc[i].DependIndex < dependTopicDesc[j].DependIndex
+		//return dependTopicDesc[i].CurrentIndex < dependTopicDesc[j].CurrentIndex &&
+		//	dependTopicDesc[i].DependIndex < dependTopicDesc[j].DependIndex &&
+		return dependTopicDesc[i].DependIndex > dependTopicDesc[j].CurrentIndex
 	})
 
 	continueSeek := true

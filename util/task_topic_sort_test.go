@@ -244,19 +244,19 @@ func TestTaskTopicSort_sortDepend(t1 *testing.T) {
 					},
 				},
 				{
-					TopicName:   "c",
-					DependIndex: 1,
-					BranchType:  0,
-					GitBranch: &Branch{
-						BranchName: "c",
-					},
-				},
-				{
 					TopicName:   "d",
 					DependIndex: 2,
 					BranchType:  0,
 					GitBranch: &Branch{
 						BranchName: "d",
+					},
+				},
+				{
+					TopicName:   "c",
+					DependIndex: 1,
+					BranchType:  0,
+					GitBranch: &Branch{
+						BranchName: "c",
 					},
 				},
 				{
