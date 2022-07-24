@@ -82,6 +82,8 @@ func (t *TaskGenerateTestScriptList) writeTestScriptsFile(o *Options, taskContex
 
 func (t *TaskGenerateTestScriptList) getTestListFromTopic(o *Options, taskContext *TaskContext) ([]string, error) {
 	var res []string
+	testCheck := make(map[string]struct{})
+
 	if len(taskContext.topics) == 0 {
 		return nil, fmt.Errorf("not found topic")
 	}
@@ -96,7 +98,12 @@ func (t *TaskGenerateTestScriptList) getTestListFromTopic(o *Options, taskContex
 			return nil, err
 		}
 
-		res = append(res, tmpTestFiles...)
+		for _, testFile := range tmpTestFiles {
+			if _, ok := testCheck[testFile]; !ok {
+				res = append(res, testFile)
+				testCheck[testFile] = struct{}{}
+			}
+		}
 	}
 
 	return res, nil
