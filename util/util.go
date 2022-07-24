@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -56,10 +55,10 @@ func TrimTopicPrefixNumber(topicName string) string {
 
 		// The index 1 is the string self
 		if len(matchedNameArray) != 2 {
-			return path.Join("topic/", tmpTopic)
+			return tmpTopic
 		}
 
-		return path.Join("topic/", reg.FindStringSubmatch(tmpTopic)[1])
+		return reg.FindStringSubmatch(tmpTopic)[1]
 	}
 
 	return ""

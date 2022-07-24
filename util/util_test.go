@@ -20,21 +20,21 @@ func TestTrimTopicPrefixNumber(t *testing.T) {
 			args: args{
 				topicName: "topic/0001-agit-txn",
 			},
-			want: "topic/agit-txn",
+			want: "agit-txn",
 		},
 		{
 			name: "only_one_number",
 			args: args{
 				topicName: "topic/1-agit-txn",
 			},
-			want: "topic/agit-txn",
+			want: "agit-txn",
 		},
 		{
 			name: "no_number",
 			args: args{
 				topicName: "topic/agit-txn",
 			},
-			want: "topic/agit-txn",
+			want: "agit-txn",
 		},
 		{
 			// We do not support without dash after number,
@@ -43,21 +43,21 @@ func TestTrimTopicPrefixNumber(t *testing.T) {
 			args: args{
 				topicName: "topic/0001agit-txn",
 			},
-			want: "topic/0001agit-txn",
+			want: "0001agit-txn",
 		},
 		{
 			name: "no_topic_prefix_and_with_number",
 			args: args{
 				topicName: "0001-agit-txn",
 			},
-			want: "topic/agit-txn",
+			want: "agit-txn",
 		},
 		{
 			name: "no_topic_prefix_and_no_number",
 			args: args{
 				topicName: "agit-txn",
 			},
-			want: "topic/agit-txn",
+			want: "agit-txn",
 		},
 	}
 	for _, tt := range tests {
