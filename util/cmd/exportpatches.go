@@ -23,6 +23,7 @@ var exportPatchCmd = &cobra.Command{
 		readVersion := &patchwork.AGitVersion{}
 		readTopic := &patchwork.AGitTopicScheduler{}
 		topicSort := &patchwork.TaskTopicSort{}
+		topicVerify := &patchwork.TopicVerify{}
 		generatePatches := &patchwork.GeneratePatches{}
 		taskTopicTest := &patchwork.TaskGenerateTestScriptList{}
 
@@ -30,7 +31,8 @@ var exportPatchCmd = &cobra.Command{
 		readVersion.Next(taskRemoteName, "get_remote_name")
 		taskRemoteName.Next(readTopic, "read_topic")
 		readTopic.Next(topicSort, "topic_sort")
-		topicSort.Next(generatePatches, "generate_patches")
+		topicSort.Next(topicVerify, "topic_verify")
+		topicVerify.Next(generatePatches, "generate_patches")
 		generatePatches.Next(taskTopicTest, "generate_test_scripts_file")
 		taskTopicTest.Next(nil, "no_task")
 
