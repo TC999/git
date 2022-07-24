@@ -44,15 +44,23 @@ func verify(o *Options, taskContext *TaskContext) error {
 			return err
 		}
 
-		if err := verifyBranchIsRebasedGitVersion(o, topic.GitBranch); err != nil {
+		if err := verifyBranchIsRebasedGitVersion(o, topic.GitBranch.BranchName, o.GitVersion); err != nil {
 			return err
+		}
+
+		if topic.DependIndex > -1 {
+			branch1 := topic.GitBranch.BranchName
+			branch2 := taskContext.topics[topic.DependIndex].GitBranch.BranchName
+			if err := verifyBranchIsRebasedGitVersion(o, branch1, branch2); err != nil {
+				return err
+			}
 		}
 	}
 
 	return nil
 }
 
-func verifyBranchIsRebasedGitVersion(o *Options, branch *Branch) error {
+func verifyBranchIsRebasedGitVersion(o *Options, branch1, branch2 string) error {
 	var (
 		stdout bytes.Buffer
 		stderr bytes.Buffer
@@ -61,9 +69,9 @@ func verifyBranchIsRebasedGitVersion(o *Options, branch *Branch) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
-	if branch != nil {
+	if branch1 != "" && branch2 != "" {
 		cmd, err := NewCommand(ctx, o.CurrentPath, nil, nil, &stdout, &stderr,
-			"git", "log", "--oneline", fmt.Sprintf("%s..%s", branch.BranchName, o.GitVersion))
+			"git", "log", "--oneline", fmt.Sprintf("%s..%s", branch1, branch2))
 		if err != nil {
 			return fmt.Errorf("verify rebased git version failed, err: %v", err)
 		}
@@ -73,7 +81,7 @@ func verifyBranchIsRebasedGitVersion(o *Options, branch *Branch) error {
 		}
 
 		if len(strings.TrimSpace(stdout.String())) > 0 {
-			return fmt.Errorf("the branch %s not rebase to %s\n", branch.BranchName, o.GitVersion)
+			return fmt.Errorf("the branch %s not rebase to %s\n", branch1, branch2)
 		}
 	}
 
@@ -85,6 +93,12 @@ func verifyLocalBranchIsOld(o *Options, localBranch *Branch, remoteBranch *Branc
 		stdout bytes.Buffer
 		stderr bytes.Buffer
 	)
+
+	// If the branchmode is not default, it need --use-local or --use-remote,
+	// and it will do not check.
+	if o.BranchMode != DefaultBranchMode {
+		return nil
+	}
 
 	if localBranch == nil || remoteBranch == nil {
 		// if local or remote branch not exist, then will not do this check
