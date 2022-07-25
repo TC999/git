@@ -482,8 +482,27 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 
 				return repoSpace, repoSpace.GetPath("workdir"), nil
 			},
-			wantErr: true,
-			errObj:  errors.New("the topic 'topic/branch1' local and remote are inconsistent, please use '--use-local' or '--use-remote'"),
+			wantErr: false,
+			wantTopic: []*Topic{
+				{
+					TopicName:   "topic/branch1",
+					DependIndex: -1,
+					BranchType:  2,
+					GitBranch: &Branch{
+						BranchName: "origin/topic/001-branch1",
+						Reference:  "63f12b3fd491c12c4b5398848b64624c1ba5a0d1",
+					},
+				},
+				{
+					TopicName:   "topic/branch2",
+					DependIndex: -1,
+					BranchType:  2,
+					GitBranch: &Branch{
+						BranchName: "origin/topic/002-branch2",
+						Reference:  "763d856f16e3d9f8bd643e50badfde04dc907a52",
+					},
+				},
+			},
 		},
 		{
 			name: "remote_valid_depend",
