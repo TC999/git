@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -184,6 +185,12 @@ func CheckWorkTreeClean(repoPath string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
+
+	gitPath := filepath.Join(repoPath, ".git")
+	_, err := os.Stat(gitPath)
+	if err != nil {
+		return fmt.Errorf("the path '%s' is not a git repo", repoPath)
+	}
 
 	cmd, err := NewCommand(ctx, repoPath, nil, nil, nil, &stderr,
 		"/bin/sh", "-c", "git diff --quiet HEAD && git diff --quiet --cached")
