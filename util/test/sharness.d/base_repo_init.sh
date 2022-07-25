@@ -19,9 +19,11 @@ init_base_repo() {
 		git commit -m "add feature1" &&
 		printf "feature2" >feature2 &&
 		git add feature2 &&
+		test_tick &&
 		git commit -m "add feature2" &&
 		printf "feature3" >feature3 &&
 		git add feature3 &&
+		test_tick &&
 		git commit -m "add feature3" &&
 		git push origin topic-template --tags &&
 		# Prepare master
@@ -51,6 +53,7 @@ init_base_topics(){
 		mkdir -p t &&
 		printf "test execute" >t/t0001-feature1.sh
 		git add feature1 t/t0001-feature1.sh &&
+		test_tick &&
 		git commit -m "feature1 update" &&
 		git push origin topic/0001-feature1 &&
 		git branch topic/0002-feature2 topic-template &&
@@ -61,6 +64,7 @@ init_base_topics(){
 		printf "subtest" >t/0002/t0002-subtest.sh
 		print "root test" >t/t0002-feature2.sh
 		git add feature2 feature2.keep t/0002/t0002-subtest.sh t/t0002-feature2.sh &&
+		test_tick &&
 		git commit -m "add feature2" &&
 		git push origin topic/0002-feature2 &&
 		git branch topic/0003-feature3 topic-template &&
