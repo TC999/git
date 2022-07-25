@@ -26,6 +26,7 @@ test: ut
 
 ut: $(TARGETS)
 	$(GOTEST) $(PKG)/...
+	@make -C test
 
 clean:
 	@rm -f $(TARGETS)
