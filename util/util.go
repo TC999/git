@@ -195,11 +195,11 @@ func CheckWorkTreeClean(repoPath string) error {
 	cmd, err := NewCommand(ctx, repoPath, nil, nil, nil, &stderr,
 		"/bin/sh", "-c", "git diff --quiet HEAD && git diff --quiet --cached")
 	if err != nil {
-		return fmt.Errorf("the repo index not clean or not a git repo, err: %v", err)
+		return fmt.Errorf("the repo index not clean")
 	}
 
 	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("the repo index not clean or not a git repo, stderr: %s, err: %v", stderr.String(), err)
+		return fmt.Errorf("the repo index not clean")
 	}
 
 	return nil
