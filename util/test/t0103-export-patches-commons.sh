@@ -73,6 +73,13 @@ git clone base.git workspace &&
 	git switch topic-template &&
 	git branch topic/0004-agit-version topic-template &&
 	git switch topic/0004-agit-version &&
+	git rebase -i v2.36.2 &&
+	git checkout topic/0001-feature1 &&
+	git rebase -i v2.36.2 &&
+	git checkout topic/0002-feature2 &&
+	git rebase -i v2.36.2 &&
+	git checkout topic/0003-feature3 &&
+	git rebase -i v2.36.2 &&
 	printf "agit.dev" >agit-version &&
 	git add agit-version &&
 	test_tick
@@ -81,7 +88,7 @@ git clone base.git workspace &&
 	printf "agit-version\n" >>topic.txt &&
 	git add topic.txt &&
 	git commit -m "add agit-version" &&
-	patchwork export-patches --git-version v2.36.2 --agit-version 6.6.0
+	patchwork export-patches --use-local --git-version v2.36.2 --agit-version 6.6.0 &&
 	ls patches/t/ >files.txt
 ) &&
 cat >expect-series <<-EOF &&
@@ -102,10 +109,10 @@ cat >expect-patches <<-EOF &&
 0004-add-agit-version-file.patch
 EOF
 cat >expect-agit-version-patches <<-EOF &&
-From 9592f33f1aff4283a0a2aa7d13bd5e6ee02ac542 Mon Sep 17 00:00:00 2001
+From 370f9a5a12fca1ec04f75b000a5474ce7e76c35a Mon Sep 17 00:00:00 2001
 From: A U Thor <author@example.com>
 Date: Thu, 7 Apr 2005 15:14:13 -0700
-Subject: [PATCH] add agit-version file
+Subject: [PATCH 4/4] add agit-version file
 
 ---
  agit-version | 1 +
@@ -118,7 +125,7 @@ index 0000000..4ecb513
 --- /dev/null
 +++ b/agit-version
 @@ -0,0 +1 @@
-+6.6.0
++agit.dev
 \ No newline at end of file
 -- 
 patchwork
