@@ -84,8 +84,8 @@ cat >expect-series <<-EOF &&
 t/0001-feature1-update.patch
 t/0002-add-feature2.patch
 t/0003-update-feature3.patch
-t/0004-add-feature4.patch
-t/0005-add-feature5.patch
+t/0004-add-feature5.patch
+t/0005-add-feature4.patch
 EOF
 cat >expect-test-scripts <<-EOF &&
 t0001-feature1.sh
@@ -96,8 +96,8 @@ cat >expect-patches <<-EOF &&
 0001-feature1-update.patch
 0002-add-feature2.patch
 0003-update-feature3.patch
-0004-add-feature4.patch
-0005-add-feature5.patch
+0004-add-feature5.patch
+0005-add-feature4.patch
 EOF
 test_cmp expect-series workspace/patches/series &&
 test_cmp expect-test-scripts workspace/patches/test-scripts &&
