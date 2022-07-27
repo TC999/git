@@ -62,10 +62,10 @@ func (t *TaskApplyTopic) amPatches(o *Options, taskContext *TaskContext) error {
 		return err
 	}
 
-	// Checkout branch to git tag on applyTo
-	if err = CheckoutBranch(o.ApplyTo, o.GitVersion); err != nil {
-		return err
-	}
+	//// Checkout branch to git tag on applyTo
+	//if err = CheckoutBranch(o.ApplyTo, o.GitVersion); err != nil {
+	//	return err
+	//}
 
 	// Reset current branch to GitTargetVersion
 	// NOTES: It must after CheckoutBranch method
