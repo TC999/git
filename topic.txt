@@ -7,7 +7,6 @@ rate-limit
 agit-txn
 agit-gc
 transparent-data-encryption
-end-of-options
 not-receive-pack-file-with-large-object
 http-fetch-speed-limit
 pre-send-pack-hook
