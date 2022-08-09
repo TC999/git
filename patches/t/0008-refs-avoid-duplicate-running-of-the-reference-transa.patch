@@ -1,0 +1,103 @@
+From a01822f25da9107ba8d2982254f5f0292ebe4dd6 Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Tue, 12 Jul 2022 09:21:46 +0800
+Subject: [PATCH 08/12] refs: avoid duplicate running of the
+ reference-transaction hook
+
+If there are references to be deleted in a transaction, we should remove
+each reference from both loose references and the "packed-refs" file.
+The "reference-transaction" hook will run twice, once for the primary
+ref-store (loose references), and another for the second ref-store (i.e.
+packed ref-store).
+
+To avoid duplicate running of the "reference-trancaction" hook, we pass
+a special "hook-flags" parameter to initialize the second ref-store.
+The "REF_TRANSACTION_RUN_PREPARED_HOOK" bit is preserved for the
+transaction of the second ref-store because we may still want to call
+command "reference-trancaction prepared" for some pre-checks, such as
+terminate unwanted transaction for the "packed-refs" file.
+
+The behavior of the following git commands and five testcases have been
+fixed in t1416:
+
+ * git cherry-pick
+ * git rebase
+ * git revert
+ * git update-ref -d <ref>
+ * git update-ref --stdin	# delete refs
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ refs/files-backend.c             |  7 +++++--
+ t/t1416-ref-transaction-hooks.sh | 10 +++++-----
+ 2 files changed, 10 insertions(+), 7 deletions(-)
+
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index 3be317d524..e8d12cb343 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -2788,8 +2788,11 @@ static int files_transaction_prepare(struct ref_store *ref_store,
+ 			 * packed-refs if it exists there.
+ 			 */
+ 			if (!packed_transaction) {
+-				packed_transaction = ref_store_transaction_begin(
+-						refs->packed_ref_store, err);
++				packed_transaction = ref_store_transaction_begin_extended(
++						refs->packed_ref_store,
++						transaction->hook_flags &
++							REF_TRANSACTION_RUN_PREPARED_HOOK,
++						err);
+ 				if (!packed_transaction) {
+ 					ret = TRANSACTION_GENERIC_ERROR;
+ 					goto cleanup;
+diff --git a/t/t1416-ref-transaction-hooks.sh b/t/t1416-ref-transaction-hooks.sh
+index 3e28dc91a0..0a7ae812a4 100755
+--- a/t/t1416-ref-transaction-hooks.sh
++++ b/t/t1416-ref-transaction-hooks.sh
+@@ -406,7 +406,7 @@ test_expect_success "update-ref: update refs already packed to .git/packed-refs"
+ 	test_cmp_heads_and_tags -C workdir expect
+ '
+ 
+-test_expect_failure "update-ref: remove refs with mixed ref_stores" '
++test_expect_success "update-ref: remove refs with mixed ref_stores" '
+ 	test_when_finished "rm -f $HOOK_OUTPUT" &&
+ 
+ 	cat >expect <<-\EOF &&
+@@ -522,7 +522,7 @@ test_expect_success "update-ref --stdin: update refs" '
+ 	test_cmp_heads_and_tags -C workdir expect
+ '
+ 
+-test_expect_failure "update-ref --stdin: delete refs" '
++test_expect_success "update-ref --stdin: delete refs" '
+ 	test_when_finished "rm -f $HOOK_OUTPUT" &&
+ 
+ 	cat >expect <<-\EOF &&
+@@ -1022,7 +1022,7 @@ test_expect_success "worktree: topic2: merge" '
+ 	test_cmp_heads_and_tags -C workdir expect
+ '
+ 
+-test_expect_failure "worktree: topic3: cherry-pick" '
++test_expect_success "worktree: topic3: cherry-pick" '
+ 	test_when_finished "rm -f $HOOK_OUTPUT" &&
+ 
+ 	cat >expect <<-\EOF &&
+@@ -1066,7 +1066,7 @@ test_expect_failure "worktree: topic3: cherry-pick" '
+ 	test_cmp_heads_and_tags -C workdir expect
+ '
+ 
+-test_expect_failure "worktree: topic4: rebase" '
++test_expect_success "worktree: topic4: rebase" '
+ 	test_when_finished "rm -f $HOOK_OUTPUT" &&
+ 
+ 	cat >expect <<-\EOF &&
+@@ -1118,7 +1118,7 @@ test_expect_failure "worktree: topic4: rebase" '
+ 	test_cmp_heads_and_tags -C workdir expect
+ '
+ 
+-test_expect_failure "worktree: topic5: revert" '
++test_expect_success "worktree: topic5: revert" '
+ 	test_when_finished "rm -f $HOOK_OUTPUT" &&
+ 
+ 	cat >expect <<-\EOF &&
+-- 
+patchwork

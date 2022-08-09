@@ -1,0 +1,127 @@
+From 7847c0514546c716c2886b9efd6136eb3e0237b3 Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Tue, 12 Jul 2022 08:58:54 +0800
+Subject: [PATCH 06/12] refs: add new field in transaction for running
+ transaction hook
+
+Add a new field "hook_flags" in transaction, and only run the
+"reference-transaction" hook if the specific flag is turned on.
+
+The "reference-transaction" hook has three states: prepared, committed,
+and aborted. To update a reference, git may create two seperate
+transactions, one for loose reference and one for packed ref-store. This
+may cause duplicate running of the hook for same references. The new
+field "hook_flags" in the transaction can turn off running of a specific
+transaction. In some scenarios, we may only want to turn off certain
+states of a transaction, such as "committed" and "aborted", but want to
+turn on the "prepared" state of the hook to do some pre-checks, so the
+"hook_flags" field has three bits to control running of the three states
+of the hook.
+
+By calling the "ref_store_transaction_begin()" function, all the flags
+of the "hook_flags" field for the new initialized transaction will be
+turned on. The new function "ref_store_transaction_begin_extended()"
+will be used in later commits to custom the "hook_flags" field for a
+new initialized transaction.
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ refs.c               | 25 +++++++++++++++++++++++--
+ refs.h               |  3 +++
+ refs/refs-internal.h |  8 ++++++++
+ 3 files changed, 34 insertions(+), 2 deletions(-)
+
+diff --git a/refs.c b/refs.c
+index 9db66e9955..392d8955f7 100644
+--- a/refs.c
++++ b/refs.c
+@@ -998,17 +998,27 @@ int read_ref_at(struct ref_store *refs, const char *refname,
+ 	return 1;
+ }
+ 
+-struct ref_transaction *ref_store_transaction_begin(struct ref_store *refs,
+-						    struct strbuf *err)
++struct ref_transaction *ref_store_transaction_begin_extended(struct ref_store *refs,
++							     unsigned int hook_flags,
++							     struct strbuf *err)
+ {
+ 	struct ref_transaction *tr;
+ 	assert(err);
+ 
+ 	CALLOC_ARRAY(tr, 1);
+ 	tr->ref_store = refs;
++	tr->hook_flags = hook_flags;
+ 	return tr;
+ }
+ 
++struct ref_transaction *ref_store_transaction_begin(struct ref_store *refs,
++						    struct strbuf *err)
++{
++	return ref_store_transaction_begin_extended(refs,
++						    REF_TRANSACTION_RUN_ALL_HOOKS,
++						    err);
++}
++
+ struct ref_transaction *ref_transaction_begin(struct strbuf *err)
+ {
+ 	return ref_store_transaction_begin(get_main_ref_store(the_repository), err);
+@@ -2072,6 +2082,17 @@ static int run_transaction_hook(struct ref_transaction *transaction,
+ 	const char *hook;
+ 	int ret = 0, i;
+ 
++	if (!strcmp(state, "prepared")) {
++		if (!(transaction->hook_flags & REF_TRANSACTION_RUN_PREPARED_HOOK))
++			return 0;
++	} else if (!strcmp(state, "committed")) {
++		if (!(transaction->hook_flags & REF_TRANSACTION_RUN_COMMITTED_HOOK))
++			return 0;
++	} else if (!strcmp(state, "aborted")) {
++		if (!(transaction->hook_flags & REF_TRANSACTION_RUN_ABORTED_HOOK))
++			return 0;
++	}
++
+ 	hook = find_hook("reference-transaction");
+ 	if (!hook)
+ 		return ret;
+diff --git a/refs.h b/refs.h
+index 47cb9edbaa..715127ab58 100644
+--- a/refs.h
++++ b/refs.h
+@@ -570,6 +570,9 @@ enum action_on_err {
+  * Begin a reference transaction.  The reference transaction must
+  * be freed by calling ref_transaction_free().
+  */
++struct ref_transaction *ref_store_transaction_begin_extended(struct ref_store *refs,
++							     unsigned int hook_flags,
++							     struct strbuf *err);
+ struct ref_transaction *ref_store_transaction_begin(struct ref_store *refs,
+ 						    struct strbuf *err);
+ struct ref_transaction *ref_transaction_begin(struct strbuf *err);
+diff --git a/refs/refs-internal.h b/refs/refs-internal.h
+index 69f93b0e2a..5220d1980d 100644
+--- a/refs/refs-internal.h
++++ b/refs/refs-internal.h
+@@ -201,6 +201,13 @@ enum ref_transaction_state {
+ 	REF_TRANSACTION_CLOSED   = 2
+ };
+ 
++#define REF_TRANSACTION_RUN_PREPARED_HOOK (1 << 0)
++#define REF_TRANSACTION_RUN_COMMITTED_HOOK (1 << 1)
++#define REF_TRANSACTION_RUN_ABORTED_HOOK (1 << 2)
++#define REF_TRANSACTION_RUN_ALL_HOOKS         \
++	(REF_TRANSACTION_RUN_PREPARED_HOOK  | \
++	 REF_TRANSACTION_RUN_COMMITTED_HOOK | \
++	 REF_TRANSACTION_RUN_ABORTED_HOOK)
+ /*
+  * Data structure for holding a reference transaction, which can
+  * consist of checks and updates to multiple references, carried out
+@@ -212,6 +219,7 @@ struct ref_transaction {
+ 	size_t alloc;
+ 	size_t nr;
+ 	enum ref_transaction_state state;
++	unsigned int hook_flags;
+ 	void *backend_data;
+ };
+ 
+-- 
+patchwork

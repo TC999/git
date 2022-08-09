@@ -1,0 +1,99 @@
+From d9f1680de138306fe11dd2e29e10d14c2331900c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=E7=82=BD=E5=A4=A9?= <hanxin.hx@alibaba-inc.com>
+Date: Tue, 29 Dec 2020 16:12:29 +0800
+Subject: [PATCH 41/47] crypto: upload-pack: not send encrypted pack to
+ fetch-pack
+
+When running "git-fetch" or "git-clone", git-upload-pack on the server
+side should not send encrypted pack to client.  And git-upload-pack
+should parse agit.crypto.* settings to read encrypted pack on server
+side.
+
+Signed-off-by: Han Xin <hanxin.hx@alibaba-inc.com>
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ builtin/upload-pack.c      | 3 +++
+ t/t0940/test-1004-clone.sh | 6 +++---
+ t/t0940/test-1005-fetch.sh | 4 ++--
+ upload-pack.c              | 1 +
+ 4 files changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/builtin/upload-pack.c b/builtin/upload-pack.c
+index 125af53885..9abd648cae 100644
+--- a/builtin/upload-pack.c
++++ b/builtin/upload-pack.c
+@@ -1,5 +1,6 @@
+ #include "cache.h"
+ #include "builtin.h"
++#include "config.h"
+ #include "exec-cmd.h"
+ #include "pkt-line.h"
+ #include "parse-options.h"
+@@ -47,6 +48,8 @@ int cmd_upload_pack(int argc, const char **argv, const char *prefix)
+ 	if (!enter_repo(dir, strict))
+ 		die("'%s' does not appear to be a git repository", dir);
+ 
++	git_config(git_default_agit_config, NULL);
++
+ 	switch (determine_protocol_version_server()) {
+ 	case protocol_v2:
+ 		if (advertise_refs)
+diff --git a/t/t0940/test-1004-clone.sh b/t/t0940/test-1004-clone.sh
+index 0476cbc5a8..c5e75b2978 100644
+--- a/t/t0940/test-1004-clone.sh
++++ b/t/t0940/test-1004-clone.sh
+@@ -2,15 +2,15 @@
+ 
+ # Test crypto on "git-clone"
+ 
+-test_expect_failure 'clone from common gitdir' '
++test_expect_success 'clone from common gitdir' '
+ 	git clone --no-local "$COMMON_GITDIR" workdir
+ '
+ 
+-test_expect_failure 'run fsck on workdir' '
++test_expect_success 'run fsck on workdir' '
+ 	git -C workdir fsck
+ '
+ 
+-test_expect_failure 'check log of main' '
++test_expect_success 'check log of main' '
+ 	git -C workdir log --oneline |
+ 		make_user_friendly_and_stable_output >actual &&
+ 	cat >expect <<-EOF &&
+diff --git a/t/t0940/test-1005-fetch.sh b/t/t0940/test-1005-fetch.sh
+index 6f3ca85af5..b7033c3fc0 100644
+--- a/t/t0940/test-1005-fetch.sh
++++ b/t/t0940/test-1005-fetch.sh
+@@ -2,7 +2,7 @@
+ 
+ # Test crypto on "git-fetch"
+ 
+-test_expect_failure 'fetch repo with encrypt packfile' '
++test_expect_success 'fetch repo with encrypt packfile' '
+ 	(
+ 		test_create_repo workdir &&
+ 		cd workdir &&
+@@ -16,7 +16,7 @@ test_expect_success 'run fsck on workdir' '
+ 	git -C workdir fsck
+ '
+ 
+-test_expect_failure 'check log of main' '
++test_expect_success 'check log of main' '
+ 	git -C workdir log --oneline |
+ 		make_user_friendly_and_stable_output >actual &&
+ 	cat >expect <<-EOF &&
+diff --git a/upload-pack.c b/upload-pack.c
+index 3a851b3606..22b1677553 100644
+--- a/upload-pack.c
++++ b/upload-pack.c
+@@ -301,6 +301,7 @@ static void create_pack_file(struct upload_pack_data *pack_data,
+ 		strvec_push(&pack_objects.args, "--thin");
+ 
+ 	strvec_push(&pack_objects.args, "--stdout");
++	strvec_push(&pack_objects.args, "--no-pack-enc");
+ 	if (pack_data->shallow_nr)
+ 		strvec_push(&pack_objects.args, "--shallow");
+ 	if (!pack_data->no_progress)
+-- 
+patchwork

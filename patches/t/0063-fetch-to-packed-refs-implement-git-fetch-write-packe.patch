@@ -1,0 +1,359 @@
+From 923ca98adc65a77e7f938231385106e31f4f913d Mon Sep 17 00:00:00 2001
+From: Han Xin <hanxin.hx@alibaba-inc.com>
+Date: Thu, 6 Jan 2022 17:58:56 +0800
+Subject: [PATCH 63/65] fetch-to-packed-refs: implement "git-fetch
+ --write-packed-refs"
+
+Add new option "--write-packed-refs" to git-fetch. We can also provide
+config variable "fetch.writePackedRefs" to enable this feature.
+
+When "--write-packed-refs" is given, we will directly save all loose
+refs with incoming changes into the "packed-refs" file.
+
+Signed-off-by: Han Xin <hanxin.hx@alibaba-inc.com>
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ Documentation/config/fetch.txt     |   3 +
+ Documentation/fetch-options.txt    |   4 +
+ builtin/fetch.c                    |  32 ++++-
+ t/t5593-fetch-write-packed-refs.sh | 208 +++++++++++++++++++++++++++++
+ 4 files changed, 244 insertions(+), 3 deletions(-)
+ create mode 100755 t/t5593-fetch-write-packed-refs.sh
+
+diff --git a/Documentation/config/fetch.txt b/Documentation/config/fetch.txt
+index cd65d236b4..35e4c748d3 100644
+--- a/Documentation/config/fetch.txt
++++ b/Documentation/config/fetch.txt
+@@ -96,3 +96,6 @@ fetch.writeCommitGraph::
+ 	merge and the write may take longer. Having an updated commit-graph
+ 	file helps performance of many Git commands, including `git merge-base`,
+ 	`git push -f`, and `git log --graph`. Defaults to false.
++
++fetch.writePackedRefs::
++	Set to true to write packed-refs after every `git fetch`.
+diff --git a/Documentation/fetch-options.txt b/Documentation/fetch-options.txt
+index 622bd84768..f9cccb5ded 100644
+--- a/Documentation/fetch-options.txt
++++ b/Documentation/fetch-options.txt
+@@ -118,6 +118,10 @@ ifndef::git-pull[]
+ --[no-]write-commit-graph::
+ 	Write a commit-graph after fetching. This overrides the config
+ 	setting `fetch.writeCommitGraph`.
++
++--[no-]write-packed-refs::
++	Write packed-refs after fetching. This overrides the config
++	setting `fetch.writePackedRefs`.
+ endif::git-pull[]
+ 
+ --prefetch::
+diff --git a/builtin/fetch.c b/builtin/fetch.c
+index e3791f09ed..18e27aaf45 100644
+--- a/builtin/fetch.c
++++ b/builtin/fetch.c
+@@ -84,9 +84,14 @@ static struct list_objects_filter_options filter_options;
+ static struct string_list server_options = STRING_LIST_INIT_DUP;
+ static struct string_list negotiation_tip = STRING_LIST_INIT_NODUP;
+ static int fetch_write_commit_graph = -1;
++static int fetch_write_packed_refs = 0;
+ static int stdin_refspecs = 0;
+ static int negotiate_only;
+ 
++typedef int ref_txn_commit_fn(struct ref_transaction *transaction,
++			      struct strbuf *err);
++static ref_txn_commit_fn *ref_txn_commit;
++
+ static int git_fetch_config(const char *k, const char *v, void *cb)
+ {
+ 	if (!strcmp(k, "fetch.prune")) {
+@@ -99,6 +104,11 @@ static int git_fetch_config(const char *k, const char *v, void *cb)
+ 		return 0;
+ 	}
+ 
++	if (!strcmp(k, "fetch.writepackedrefs")) {
++		fetch_write_packed_refs = git_config_bool(k, v);
++		return 0;
++	}
++
+ 	if (!strcmp(k, "fetch.showforcedupdates")) {
+ 		fetch_show_forced_updates = git_config_bool(k, v);
+ 		return 0;
+@@ -222,6 +232,8 @@ static struct option builtin_fetch_options[] = {
+ 		 N_("check for forced-updates on all updated branches")),
+ 	OPT_BOOL(0, "write-commit-graph", &fetch_write_commit_graph,
+ 		 N_("write the commit-graph after fetching")),
++	OPT_BOOL(0, "write-packed-refs", &fetch_write_packed_refs,
++		 N_("write packed-refs when fetching")),
+ 	OPT_BOOL(0, "stdin", &stdin_refspecs,
+ 		 N_("accept refspecs from stdin")),
+ 	OPT_END()
+@@ -715,7 +727,7 @@ static int s_update_ref(const char *action,
+ 	}
+ 
+ 	if (our_transaction) {
+-		switch (ref_transaction_commit(our_transaction, &err)) {
++		switch (ref_txn_commit(our_transaction, &err)) {
+ 		case 0:
+ 			break;
+ 		case TRANSACTION_NAME_CONFLICT:
+@@ -1716,7 +1728,7 @@ static int do_fetch(struct transport *transport,
+ 		if (retcode)
+ 			goto cleanup;
+ 
+-		retcode = ref_transaction_commit(transaction, &err);
++		retcode = ref_txn_commit(transaction, &err);
+ 		if (retcode) {
+ 			error("%s", err.buf);
+ 			ref_transaction_free(transaction);
+@@ -1854,6 +1866,8 @@ static void add_options_to_argv(struct strvec *argv)
+ 		strvec_push(argv, "--update-head-ok");
+ 	if (force)
+ 		strvec_push(argv, "--force");
++	if (fetch_write_packed_refs)
++		strvec_push(argv, "--write-packed-refs");
+ 	if (keep)
+ 		strvec_push(argv, "--keep");
+ 	if (recurse_submodules == RECURSE_SUBMODULES_ON)
+@@ -2122,6 +2136,15 @@ int cmd_fetch(int argc, const char **argv, const char *prefix)
+ 	argc = parse_options(argc, argv, prefix,
+ 			     builtin_fetch_options, builtin_fetch_usage, 0);
+ 
++	if (fetch_write_packed_refs) {
++		/* Need to enable transaction to write fetch refs to packed-refs
++		 * by setting atomic_fetch = 1.
++		 */
++		atomic_fetch = 1;
++		ref_txn_commit = refs_direct_to_packed_refs;
++	} else {
++		ref_txn_commit = ref_transaction_commit;
++	}
+ 	if (recurse_submodules_cli != RECURSE_SUBMODULES_DEFAULT)
+ 		recurse_submodules = recurse_submodules_cli;
+ 
+@@ -2246,7 +2269,10 @@ int cmd_fetch(int argc, const char **argv, const char *prefix)
+ 			die(_("--filter can only be used with the remote "
+ 			      "configured in extensions.partialclone"));
+ 
+-		if (atomic_fetch)
++		/* Option "--fetch-write-packed-refs" will enable "--atomic",
++		 * should not trigger this issue.
++		 */
++		if (atomic_fetch && !fetch_write_packed_refs)
+ 			die(_("--atomic can only be used when fetching "
+ 			      "from one remote"));
+ 
+diff --git a/t/t5593-fetch-write-packed-refs.sh b/t/t5593-fetch-write-packed-refs.sh
+new file mode 100755
+index 0000000000..f0c273676a
+--- /dev/null
++++ b/t/t5593-fetch-write-packed-refs.sh
+@@ -0,0 +1,208 @@
++#!/bin/sh
++# Copyright (c) 2006, Junio C Hamano.
++
++test_description='Test fetching into packed-refs
++'
++
++GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
++export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
++
++. ./test-lib.sh
++
++test_commit_setvar () {
++	amend=
++	append=
++	notick=
++	signoff=
++	indir=
++	merge=
++	tag=
++	var=
++
++	while test $# != 0
++	do
++		case "$1" in
++		--merge)
++			merge=t
++			;;
++		--tag)
++			tag=t
++			;;
++		--amend)
++			amend="--amend"
++			;;
++		--append)
++			append=t
++			;;
++		--notick)
++			notick=t
++			;;
++		--signoff)
++			signoff="$1"
++			;;
++		-C)
++			shift
++			indir="$1"
++			;;
++		-*)
++			echo >&2 "error: unknown option $1"
++			return 1
++			;;
++		*)
++			break
++			;;
++		esac
++		shift
++	done
++	if test $# -lt 2
++	then
++		echo >&2 "error: test_commit_setvar must have at least 2 arguments"
++		return 1
++	fi
++	var=$1
++	shift
++	indir=${indir:+"$indir"/}
++	if test -z "$notick"
++	then
++		test_tick
++	fi &&
++	if test -n "$merge"
++	then
++		git ${indir:+ -C "$indir"} merge --no-edit --no-ff \
++			${2:+-m "$2"} "$1" &&
++		oid=$(git ${indir:+ -C "$indir"} rev-parse HEAD)
++	elif test -n "$tag"
++	then
++		git ${indir:+ -C "$indir"} tag -m "$1" "$1" "${2:-HEAD}" &&
++		oid=$(git ${indir:+ -C "$indir"} rev-parse "$1")
++	else
++		file=${2:-"$1.t"} &&
++		if test -n "$append"
++		then
++			echo "${3-$1}" >>"$indir$file"
++		else
++			echo "${3-$1}" >"$indir$file"
++		fi &&
++		git ${indir:+ -C "$indir"} add "$file" &&
++		git ${indir:+ -C "$indir"} commit $amend $signoff -m "$1" &&
++		oid=$(git ${indir:+ -C "$indir"} rev-parse HEAD)
++	fi &&
++	eval $var=$oid
++}
++
++get_abbrev_oid () {
++	oid=$1 &&
++	suffix=${oid#???????} &&
++	oid=${oid%$suffix} &&
++	if test -n "$oid"
++	then
++		echo "$oid"
++	else
++		echo "undefined-oid"
++	fi
++}
++
++# Format the output of git-push, git-show-ref and other commands to make a
++# user-friendly and stable text.  We can easily prepare the expect text
++# without having to worry about future changes of the commit ID and spaces
++# of the output.  Single quotes are replaced with double quotes, because
++# it is boring to prepare unquoted single quotes in expect text.  We also
++# remove some locale error messages, which break test if we turn on
++# `GIT_TEST_GETTEXT_POISON=true` in order to test unintentional translations
++# on plumbing commands.
++make_user_friendly_and_stable_output () {
++	_x40="$_x35$_x05"
++
++	sed \
++		-e "s/$(get_abbrev_oid $A)[0-9a-f]*/<COMMIT-A>/g" \
++		-e "s/$(get_abbrev_oid $B)[0-9a-f]*/<COMMIT-B>/g" \
++		-e "s/$(get_abbrev_oid $C)[0-9a-f]*/<COMMIT-C>/g" \
++		-e "s/$(get_abbrev_oid $D)[0-9a-f]*/<COMMIT-D>/g" \
++		-e "s/$(get_abbrev_oid $E)[0-9a-f]*/<COMMIT-E>/g" \
++		-e "s/$(get_abbrev_oid $F)[0-9a-f]*/<COMMIT-F>/g" \
++		-e "s/$(get_abbrev_oid $G)[0-9a-f]*/<COMMIT-G>/g" \
++		-e "s/$(get_abbrev_oid $H)[0-9a-f]*/<COMMIT-H>/g" \
++		-e "s/$(get_abbrev_oid $I)[0-9a-f]*/<COMMIT-I>/g" \
++		-e "s/$(get_abbrev_oid $J)[0-9a-f]*/<COMMIT-J>/g" \
++		-e "s/$(get_abbrev_oid $K)[0-9a-f]*/<COMMIT-K>/g" \
++		-e "s/$(get_abbrev_oid $TAG1)[0-9a-f]*/<TAG-1>/g" \
++		-e "s/$(get_abbrev_oid $TAG2)[0-9a-f]*/<TAG-2>/g" \
++		-e "s/$(get_abbrev_oid $TAG3)[0-9a-f]*/<TAG-3>/g" \
++		-e "s/$(get_abbrev_oid $TAG4)[0-9a-f]*/<TAG-4>/g" \
++		-e "s/  *\$//" \
++		-e "s/   */ /g" \
++		-e "s/'/\"/g" \
++		-e "s/	/    /g" \
++		-e "s/$_x40[0-9a-f]*/<OID>/g" \
++		-e "s/^index $_x05[0-9a-f]*\.\.$_x05[0-9a-f]*/index <OID1>..<OID2>/" \
++		-e "s/$ZERO_OID/<ZERO-OID>/g"
++}
++
++assert_no_loose () {
++	test_loose_refs_count dest.git 0
++}
++
++test_loose_refs_count () {
++	DIR="$1/refs" &&
++	EXPECTED_COUNT="$2" &&
++	test_path_is_dir "$DIR" &&
++	find "$DIR" -type f >actual &&
++	test_line_count = $EXPECTED_COUNT actual
++}
++
++test_expect_success setup '
++	test_commit_setvar A "Commit-A" README.txt &&
++	git branch branch-A &&
++	git tag tag-A &&
++	test_commit_setvar B "Commit-B" README.txt &&
++	git branch branch-B &&
++	git tag tag-B &&
++	test_commit_setvar C "Commit-C" README.txt &&
++	git branch branch-C &&
++	git tag tag-C &&
++	git init --bare dest.git
++'
++
++test_expect_success 'test fetch into loose objects' '
++	git -C dest.git fetch "file://$TRASH_DIRECTORY" "+refs/*:refs/*" &&
++	! test -e dest.git/packed-refs &&
++	cat >expect <<-EOF &&
++	<COMMIT-C> HEAD
++	<COMMIT-A> refs/heads/branch-A
++	<COMMIT-B> refs/heads/branch-B
++	<COMMIT-C> refs/heads/branch-C
++	<COMMIT-C> refs/heads/main
++	<COMMIT-A> refs/tags/tag-A
++	<COMMIT-B> refs/tags/tag-B
++	<COMMIT-C> refs/tags/tag-C
++	EOF
++	git -C dest.git show-ref --head |
++		make_user_friendly_and_stable_output >actual &&
++	test_cmp expect actual
++'
++
++test_expect_success 'delete branch-B and change branch-C' '
++	git branch -D branch-B &&
++	test_commit_setvar D "Commit-D" README.txt &&
++	git branch -M branch-C &&
++	echo "$B refs/heads/branch-A" >dest.git/packed-refs
++'
++
++test_expect_success 'test fetch with "fetch.writePackedRefs"' '
++	git -c fetch.writePackedRefs=true -C dest.git \
++		fetch -p "file://$TRASH_DIRECTORY" "+refs/*:refs/*" &&
++	assert_no_loose &&
++	cat >expect <<-EOF &&
++	# pack-refs with: peeled fully-peeled sorted
++	<COMMIT-A> refs/heads/branch-A
++	<COMMIT-D> refs/heads/branch-C
++	<COMMIT-A> refs/tags/tag-A
++	<COMMIT-B> refs/tags/tag-B
++	<COMMIT-C> refs/tags/tag-C
++	EOF
++	cat dest.git/packed-refs |
++		make_user_friendly_and_stable_output >actual &&
++	test_cmp expect actual
++'
++
++test_done
+-- 
+patchwork

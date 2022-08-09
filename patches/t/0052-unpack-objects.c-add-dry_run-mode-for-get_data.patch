@@ -1,0 +1,82 @@
+From cf52a509228c48ecd7fa3b6c889653abddc55531 Mon Sep 17 00:00:00 2001
+From: Han Xin <hanxin.hx@alibaba-inc.com>
+Date: Thu, 18 Nov 2021 16:43:09 +0800
+Subject: [PATCH 52/57] unpack-objects.c: add dry_run mode for get_data()
+
+In dry_run mode, "get_data()" is used to verify the inflation of data,
+and the returned buffer will not be used at all and will be freed
+immediately. Even in dry_run mode, it is dangerous to allocate a
+full-size buffer for a large blob object. Therefore, only allocate a
+low memory footprint when calling "get_data()" in dry_run mode.
+
+Suggested-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Signed-off-by: Han Xin <hanxin.hx@alibaba-inc.com>
+---
+ builtin/unpack-objects.c | 18 ++++++++++++------
+ 1 file changed, 12 insertions(+), 6 deletions(-)
+
+diff --git a/builtin/unpack-objects.c b/builtin/unpack-objects.c
+index dbeb0680a5..f1f33c49dc 100644
+--- a/builtin/unpack-objects.c
++++ b/builtin/unpack-objects.c
+@@ -96,15 +96,16 @@ static void use(int bytes)
+ 	display_throughput(progress, consumed_bytes);
+ }
+ 
+-static void *get_data(unsigned long size)
++static void *get_data(unsigned long size, int dry_run)
+ {
+ 	git_zstream stream;
+-	void *buf = xmallocz(size);
++	unsigned long bufsize = dry_run ? 8192 : size;
++	void *buf = xmallocz(bufsize);
+ 
+ 	memset(&stream, 0, sizeof(stream));
+ 
+ 	stream.next_out = buf;
+-	stream.avail_out = size;
++	stream.avail_out = bufsize;
+ 	stream.next_in = fill(1);
+ 	stream.avail_in = len;
+ 	git_inflate_init(&stream);
+@@ -124,6 +125,11 @@ static void *get_data(unsigned long size)
+ 		}
+ 		stream.next_in = fill(1);
+ 		stream.avail_in = len;
++		if (dry_run) {
++			/* reuse the buffer in dry_run mode */
++			stream.next_out = buf;
++			stream.avail_out = bufsize;
++		}
+ 	}
+ 	git_inflate_end(&stream);
+ 	return buf;
+@@ -323,7 +329,7 @@ static void added_object(unsigned nr, enum object_type type,
+ static void unpack_non_delta_entry(enum object_type type, unsigned long size,
+ 				   unsigned nr)
+ {
+-	void *buf = get_data(size);
++	void *buf = get_data(size, dry_run);
+ 
+ 	if (!dry_run && buf)
+ 		write_object(nr, type, buf, size);
+@@ -357,7 +363,7 @@ static void unpack_delta_entry(enum object_type type, unsigned long delta_size,
+ 	if (type == OBJ_REF_DELTA) {
+ 		oidread(&base_oid, fill(the_hash_algo->rawsz));
+ 		use(the_hash_algo->rawsz);
+-		delta_data = get_data(delta_size);
++		delta_data = get_data(delta_size, dry_run);
+ 		if (dry_run || !delta_data) {
+ 			free(delta_data);
+ 			return;
+@@ -396,7 +402,7 @@ static void unpack_delta_entry(enum object_type type, unsigned long delta_size,
+ 		if (base_offset <= 0 || base_offset >= obj_list[nr].offset)
+ 			die("offset value out of bound for delta base object");
+ 
+-		delta_data = get_data(delta_size);
++		delta_data = get_data(delta_size, dry_run);
+ 		if (dry_run || !delta_data) {
+ 			free(delta_data);
+ 			return;
+-- 
+patchwork

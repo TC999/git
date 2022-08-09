@@ -1,0 +1,79 @@
+From 92dfa1a149e8db96434dc43bd36907928c7cdd23 Mon Sep 17 00:00:00 2001
+From: Xu Ziyang <yunhuai.xzy@alibaba-inc.com>
+Date: Fri, 22 Oct 2021 17:12:50 +0800
+Subject: [PATCH 61/61] t5619: add basic test for pre-send-pack hook
+
+Add some basic test case, specifically:
+1. normal clone will receive the message from hook
+2. hook exit with a non-zero code won't affect the usual clone procedure
+3. hook's error is readed and sent to the client
+
+Signed-off-by: Xu Ziyang <yunhuai.xzy@alibaba-inc.com>
+---
+ t/t5619-pre-send-pack-hook.sh | 55 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 55 insertions(+)
+ create mode 100755 t/t5619-pre-send-pack-hook.sh
+
+diff --git a/t/t5619-pre-send-pack-hook.sh b/t/t5619-pre-send-pack-hook.sh
+new file mode 100755
+index 0000000000..a1b3622959
+--- /dev/null
++++ b/t/t5619-pre-send-pack-hook.sh
+@@ -0,0 +1,55 @@
++#!/bin/bash
++
++test_description='Testing pre-send-pack-hook'
++
++GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
++export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
++
++. ./test-lib.sh
++
++test_expect_success "setup upstream" '
++	rm -rf upstream.git &&
++	rm -rf workbench &&
++	git init --bare upstream.git &&
++	(
++		cd upstream.git &&
++		git config uploadpack.allowAnySHA1InWant true &&
++		git config uploadpack.allowFilter true
++	) &&
++	git init workbench &&
++	(
++		cd workbench &&
++		dd if=/dev/urandom of="file" bs=1024 count=1024 &&
++		git add file &&
++		git commit -m "add file" &&
++		git remote add origin ../upstream.git &&
++		git push origin main
++	) &&
++	write_script upstream.git/hooks/pre-send-pack <<-\EOF
++	echo "repo too large"
++	EOF
++'
++
++test_expect_success 'clone repo received message' '
++	test_when_finished "rm -fr dst" &&
++	git clone --progress --no-local upstream.git dst 2>output &&
++	lc=$(cat output | grep "repo too large" | wc -l) &&
++	test $lc -eq 1
++'
++
++test_expect_success 'hook exit non zero' '
++	echo "exit -1" > upstream.git/hooks/pre-send-pack &&
++	test_when_finished "rm -fr dst" &&
++	git clone --no-local upstream.git dst &&
++	test -f dst/file
++'
++
++test_expect_success 'read error message from hook' '
++	echo "echo "error from hook" 1>&2" > upstream.git/hooks/pre-send-pack &&
++	test_when_finished "rm -fr dst" &&
++	git clone --progress --no-local upstream.git dst 2>output &&
++	lc=$(cat output | grep "error from hook" | wc -l) &&
++	test $lc -eq 1
++'
++
++test_done
+-- 
+patchwork

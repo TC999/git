@@ -1,0 +1,576 @@
+From 68b113d5252b5c229b02ced6ae299357d8a45cd5 Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Thu, 9 Jul 2020 15:09:46 +0800
+Subject: [PATCH 24/25] gc: add new options --dryrun and --verbose
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ builtin/gc.c             |  95 ++++++++++--
+ t/t6502-git-gc-dryrun.sh | 321 +++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 402 insertions(+), 14 deletions(-)
+ create mode 100755 t/t6502-git-gc-dryrun.sh
+
+diff --git a/builtin/gc.c b/builtin/gc.c
+index b335cffa33..99af092620 100644
+--- a/builtin/gc.c
++++ b/builtin/gc.c
+@@ -47,6 +47,8 @@ static int aggressive_window = 250;
+ static int gc_auto_threshold = 6700;
+ static int gc_auto_pack_limit = 50;
+ static int detach_auto = 1;
++static int dryrun = 0;
++static int verbose = 0;
+ static timestamp_t gc_log_expire_time;
+ static const char *gc_log_expire = "1.day.ago";
+ static const char *prune_expire = "2.weeks.ago";
+@@ -162,13 +164,43 @@ static void gc_config(void)
+ 	git_config(git_default_config, NULL);
+ }
+ 
++static void show_command(const char **argv, int flag)
++{
++	struct strbuf sb = STRBUF_INIT;
++
++	if (flag & RUN_GIT_CMD)
++		strbuf_addstr(&sb, "git");
++	for (; *argv; argv++)
++		strbuf_addf(&sb, " %s", *argv);
++	fprintf(stderr, "note: will run: %s\n", sb.buf);
++	strbuf_release(&sb);
++}
++
++#define run_command_v_opt(argv, opt) \
++	run_command_v_opt_fallback(argv, opt, 1)
++static int run_command_v_opt_fallback(const char **argv, int opt, int show_err) {
++	if (show_err)
++		fprintf(stderr, "WARNING: gc.c: should call run_command_v_opt_with_dryrun() instead.\n");
++	return run_command_v_opt_cd_env(argv, opt, NULL, NULL);
++}
++
++static int run_command_v_opt_with_dryrun(const char **argv, int opt)
++{
++	if (verbose)
++		show_command(argv, opt);
++	if (dryrun)
++		return 0;
++	return run_command_v_opt_fallback(argv, opt, 0);
++}
++
++
+ struct maintenance_run_opts;
+ static int maintenance_task_pack_refs(MAYBE_UNUSED struct maintenance_run_opts *opts)
+ {
+ 	struct strvec pack_refs_cmd = STRVEC_INIT;
+ 	strvec_pushl(&pack_refs_cmd, "pack-refs", "--all", "--prune", NULL);
+ 
+-	return run_command_v_opt(pack_refs_cmd.v, RUN_GIT_CMD);
++	return run_command_v_opt_with_dryrun(pack_refs_cmd.v, RUN_GIT_CMD);
+ }
+ 
+ static int too_many_loose_objects(void)
+@@ -196,6 +228,9 @@ static int too_many_loose_objects(void)
+ 		    ent->d_name[hexsz_loose] != '\0')
+ 			continue;
+ 		if (++num_loose > auto_threshold) {
++			if (verbose)
++				fprintf(stderr, "note: too many loose objects, greater than: %d.\n",
++					auto_threshold);
+ 			needed = 1;
+ 			break;
+ 		}
+@@ -213,15 +248,22 @@ static struct packed_git *find_base_packs(struct string_list *packs,
+ 		if (!p->pack_local)
+ 			continue;
+ 		if (limit) {
+-			if (p->pack_size >= limit)
++			if (p->pack_size >= limit) {
++				if (verbose)
++					fprintf(stderr, "note: will keep pack '%s' (%"PRIu64" > %"PRIu64").\n",
++						p->pack_name, (uint64_t)p->pack_size, (uint64_t)limit);
+ 				string_list_append(packs, p->pack_name);
++			}
+ 		} else if (!base || base->pack_size < p->pack_size) {
+ 			base = p;
+ 		}
+ 	}
+ 
+-	if (base)
++	if (base) {
++		if (verbose)
++			fprintf(stderr, "note: will keep largest pack '%s'.\n", base->pack_name);
+ 		string_list_append(packs, base->pack_name);
++	}
+ 
+ 	return base;
+ }
+@@ -237,14 +279,21 @@ static int too_many_packs(void)
+ 	for (cnt = 0, p = get_all_packs(the_repository); p; p = p->next) {
+ 		if (!p->pack_local)
+ 			continue;
+-		if (p->pack_keep)
++		if (p->pack_keep) {
++			if (verbose)
++				fprintf(stderr, "note: pack '%s' has already been marked as keep.\n", p->pack_name);
+ 			continue;
++		}
+ 		/*
+ 		 * Perhaps check the size of the pack and count only
+ 		 * very small ones here?
+ 		 */
+ 		cnt++;
+ 	}
++	if (verbose) {
++		if (gc_auto_pack_limit < cnt)
++			fprintf(stderr, "note: too many packs. (%d > %d)\n", cnt, gc_auto_pack_limit);
++	}
+ 	return gc_auto_pack_limit < cnt;
+ }
+ 
+@@ -352,8 +401,11 @@ static int need_to_gc(void)
+ 	 * Setting gc.auto to 0 or negative can disable the
+ 	 * automatic gc.
+ 	 */
+-	if (gc_auto_threshold <= 0)
++	if (gc_auto_threshold <= 0) {
++		if (verbose)
++			fprintf(stderr, "note: no need to gc, for 'gc.auto == 0'.\n");
+ 		return 0;
++	}
+ 
+ 	/*
+ 	 * If there are too many loose objects, but not too many
+@@ -367,6 +419,10 @@ static int need_to_gc(void)
+ 		if (big_pack_threshold) {
+ 			find_base_packs(&keep_pack, big_pack_threshold);
+ 			if (keep_pack.nr >= gc_auto_pack_limit) {
++				if (verbose)
++					fprintf(stderr,
++						"note: too many packs to keep: %" PRIuMAX " > %d, clean and use largest one to keep.\n",
++						keep_pack.nr, gc_auto_pack_limit);
+ 				big_pack_threshold = 0;
+ 				string_list_clear(&keep_pack, 0);
+ 				find_base_packs(&keep_pack, 0);
+@@ -383,16 +439,23 @@ static int need_to_gc(void)
+ 			 * the rest for the OS and other processes in the
+ 			 * system.
+ 			 */
+-			if (!mem_have || mem_want < mem_have / 2)
++			if (!mem_have || mem_want < mem_have / 2) {
++				if (verbose)
++					fprintf(stderr,
++						"note: little memory footprint, no pack to keep, and will repack all.\n");
+ 				string_list_clear(&keep_pack, 0);
++			}
+ 		}
+ 
+ 		add_repack_all_option(&keep_pack);
+ 		string_list_clear(&keep_pack, 0);
+ 	} else if (too_many_loose_objects())
+ 		add_repack_incremental_option();
+-	else
++	else {
++		if (verbose)
++			fprintf(stderr, "note: repo is healthy, no need to gc.\n");
+ 		return 0;
++	}
+ 
+ 	if (run_hooks("pre-auto-gc"))
+ 		return 0;
+@@ -530,7 +593,7 @@ static void gc_before_repack(void)
+ 	if (pack_refs && maintenance_task_pack_refs(NULL))
+ 		die(FAILED_RUN, "pack-refs");
+ 
+-	if (prune_reflogs && run_command_v_opt(reflog.v, RUN_GIT_CMD))
++	if (prune_reflogs && run_command_v_opt_with_dryrun(reflog.v, RUN_GIT_CMD))
+ 		die(FAILED_RUN, reflog.v[0]);
+ }
+ 
+@@ -559,6 +622,8 @@ int cmd_gc(int argc, const char **argv, const char *prefix)
+ 			   PARSE_OPT_NOCOMPLETE),
+ 		OPT_BOOL(0, "keep-largest-pack", &keep_largest_pack,
+ 			 N_("repack all other packs except the largest pack")),
++		OPT_BOOL(0, "verbose", &verbose, N_("verbose mode")),
++		OPT_BOOL(0, "dryrun", &dryrun, N_("dryrun mode")),
+ 		OPT_END()
+ 	};
+ 
+@@ -581,6 +646,8 @@ int cmd_gc(int argc, const char **argv, const char *prefix)
+ 
+ 	argc = parse_options(argc, argv, prefix, builtin_gc_options,
+ 			     builtin_gc_usage, 0);
++	if (dryrun)
++		verbose = 1;
+ 	if (argc > 0)
+ 		usage_with_options(builtin_gc_usage, builtin_gc_options);
+ 
+@@ -665,8 +732,8 @@ int cmd_gc(int argc, const char **argv, const char *prefix)
+ 	gc_before_repack();
+ 
+ 	if (!repository_format_precious_objects) {
+-		if (run_command_v_opt(repack.v,
+-				      RUN_GIT_CMD | RUN_CLOSE_OBJECT_STORE))
++		if (run_command_v_opt_with_dryrun(
++			    repack.v, RUN_GIT_CMD | RUN_CLOSE_OBJECT_STORE))
+ 			die(FAILED_RUN, repack.v[0]);
+ 
+ 		if (prune_expire) {
+@@ -676,18 +743,18 @@ int cmd_gc(int argc, const char **argv, const char *prefix)
+ 			if (has_promisor_remote())
+ 				strvec_push(&prune,
+ 					    "--exclude-promisor-objects");
+-			if (run_command_v_opt(prune.v, RUN_GIT_CMD))
++			if (run_command_v_opt_with_dryrun(prune.v, RUN_GIT_CMD))
+ 				die(FAILED_RUN, prune.v[0]);
+ 		}
+ 	}
+ 
+ 	if (prune_worktrees_expire) {
+ 		strvec_push(&prune_worktrees, prune_worktrees_expire);
+-		if (run_command_v_opt(prune_worktrees.v, RUN_GIT_CMD))
++		if (run_command_v_opt_with_dryrun(prune_worktrees.v, RUN_GIT_CMD))
+ 			die(FAILED_RUN, prune_worktrees.v[0]);
+ 	}
+ 
+-	if (run_command_v_opt(rerere.v, RUN_GIT_CMD))
++	if (run_command_v_opt_with_dryrun(rerere.v, RUN_GIT_CMD))
+ 		die(FAILED_RUN, rerere.v[0]);
+ 
+ 	report_garbage = report_pack_garbage;
+@@ -1853,7 +1920,7 @@ static int schtasks_remove_task(enum schedule_priority schedule)
+ 	strvec_split(&args, cmd);
+ 	strvec_pushl(&args, "/delete", "/tn", name, "/f", NULL);
+ 
+-	result = run_command_v_opt(args.v, 0);
++	result = run_command_v_opt_with_dryrun(args.v, 0);
+ 
+ 	strvec_clear(&args);
+ 	free(name);
+diff --git a/t/t6502-git-gc-dryrun.sh b/t/t6502-git-gc-dryrun.sh
+new file mode 100755
+index 0000000000..04e60a0255
+--- /dev/null
++++ b/t/t6502-git-gc-dryrun.sh
+@@ -0,0 +1,321 @@
++#!/bin/sh
++
++test_description='agit-gc dryrun test'
++
++GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
++export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
++
++. ./test-lib.sh
++
++create_bare_repo () {
++	test "$#" = 1 ||
++	BUG "not 1 parameter to test-create-repo"
++	repo="$1"
++	mkdir -p "$repo"
++	(
++		cd "$repo" || error "Cannot setup test environment"
++		git -c \
++			init.defaultBranch="${GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME-master}" \
++			init --bare \
++			"--template=$GIT_BUILD_DIR/templates/blt/" >&3 2>&4 ||
++		error "cannot run git init -- have you built things yet?"
++		mv hooks hooks-disabled &&
++		git config core.abbrev 7
++	) || exit
++}
++
++rewrite_gc_output() {
++	_x40="$_x35$_x05"
++	sed \
++		-e "s/'/\"/g" \
++		-e "s/([0-9][0-9][0-9][0-9]* >/(<SIZE> >/g" \
++		-e "s/pack-$_x40[0-9a-f]*/pack-<ID>/g"
++}
++
++test_expect_success 'setup' '
++	create_bare_repo repo.git &&
++	git -C repo.git config gc.autoDetach 0 &&
++	git clone repo.git work
++'
++
++if test "$GIT_TEST_DEFAULT_HASH" = sha256
++then
++	cat >expect <<-EOF
++	repo.git/objects/17/3e5dff2e3908c6976be9a1647cc27aca742a3694c8f8f717b06cbace61023b
++	repo.git/objects/17/5790306b946f2e4df0e79261dd1c9ceefd40c2d4ae3f8e1a4866ff518dc716
++	repo.git/objects/17/744c4d4b03844d2b9eeee3074105289666b7fd9136019fc7e341772abcba71
++	repo.git/objects/17/e77a090aae09afc93b3908bf6c57aad56bfec13e6927f47523b02dff5412f0
++	EOF
++else
++	cat >expect <<-EOF
++	repo.git/objects/17/5b6c5dfd7f9bf6e2b2c4e2dcf3e2341298575d
++	repo.git/objects/17/e344e7c08441fa81d5b56c21008dc0feeeaa20
++	EOF
++fi
++
++test_expect_success 'setup: add loose objects' '
++	git -C repo.git config transfer.unpackLimit 6700 &&
++	(
++		cd work &&
++		for i in $(test_seq 1 512)
++		do
++			printf "$i\n" >$i.txt
++		done &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Initial commit" &&
++		git push
++	) &&
++	find repo.git/objects/17 -type f | sort >actual &&
++	test_cmp expect actual
++'
++
++test_expect_success 'setup: add packs' '
++	git -C repo.git config transfer.unpackLimit 1 &&
++	git -C repo.git config gc.auto 0 &&
++	(
++		cd work &&
++
++		test_copy_bytes 30720 </dev/urandom >30.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 30.bin" &&
++		git push &&
++
++		test_copy_bytes 61440 </dev/urandom >60.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 60.bin" &&
++		git push &&
++
++		test_copy_bytes 102400 </dev/urandom >100.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 100.bin" &&
++		git push &&
++
++		test_copy_bytes 133120 </dev/urandom >130.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 130.bin" &&
++		git push &&
++
++		test_copy_bytes 163840 </dev/urandom >160.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 160.bin" &&
++		git push &&
++
++		test_copy_bytes 204800 </dev/urandom >200.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 200.bin" &&
++		git push &&
++
++		test_copy_bytes 235520 </dev/urandom >230.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 230.bin" &&
++		git push &&
++
++		test_copy_bytes 266240 </dev/urandom >260.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 260.bin" &&
++		git push &&
++
++		test_copy_bytes 307200 </dev/urandom >300.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 300.bin" &&
++		git push &&
++
++		test_copy_bytes 337920 </dev/urandom >330.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 330.bin" &&
++		git push &&
++
++		test_copy_bytes 368640 </dev/urandom >360.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 360.bin" &&
++		git push &&
++
++		test_copy_bytes 409600 </dev/urandom >400.bin &&
++		git add -A &&
++		test_tick &&
++		git commit -m "Add 400.bin" &&
++		git push
++	)
++'
++
++test_expect_success 'gc --auto: auto gc is disabled' '
++	git -C repo.git \
++		gc --auto --dryrun \
++		>actual 2>&1 &&
++
++	cat >expect <<-EOF &&
++	note: no need to gc, for '"'"'gc.auto == 0'"'"'.
++	EOF
++	test_cmp expect actual
++'
++
++if test "$GIT_TEST_DEFAULT_HASH" = sha256
++then
++	# SHA256: (769 +256 -1)/256 = 4
++	gc_auto_threshold=769
++else
++	# SHA1:	 (257 + 256 - 1) / 256 = 2
++	gc_auto_threshold=257
++fi
++
++test_expect_success 'gc --auto: repo is healthy' '
++	git -C repo.git \
++		-c gc.auto=${gc_auto_threshold} \
++		gc --auto --dryrun \
++		>actual 2>&1 &&
++
++	cat >expect <<-EOF &&
++	note: repo is healthy, no need to gc.
++	EOF
++	test_cmp expect actual
++'
++
++if test "$GIT_TEST_DEFAULT_HASH" = sha256
++then
++	# SHA256: (768 +256 -1)/256 < 4
++	gc_auto_threshold=768
++	nr_of_files=3
++else
++	# SHA1:	 (256 + 256 - 1) / 256 < 2
++	gc_auto_threshold=256
++	nr_of_files=1
++fi
++
++test_expect_success 'gc --auto: too many loose objects' '
++	git -C repo.git \
++		-c gc.auto=$gc_auto_threshold \
++		gc --auto --dryrun \
++		>out 2>&1 &&
++	rewrite_gc_output <out | grep "^note: " >actual &&
++
++	cat >expect <<-EOF &&
++	note: too many loose objects, greater than: $nr_of_files.
++	note: will run: git pack-refs --all --prune
++	note: will run: git reflog expire --all
++	note: will run: git repack -d -l --no-write-bitmap-index
++	note: will run: git prune --expire 2.weeks.ago
++	note: will run: git worktree prune --expire 3.months.ago
++	note: will run: git rerere gc
++	note: too many loose objects, greater than: $nr_of_files.
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'gc: too many packs, packs all' '
++	git -C repo.git \
++		-c gc.auto=6700 \
++		-c gc.autoPackLimit=11 \
++		gc --dryrun \
++		>out 2>&1 &&
++	rewrite_gc_output <out | grep "^note: " >actual &&
++
++	cat >expect <<-EOF &&
++	note: will run: git pack-refs --all --prune
++	note: will run: git reflog expire --all
++	note: will run: git repack -d -l -A --unpack-unreachable=2.weeks.ago
++	note: will run: git prune --expire 2.weeks.ago
++	note: will run: git worktree prune --expire 3.months.ago
++	note: will run: git rerere gc
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'gc --keep-largest-pack: keep largest pack' '
++	git -C repo.git \
++		-c gc.auto=6700 \
++		-c gc.autoPackLimit=11 \
++		gc --keep-largest-pack --dryrun \
++		>out 2>&1 &&
++	rewrite_gc_output <out | grep "^note: " >actual &&
++
++	cat >expect <<-EOF &&
++	note: will keep largest pack "./objects/pack/pack-<ID>.pack".
++	note: will run: git pack-refs --all --prune
++	note: will run: git reflog expire --all
++	note: will run: git repack -d -l -A --unpack-unreachable=2.weeks.ago --keep-pack=pack-<ID>.pack
++	note: will run: git prune --expire 2.weeks.ago
++	note: will run: git worktree prune --expire 3.months.ago
++	note: will run: git rerere gc
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'gc --aggressive' '
++	git -C repo.git \
++		-c gc.auto=6700 \
++		-c gc.autoPackLimit=11 \
++		gc --aggressive --dryrun \
++		>out 2>&1 &&
++	rewrite_gc_output <out | grep "^note: " >actual &&
++
++	cat >expect <<-EOF &&
++	note: will run: git pack-refs --all --prune
++	note: will run: git reflog expire --all
++	note: will run: git repack -d -l -f --depth=50 --window=250 -A --unpack-unreachable=2.weeks.ago
++	note: will run: git prune --expire 2.weeks.ago
++	note: will run: git worktree prune --expire 3.months.ago
++	note: will run: git rerere gc
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'gc --prune=now' '
++	git -C repo.git \
++		-c gc.auto=6700 \
++		-c gc.autoPackLimit=11 \
++		gc --prune=now --dryrun \
++		>out 2>&1 &&
++	rewrite_gc_output <out | grep "^note: " >actual &&
++
++	cat >expect <<-EOF &&
++	note: will run: git pack-refs --all --prune
++	note: will run: git reflog expire --all
++	note: will run: git repack -d -l -a
++	note: will run: git prune --expire now
++	note: will run: git worktree prune --expire 3.months.ago
++	note: will run: git rerere gc
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'gc with bigPackThreshold' '
++	git -C repo.git \
++		-c gc.auto=6700 \
++		-c gc.autoPackLimit=11 \
++		-c gc.bigPackThreshold=200k \
++		gc --auto --dryrun \
++		>out 2>&1 &&
++	rewrite_gc_output <out | grep "^note: " >actual &&
++
++	cat >expect <<-EOF &&
++	note: too many packs. (12 > 11)
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will keep pack "./objects/pack/pack-<ID>.pack" (<SIZE> > 204800).
++	note: will run: git pack-refs --all --prune
++	note: will run: git reflog expire --all
++	note: will run: git repack -d -l -A --unpack-unreachable=2.weeks.ago --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack --keep-pack=pack-<ID>.pack
++	note: will run: git prune --expire 2.weeks.ago
++	note: will run: git worktree prune --expire 3.months.ago
++	note: will run: git rerere gc
++	EOF
++	test_cmp expect actual
++'
++
++test_done
+-- 
+patchwork

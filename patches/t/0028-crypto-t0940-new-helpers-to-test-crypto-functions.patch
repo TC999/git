@@ -1,0 +1,1553 @@
+From 136d6e62eeade4a1c0a269ef28e90fac71489473 Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Tue, 29 Dec 2020 16:22:29 +0800
+Subject: [PATCH 28/47] crypto: t0940: new helpers to test crypto functions
+
+Add new test helper test-agit-crypto and test-agit-od to test crypto.c.
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ Makefile                        |   2 +
+ t/helper/test-agit-crypto.c     | 358 +++++++++++++++++++++++++++
+ t/helper/test-agit-od.c         |  67 +++++
+ t/helper/test-tool.c            |   2 +
+ t/helper/test-tool.h            |   2 +
+ t/t0940-crypto-repository.sh    | 179 ++++++++++++++
+ t/t0940/README.md               |  10 +
+ t/t0940/once-0001-crypto.sh     | 418 ++++++++++++++++++++++++++++++++
+ t/t0940/once-0002-crypto-map.sh | 418 ++++++++++++++++++++++++++++++++
+ 9 files changed, 1456 insertions(+)
+ create mode 100644 t/helper/test-agit-crypto.c
+ create mode 100644 t/helper/test-agit-od.c
+ create mode 100755 t/t0940-crypto-repository.sh
+ create mode 100644 t/t0940/README.md
+ create mode 100644 t/t0940/once-0001-crypto.sh
+ create mode 100644 t/t0940/once-0002-crypto-map.sh
+
+diff --git a/Makefile b/Makefile
+index 5c5a562e3f..a41ee4ebe9 100644
+--- a/Makefile
++++ b/Makefile
+@@ -704,6 +704,8 @@ X =
+ PROGRAMS += $(patsubst %.o,git-%$X,$(PROGRAM_OBJS))
+ 
+ TEST_BUILTINS_OBJS += test-advise.o
++TEST_BUILTINS_OBJS += test-agit-crypto.o
++TEST_BUILTINS_OBJS += test-agit-od.o
+ TEST_BUILTINS_OBJS += test-bitmap.o
+ TEST_BUILTINS_OBJS += test-bloom.o
+ TEST_BUILTINS_OBJS += test-chmtime.o
+diff --git a/t/helper/test-agit-crypto.c b/t/helper/test-agit-crypto.c
+new file mode 100644
+index 0000000000..22e13b63f5
+--- /dev/null
++++ b/t/helper/test-agit-crypto.c
+@@ -0,0 +1,358 @@
++#include "test-tool.h"
++#include "cache.h"
++#include "trace.h"
++#include "crypto.h"
++
++#define INPUT_BUF_SIZE 4096
++
++static git_cryptor cryptor;
++static int use_mmap = 0;
++
++/*
++ * Compress stream from in to out, and encrypt if agit_crypt_enabled is true.
++ * 1. Add encrypt header for out if agit_crypto_enabled.
++ * 2. Deflate
++ * 3. Encrypt stream
++ */
++static int do_deflate(int in, int out, size_t total)
++{
++	git_zstream strm;
++	unsigned char *map = NULL;
++	unsigned char buf[4096];
++	unsigned char crypto_buf[4096];
++	ssize_t size;
++	int flush = 0;
++	int ret;
++
++	if (use_mmap) {
++		/* read or mmap file to buffer */
++		map = mmap(NULL, total, PROT_READ, MAP_PRIVATE, in, 0);
++		if (map == MAP_FAILED)
++			die("mmap failed");
++		size = total;
++	} else {
++		map = malloc(INPUT_BUF_SIZE);
++		size = read(in, map, INPUT_BUF_SIZE);
++		if (size < 0)
++			die("fail to read input file");
++	}
++
++	/* Encrypt: init crypto, and write header */
++	if (agit_crypto_enabled) {
++		unsigned char *header = NULL;
++
++		git_encryptor_init_for_loose_object(&cryptor);
++		header = git_encryptor_get_net_object_header(&cryptor, NULL);
++		if (write(out, header, GIT_CRYPTO_LO_HEADER_SIZE) < 0)
++			die(_("unable to write loose object file"));
++		free(header);
++	}
++
++	/* Set it up */
++	git_deflate_init(&strm, zlib_compression_level);
++	strm.next_in = (unsigned char *)map;
++	strm.avail_in = size;
++	strm.next_out = buf;
++	strm.avail_out = sizeof(buf);
++	do {
++		size_t len;
++
++		if (use_mmap) {
++			flush = Z_FINISH;
++			ret = git_deflate(&strm, flush);
++		} else {
++			ret = git_deflate(&strm, flush);
++
++			if (strm.avail_in == 0) {
++				size = read(in, map, INPUT_BUF_SIZE);
++				if (size < 0)
++					die("fail to read input file");
++				strm.next_in= map;
++				strm.avail_in = size;
++				if (size == 0) {
++					flush = Z_FINISH;
++					trace_printf_key(&trace_crypto_key,
++						"debug: deflate set flush to %d"
++						", avail_in: %ld"
++						", avail_out: %ld"
++						", total_in: %ld"
++						", total_out: %ld"
++						"\n",
++						flush,
++						strm.avail_in,
++						strm.avail_out,
++						strm.total_in,
++						strm.total_out);
++				}
++			}
++		}
++		len = strm.next_out - buf;
++		if (len > 0) {
++			/* Encrypt: init crypto, and write header */
++			if (agit_crypto_enabled) {
++				cryptor.encrypt(&cryptor,
++					buf,
++					crypto_buf,
++					len);
++				if (write(out, crypto_buf, len) != len)
++					die("unable to write output");
++			} else {
++				if (write(out, buf, len) != len)
++					die("unable to write output");
++			}
++		}
++		strm.next_out = buf;
++		strm.avail_out = sizeof(buf);
++		if (ret == Z_BUF_ERROR)
++			trace_printf_key(&trace_crypto_key, "debug: deflate finds Z_BUF_ERROR\n");
++	} while (ret == Z_OK || ret == Z_BUF_ERROR);
++
++	if (ret != Z_STREAM_END)
++		die("unable to deflate (%d)", ret);
++	ret = git_deflate_end_gently(&strm);
++	if (ret != Z_OK)
++		die("deflateEnd failed (%d)", ret);
++	if (use_mmap)
++		munmap(map, total);
++	else
++		free(map);
++	return 0;
++}
++
++/*
++ * Uncompress stream from in to out, and decrypt if has proper header.
++ * 1. Read header from input, and check if it is encrypted stream.
++ * 2. Decrypt
++ * 3. Inflate
++ */
++static int do_inflate(int in, int out, size_t total)
++{
++	git_zstream strm;
++	unsigned char *map = NULL;
++	unsigned char *decrypt_map = NULL;
++	unsigned char buf[4096];
++	ssize_t size;
++	int flush = 0;
++	int encrypted = 0;
++	int ret;
++
++	if (use_mmap) {
++		/* read or mmap file to buffer */
++		map = mmap(NULL, total, PROT_READ, MAP_PRIVATE, in, 0);
++		if (map == MAP_FAILED)
++			die("mmap failed");
++		size = total;
++	} else {
++		map = malloc(INPUT_BUF_SIZE);
++		if (!map)
++			die("fail to allocate map for input buf");
++		size = read(in, map, INPUT_BUF_SIZE);
++		if (size < 0)
++			die("fail to read input file");
++	}
++
++	if (size == total)
++		flush = Z_FINISH;
++
++	/* Decrypt: check object header */
++	if (size > GIT_CRYPTO_LO_HEADER_SIZE &&
++	    git_crypto_lo_has_signature(map)) {
++		encrypted = 1;
++		git_decryptor_init_or_die(&cryptor, *(unsigned int *)(map + 4),
++					  map + 8);
++		decrypt_map = malloc(INPUT_BUF_SIZE);
++		if (!decrypt_map)
++			die("fail to allocate decrypt_map");
++	}
++
++	/* Decrypt: decrypt to buffer */
++	if (encrypted) {
++		size -= GIT_CRYPTO_LO_HEADER_SIZE;
++		if (size > INPUT_BUF_SIZE) {
++			size = INPUT_BUF_SIZE;
++			flush = 0;
++		}
++		cryptor.decrypt(&cryptor,
++				map + GIT_CRYPTO_LO_HEADER_SIZE,
++				decrypt_map,
++				size,
++				size);
++	}
++
++	/* Set it up */
++	memset(&strm, 0, sizeof(strm));
++	if (encrypted)
++		strm.next_in = decrypt_map;
++	else
++		strm.next_in = map;
++	strm.avail_in = size;
++	strm.next_out = buf;
++	strm.avail_out = sizeof(buf);
++	git_inflate_init(&strm);
++	do {
++		size_t len;
++		unsigned char *phead = strm.next_out;
++
++		ret = git_inflate(&strm, flush);
++		len = strm.next_out - phead;
++		if (len > 0) {
++			if (write(out, buf, len) < 0)
++				die("unable to write output");
++		}
++		strm.next_out = buf;
++		strm.avail_out = sizeof(buf);
++
++		if (strm.avail_in == 0) {
++			if (use_mmap) {
++				if (encrypted && strm.total_in < total - GIT_CRYPTO_LO_HEADER_SIZE) {
++					size = total - GIT_CRYPTO_LO_HEADER_SIZE - strm.total_in;
++					if (size > INPUT_BUF_SIZE)
++						size = INPUT_BUF_SIZE;
++					cryptor.decrypt(&cryptor,
++							map + GIT_CRYPTO_LO_HEADER_SIZE + strm.total_in,
++							decrypt_map,
++							size,
++							size);
++					strm.next_in= decrypt_map;
++					strm.avail_in = size;
++				}
++			} else {
++				size = read(in, map, INPUT_BUF_SIZE);
++				/* EOF */
++				if (size == 0) {
++					flush = Z_FINISH;
++					trace_printf_key(&trace_crypto_key,
++						"debug: inflate set flush to %d"
++						", avail_in: %ld"
++						", avail_out: %ld"
++						", total_in: %ld"
++						", total_out: %ld"
++						"\n",
++						flush,
++						strm.avail_in,
++						strm.avail_out,
++						strm.total_in,
++						strm.total_out);
++				} else if (size < 0) {
++					die("fail to read input file");
++				} else {
++					if (encrypted) {
++						cryptor.decrypt(&cryptor,
++								map,
++								decrypt_map,
++								size,
++								size);
++						strm.next_in = decrypt_map;
++						strm.avail_in = size;
++					} else  {
++						strm.next_in = map;
++						strm.avail_in = size;
++					}
++				}
++			}
++		}
++
++		if (ret == Z_BUF_ERROR)
++			trace_printf_key(&trace_crypto_key, "debug: inflate finds Z_BUF_ERROR\n");
++	} while (ret == Z_OK || ret == Z_BUF_ERROR);
++	/* NOTE: ret may encounter Z_BUF_ERROR, but we do not need to increate buffer, just try again */
++
++	if (ret != Z_STREAM_END)
++		die("unable to inflate (%d)", ret);
++	git_inflate_end(&strm);
++
++	if (use_mmap) {
++		munmap(map, total);
++	} else {
++		free(map);
++		free(decrypt_map);
++	}
++	return 0;
++}
++
++static int agit_crypto_usage(char *fmt, ...)
++{
++	struct strbuf buf = STRBUF_INIT;
++	va_list ap;
++	va_start(ap, fmt);
++
++	strbuf_vaddf(&buf, fmt, ap);
++	fprintf(stderr, "zlib inflate/deflate demo\n\n");
++	fprintf(stderr, "Usage:\n");
++	fprintf(stderr, "\ttest-tool agit-crypto [-z | -x] [--secret <token>] -i <input-file> -o <output-file>\n");
++	if (buf.len)
++		fprintf(stderr, "\nERROR: %s\n", buf.buf);
++	strbuf_release(&buf);
++	return 1;
++}
++
++int cmd__agit_crypto(int argc, const char *argv[])
++{
++	char *in = NULL;
++	char *out = NULL;
++	int fdin, fdout;
++	int inflate = -1;
++	int ret = 0;
++	struct stat st;
++	int i;
++
++	for (i = 1; i < argc; i++) {
++		if (!strcmp("-i", argv[i])) {
++			i++;
++			in = strdup(argv[i]);
++		} else if (!strcmp("-o", argv[i])) {
++			i++;
++			out = strdup(argv[i]);
++		} else if (!strcmp("-x", argv[i])) {
++			inflate = 1;
++		} else if (!strcmp("-z", argv[i])) {
++			inflate = 0;
++		} else if (!strcmp("--secret", argv[i])) {
++			agit_crypto_secret = strdup(argv[++i]);
++			agit_crypto_enabled = 1;
++			agit_crypto_nonce = "random_nonce";
++		} else if (!strcmp("--mmap", argv[i])) {
++			use_mmap = 1;
++		} else {
++			return agit_crypto_usage("unknown option: %s", argv[i]);
++		}
++	}
++
++	if (inflate == -1)
++		return agit_crypto_usage("-z or -x is not provided");
++	if (!in)
++		return agit_crypto_usage("must provide -i <input>");
++	if (!out)
++		return agit_crypto_usage("must provide -o <output>");
++	if (!strcmp(in, out))
++		return agit_crypto_usage("in and out file cannot be the same one");
++
++	if (!strcmp(in, "-")) {
++		fdin = fileno(stdin);
++	} else {
++		fdin = xopen(in, O_RDONLY);
++	}
++	if (!strcmp(out, "-")) {
++		fdout = fileno(stdout);
++	} else {
++		fdout = xopen(out, O_RDWR | O_CREAT | O_TRUNC, 0644);
++	}
++
++	if (fstat(fdin, &st))
++		die("fail to get size of file %s", in);
++
++	if (inflate)
++		ret = do_inflate(fdin, fdout, st.st_size);
++	else
++		ret = do_deflate(fdin, fdout, st.st_size);
++
++	close(fdin);
++	close(fdout);
++
++	if (inflate)
++		printf("unzip file '%s' to '%s'\n", in, out);
++	else
++		printf("zip file '%s' to '%s'\n", in, out);
++
++	return ret;
++}
+diff --git a/t/helper/test-agit-od.c b/t/helper/test-agit-od.c
+new file mode 100644
+index 0000000000..e5a55fae34
+--- /dev/null
++++ b/t/helper/test-agit-od.c
+@@ -0,0 +1,67 @@
++#include "test-tool.h"
++#include "cache.h"
++
++#define INPUT_BUF_SIZE 4096
++
++int cmd__agit_od(int argc, const char *argv[])
++{
++	struct strbuf buf = STRBUF_INIT;
++	struct strbuf asc_buf = STRBUF_INIT;
++	unsigned char line[INPUT_BUF_SIZE];
++	unsigned char *p;
++	ssize_t len;
++	size_t i;
++	int show_ascii = 1;
++
++	for (i = 1; i < argc; i++) {
++		if (!strcmp("--no-ascii", argv[i])) {
++			show_ascii = 0;
++		} else if (!strcmp("--ascii", argv[i])) {
++			show_ascii = 1;
++		}
++	}
++
++	while (1) {
++
++		len = read(0, line, INPUT_BUF_SIZE);
++		if (len < 0)
++			die("fail to read");
++		if (len == 0)
++			break;
++		p = line;
++
++		for (i = 0; i < len; i++, p++) {
++			if (i % 16 == 0) {
++				if (i > 0) {
++					if (show_ascii) {
++						printf("%-55s    | %-16s |\n", buf.buf, asc_buf.buf);
++						strbuf_reset(&asc_buf);
++					} else {
++						printf("%s\n", buf.buf);
++					}
++				}
++				strbuf_reset(&buf);
++				strbuf_addf(&buf, "%07"PRIuPTR, i);
++			}
++			strbuf_addf(&buf, " %02x", *p);
++			if (show_ascii) {
++				if (isspace(*p))
++					strbuf_addch(&asc_buf, ' ');
++				else
++					strbuf_addch(&asc_buf, isprint(*p) ? *p : '.');
++			}
++		}
++	}
++	if (buf.len) {
++		if (show_ascii)
++			printf("%-55s    | %-16s |\n", buf.buf, asc_buf.buf);
++		else
++			printf("%s\n", buf.buf);
++	}
++
++	strbuf_release(&buf);
++	strbuf_release(&asc_buf);
++
++	return 0;
++}
++
+diff --git a/t/helper/test-tool.c b/t/helper/test-tool.c
+index 0424f7adf5..3c9438f862 100644
+--- a/t/helper/test-tool.c
++++ b/t/helper/test-tool.c
+@@ -15,6 +15,8 @@ struct test_cmd {
+ 
+ static struct test_cmd cmds[] = {
+ 	{ "advise", cmd__advise_if_enabled },
++	{ "agit-crypto", cmd__agit_crypto },
++	{ "agit-od", cmd__agit_od },
+ 	{ "bitmap", cmd__bitmap },
+ 	{ "bloom", cmd__bloom },
+ 	{ "chmtime", cmd__chmtime },
+diff --git a/t/helper/test-tool.h b/t/helper/test-tool.h
+index c876e8246f..82ae6a3073 100644
+--- a/t/helper/test-tool.h
++++ b/t/helper/test-tool.h
+@@ -5,6 +5,8 @@
+ #include "git-compat-util.h"
+ 
+ int cmd__advise_if_enabled(int argc, const char **argv);
++int cmd__agit_crypto(int argc, const char **argv);
++int cmd__agit_od(int argc, const char **argv);
+ int cmd__bitmap(int argc, const char **argv);
+ int cmd__bloom(int argc, const char **argv);
+ int cmd__chmtime(int argc, const char **argv);
+diff --git a/t/t0940-crypto-repository.sh b/t/t0940-crypto-repository.sh
+new file mode 100755
+index 0000000000..dce537ac0e
+--- /dev/null
++++ b/t/t0940-crypto-repository.sh
+@@ -0,0 +1,179 @@
++#!/bin/sh
++
++test_description='Test repo encrypt and decrypt
++
++Run all test cases under t0940/test-*.sh using:
++
++    $ sh t0940-crypto-repository.sh
++
++If want to load specific test script inside t0940/, using:
++
++    $ GIT_TEST_LOAD=0001 sh t0940-crypto-repository.sh
++'
++
++GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
++export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
++
++. ./test-lib.sh
++
++create_bare_repo () {
++	test "$#" = 1 ||
++	BUG "not 1 parameter to create-bare-repo"
++	repo="$1"
++	mkdir -p "$repo"
++	(
++		cd "$repo" || error "Cannot setup test environment"
++		"${GIT_TEST_INSTALLED:-$GIT_EXEC_PATH}/git$X" -c \
++			init.defaultBranch="${GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME-master}" \
++			init --bare \
++			"--template=$GIT_BUILD_DIR/templates/blt/" >&3 2>&4 ||
++		error "cannot run git init -- have you built things yet?"
++		mv hooks hooks-disabled &&
++		git config core.abbrev 7
++	) || exit
++}
++
++reset_test_tick () {
++	# 60s back from initial value in `test-lib-function.sh`
++	test_tick=1112911933
++}
++
++show_lo_header () {
++	test_copy_bytes 20
++}
++
++# Some absolute path tests should be skipped on Windows due to path mangling
++# on POSIX-style absolute paths
++case $(uname -s) in
++*MINGW*)
++	;;
++*CYGWIN*)
++	;;
++*)
++	test_set_prereq POSIX
++	;;
++esac
++
++if dd --help | grep -q -w iflag
++then
++	DD="dd iflag=fullblock"
++else
++	DD=dd
++fi
++
++if type openssl || test "$DD" != "dd"
++then
++	test_set_prereq NEED_GNU_DD
++fi
++
++setup_env () {
++	algo=
++
++	if test $# -ne 1
++	then
++		echo >&2 "usage: run_crypto_test <algo>"
++		return 1
++	fi
++
++	case $1 in
++	benchmark | 1)
++		algo=1
++		;;
++	easy_benchmark | 64)
++		algo=64
++		;;
++	aes | 2)
++		algo=2
++		;;
++	easy_aes | 65)
++		algo=65
++		;;
++	default)
++		algo=
++		;;
++	*)
++		echo >&2 "error: bad algorithm: $1"
++		return 1
++		;;
++	esac
++
++	test_expect_success "========== Setup algorithm: algorithm: $algo ==========" '
++		if test -n "$algo"
++		then
++			GIT_TEST_CRYPTO_ALGORITHM_TYPE=$algo &&
++			export GIT_TEST_CRYPTO_ALGORITHM_TYPE
++		else
++			unset GIT_TEST_CRYPTO_ALGORITHM_TYPE
++		fi
++	'
++
++	COMMON_GITDIR="$TRASH_DIRECTORY/common-${GIT_TEST_CRYPTO_ALGORITHM_TYPE}.git"
++}
++
++run_crypto_test_once () {
++	if test -z "$GIT_TEST_LOAD"
++	then
++		GIT_TEST_LOAD="[0-9][0-9][0-9][0-9]"
++	fi
++
++	for num in $GIT_TEST_LOAD
++	do
++		for t in "$TEST_DIRECTORY"/t0940/once-$num-*.sh
++		do
++			if test ! -e "$t"
++			then
++				echo >&2 "ERROR: no such file: $t"
++				continue
++			fi
++			name=$(basename $t)
++			name=${name%.sh}
++			SUB_TRASH_DIRECTORY="$TRASH_DIRECTORY/$name"
++			mkdir -p "$SUB_TRASH_DIRECTORY"
++			cd "$SUB_TRASH_DIRECTORY"
++			reset_test_tick
++			test_expect_success "********** Start $name **********" '
++				test_create_repo .
++			'
++			. "$t"
++		done
++	done
++}
++
++run_crypto_test () {
++	if test -z "$GIT_TEST_LOAD"
++	then
++		GIT_TEST_LOAD="[0-9][0-9][0-9][0-9]"
++	fi
++
++	for num in $GIT_TEST_LOAD
++	do
++		for t in "$TEST_DIRECTORY"/t0940/test-$num-*.sh
++		do
++			if test ! -e "$t"
++			then
++				echo >&2 "ERROR: no such file: $t"
++				continue
++			fi
++			name=$(basename $t)
++			name=${name%.sh}
++			SUB_TRASH_DIRECTORY="$TRASH_DIRECTORY/$name-${GIT_TEST_CRYPTO_ALGORITHM_TYPE}"
++			mkdir -p "$SUB_TRASH_DIRECTORY"
++			cd "$SUB_TRASH_DIRECTORY"
++			reset_test_tick
++			test_expect_success "********** Start $name (${GIT_TEST_CRYPTO_ALGORITHM_TYPE}) **********" '
++				test_create_repo .
++			'
++			. "$t"
++		done
++	done
++}
++
++run_crypto_test_once
++
++for algo in ${algorithms:=aes easy_aes}
++do
++	setup_env $algo
++	run_crypto_test
++done
++
++test_done
+diff --git a/t/t0940/README.md b/t/t0940/README.md
+new file mode 100644
+index 0000000000..7b3ce895aa
+--- /dev/null
++++ b/t/t0940/README.md
+@@ -0,0 +1,10 @@
++# 运行测试用例
++
++运行 `t0940/` 下所有测试用例，使用命令：
++
++    $ cd t/
++    $ sh t0940-crypto-repository.sh
++
++如果只想执行 `t0940/` 下的部分命令，执行：
++
++    $ GIT_TEST_LOAD=0001 sh t0940-crypto-repository.sh
+diff --git a/t/t0940/once-0001-crypto.sh b/t/t0940/once-0001-crypto.sh
+new file mode 100644
+index 0000000000..50cd3746d7
+--- /dev/null
++++ b/t/t0940/once-0001-crypto.sh
+@@ -0,0 +1,418 @@
++#!/bin/sh
++
++# Test crypto
++
++test_expect_success 'create simple text file' '
++	cat >text-file <<-EOF
++	hello, world
++	EOF
++'
++
++test_expect_success 'compress text file' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -z \
++		-i text-file -o text-file.z.0 &&
++	test-tool agit-od <text-file.z.0 >actual &&
++	cat >expect <<-\EOF &&
++	0000000 78 01 cb 48 cd c9 c9 d7 51 28 cf 2f ca 49 e1 02    | x..H....Q(./.I.. |
++	0000016 00 21 e7 04 93                                     | .!...            |
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'uncompress for text file' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -x \
++		-i text-file.z.0 -o text-file.x.0 &&
++	test_cmp text-file text-file.x.0
++'
++
++# Base64 is 4*N characters, and after decode will be 3*N characters,
++# padding with zero.
++#
++#     +--------------------------+------------------------------+------------------------------+
++#     |          SECRET          |            BASE64            |            DECODE            |
++#     +--------------------------+------------------------------+------------------------------+
++#     | 12: secret-token         | 16: c2VjcmV0LXRva2Vu         | 12: secret-token             |
++#     | 13: secret-token\0       | 20: c2VjcmV0LXRva2VuAA==     | 15: secret-token\0\0\0       |
++#     | 14: secret-token\0\0     | 20: c2VjcmV0LXRva2VuAAA=     | 15: secret-token\0\0\0       |
++#     | 15: secret-token\0\0\0   | 20: c2VjcmV0LXRva2VuAAAA     | 15: secret-token\0\0\0       |
++#     | 16: secret-token\0\0\0\0 | 24: c2VjcmV0LXRva2VuAAAAAA== | 18: secret-token\0\0\0\0\0\0 |
++#     +---------------------------------------------------------+------------------------------+
++test_expect_success 'encrypt text file using algorithm 1' '
++	cat >expect-z-1 <<-\EOF &&
++	0000000 45 4e 43 00 81 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
++	0000016 6f 6e 63 65 2f 41 6f 66 cf 1a 63 b1 e6 aa cb e2    | once/Aof..c..... |
++	0000032 5d e7 6b 2f 57 61 43 2a 91                         | ].k/WaC*.        |
++	EOF
++
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=1 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -z \
++		--secret "{plain}secret-token" \
++		-i text-file -o text-file.z.1 &&
++	test-tool agit-od <text-file.z.1 >actual &&
++	test_cmp expect-z-1 actual
++'
++
++test_expect_success 'encrypt text file using algorithm 2' '
++	cat >expect-z-2 <<-\EOF &&
++	0000000 45 4e 43 00 82 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
++	0000016 6f 6e 63 65 f2 a6 04 3d 78 ea 79 46 a6 4d f3 d3    | once...=x.yF.M.. |
++	0000032 3a b7 b9 ae a2 28 48 8c fc                         | :....(H..        |
++	EOF
++
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=2 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -z \
++		--secret c2VjcmV0LXRva2Vu \
++		-i text-file -o text-file.z.2 &&
++	test-tool agit-od <text-file.z.2 >actual &&
++
++	! test_cmp expect-z-1 actual &&
++
++	test_cmp expect-z-2 actual
++'
++
++test_expect_success 'encrypt text file using algorithm 64' '
++	show_lo_header <expect-z-1 >expect-z-64 &&
++	printf c0 >>expect-z-64 &&
++	tail -c 218 <expect-z-1 >>expect-z-64 &&
++
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=64 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -z \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i text-file -o text-file.z.64 &&
++	test-tool agit-od <text-file.z.64 >actual &&
++	test_cmp expect-z-64 actual
++'
++
++test_expect_success 'encrypt text file using algorithm 65' '
++	show_lo_header <expect-z-2 >expect-z-65 &&
++	printf c1 >>expect-z-65 &&
++	tail -c 218 <expect-z-2 >>expect-z-65 &&
++
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=65 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -z \
++		--secret "{plain}secret-token" \
++		-i text-file -o text-file.z.65 &&
++	test-tool agit-od <text-file.z.65 >actual &&
++
++	test_cmp expect-z-65 actual
++'
++
++test_expect_success 'encrypt text file using default algorithm' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE= GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -z \
++		--secret "{plain}secret-token" \
++		-i text-file -o text-file.z.def &&
++	test_cmp text-file.z.2 text-file.z.def
++'
++
++test_expect_success 'will fail with too short secret' '
++	test_must_fail env GIT_TEST_CRYPTO_ALGORITHM_TYPE=2 \
++		GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -z \
++		--secret "{plain}pass" \
++		-i text-file -o text-file.bad 2>actual &&
++	cat >expect <<-\EOF &&
++	fatal: secret token is too short
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'encrypt with 12-byte secret (16 effective bytes)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=2 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -z \
++		--secret "{plain}secret-token" \
++		-i text-file -o test-file.z.token &&
++	test-tool agit-od <test-file.z.token >actual &&
++	cat >expect <<-\EOF &&
++	0000000 45 4e 43 00 82 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
++	0000016 6f 6e 63 65 f2 a6 04 3d 78 ea 79 46 a6 4d f3 d3    | once...=x.yF.M.. |
++	0000032 3a b7 b9 ae a2 28 48 8c fc                         | :....(H..        |
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'encrypt with 16-byte secret (16 effective bytes)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=2 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -z \
++		--secret "{plain}secret-token--16" \
++		-i text-file -o test-file.z.token &&
++	test-tool agit-od <test-file.z.token >actual &&
++
++	! test_cmp expect actual &&
++
++	cat >expect <<-\EOF &&
++	0000000 45 4e 43 00 82 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
++	0000016 6f 6e 63 65 c3 20 f1 65 03 13 77 7d 51 66 3b 19    | once. .e..w}Qf;. |
++	0000032 2b 53 f2 0a 97 66 e8 6b a4                         | +S. .f.k.        |
++	EOF
++
++	test_cmp expect actual
++'
++
++test_expect_success 'encrypt with 23-byte secret (same above, 16 effective bytes)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=2 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -z \
++		--secret "{plain}secret-token--16-19--23" \
++		-i text-file -o test-file.z.token &&
++	test-tool agit-od <test-file.z.token >actual &&
++
++	test_cmp expect actual
++'
++
++test_expect_success 'encrypt with 24-byte secret (24 effective bytes)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=2 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -z \
++		--secret "{plain}secret-token--16-19--23-" \
++		-i text-file -o test-file.z.token &&
++	test-tool agit-od <test-file.z.token >actual &&
++
++	! test_cmp expect actual &&
++
++	cat >expect <<-\EOF &&
++	0000000 45 4e 43 00 82 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
++	0000016 6f 6e 63 65 6e 19 2c 7b 95 f3 91 fd f7 f8 3c ab    | oncen.,{......<. |
++	0000032 7a 83 47 2d bb 43 7c 21 65                         | z.G-.C|!e        |
++	EOF
++
++	test_cmp expect actual
++'
++
++test_expect_success 'encrypt with 26-byte secret (same above, 24 effective bytes)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=2 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -z \
++		--secret "{plain}secret-token--16-19--23-26" \
++		-i text-file -o test-file.z.token &&
++	test-tool agit-od <test-file.z.token >actual &&
++
++	test_cmp expect actual
++'
++
++test_expect_success 'encrypt with 32-byte secret (32 effective bytes)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=2 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -z \
++		--secret "{plain}secret-token--16-19--23-26-29-32" \
++		-i text-file -o test-file.z.token &&
++	test-tool agit-od <test-file.z.token >actual &&
++
++	! test_cmp expect actual &&
++
++	cat >expect <<-\EOF &&
++	0000000 45 4e 43 00 82 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
++	0000016 6f 6e 63 65 2f 3d 8a 2c 2d 39 e0 df ab 70 2e 3b    | once/=.,-9...p.; |
++	0000032 df 51 7b 9b fc 01 d1 28 17                         | .Q{....(.        |
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'encrypt with 36-byte secret (same above, 32 effective bytes)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=2 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -z \
++		--secret "{plain}secret-token--16-19--23-26-29-32--36" \
++		-i text-file -o test-file.z.token &&
++	test-tool agit-od <test-file.z.token >actual &&
++
++	test_cmp expect actual
++'
++
++test_expect_success 'decrypt text-file.z.1 (bad token)' '
++	test_must_fail env GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -x \
++		--secret YmFkLXRva2VuMTIzNDU2Nw== \
++		-i text-file.z.1 -o text-file.x.1.bad
++'
++
++test_expect_success 'decrypt text-file.z.1 (bad token)' '
++	test_must_fail env GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -x \
++		--secret "{base64}*BAD*Encode*" \
++		-i text-file.z.1 -o bad 2>actual &&
++	cat >expect <<-EOF &&
++	fatal: decode secret failed
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'decrypt text-file.z.1' '
++	test_must_fail env GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -x \
++		--secret "{baseXX}c2VjcmV0LXRva2Vu" \
++		-i text-file.z.1 -o bad 2>actual &&
++	cat >expect <<-EOF &&
++	error: inflate: data stream error (incorrect header check)
++	fatal: unable to inflate (-3)
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'decrypt text-file.z.2' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -x \
++		--secret c2VjcmV0LXRva2VuAAA= \
++		-i text-file.z.2 -o text-file.x.2 &&
++
++	test_cmp text-file text-file.x.2
++'
++
++test_expect_success 'decrypt text-file.z.64' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -x \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i text-file.z.64 -o text-file.x.64 &&
++	test_cmp text-file text-file.x.64
++'
++
++test_expect_success 'decrypt text-file.z.64-2' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -x \
++		--secret c2VjcmV0LXRva2VuAAAA \
++		-i text-file.z.64 -o text-file.x.64 &&
++	test_cmp text-file text-file.x.64
++'
++
++test_expect_success 'decrypt text-file.z.64-3' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -x \
++		--secret c2VjcmV0LXRva2Vu \
++		-i text-file.z.64 -o text-file.x.64 &&
++	test_cmp text-file text-file.x.64
++'
++
++test_expect_success 'decrypt text-file.z.65' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -x \
++		--secret c2VjcmV0LXRva2Vu \
++		-i text-file.z.65 -o text-file.x.65 &&
++	test_cmp text-file text-file.x.65
++'
++
++test_expect_success 'decrypt text-file.z.65-2' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -x \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i text-file.z.65 -o text-file.x.65 &&
++	test_cmp text-file text-file.x.65
++'
++
++test_expect_success 'decrypt text-file.z.65-3' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -x \
++		--secret c2VjcmV0LXRva2VuAAAAAA== \
++		-i text-file.z.65 -o text-file.x.65 &&
++	test_cmp text-file text-file.x.65
++'
++
++test_expect_success NEED_GNU_DD 'create large binary file (10MB)' '
++	if type openssl
++	then
++		openssl enc -aes-256-ctr \
++			-pass pass:"$($DD if=/dev/urandom bs=128 count=1 2>/dev/null | base64)" \
++			-nosalt < /dev/zero | $DD of=bin-file bs=1024 count=10240
++	else
++		$DD if=/dev/random of=bin-file bs=1024 count=10240
++	fi
++'
++
++test_expect_success NEED_GNU_DD 'compress binary file' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -z \
++		-i bin-file -o bin-file.z.0 &&
++	test_copy_bytes 2 <bin-file.z.0 |
++		test-tool agit-od >actual &&
++	cat >expect <<-\EOF &&
++	0000000 78 01                                              | x.               |
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success NEED_GNU_DD 'uncompress for binary file' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -x \
++		-i bin-file.z.0 -o bin-file.x.0 &&
++	test_cmp bin-file bin-file.x.0
++'
++
++test_expect_success NEED_GNU_DD 'encrypt large binary (algo 1)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=1 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -z \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i bin-file -o bin-file.z.1 &&
++	show_lo_header <bin-file.z.1 | test-tool agit-od >actual &&
++	cat >expect <<-\EOF &&
++	0000000 45 4e 43 00 81 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
++	0000016 6f 6e 63 65                                        | once             |
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success NEED_GNU_DD 'encrypt large binary (algo 2)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=2 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -z \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i bin-file -o bin-file.z.2 &&
++	show_lo_header <bin-file.z.2 | test-tool agit-od >actual &&
++	cat >expect <<-\EOF &&
++	0000000 45 4e 43 00 82 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
++	0000016 6f 6e 63 65                                        | once             |
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success NEED_GNU_DD 'encrypt large binary (algo 64)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=64 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -z \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i bin-file -o bin-file.z.64 &&
++	show_lo_header <bin-file.z.64 | test-tool agit-od >actual &&
++	cat >expect <<-\EOF &&
++	0000000 45 4e 43 00 c0 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
++	0000016 6f 6e 63 65                                        | once             |
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success NEED_GNU_DD 'encrypt large binary (algo 65)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=65 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -z \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i bin-file -o bin-file.z.65 &&
++	show_lo_header <bin-file.z.65 | test-tool agit-od >actual &&
++	cat >expect <<-\EOF &&
++	0000000 45 4e 43 00 c1 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
++	0000016 6f 6e 63 65                                        | once             |
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success NEED_GNU_DD 'decrypt bin-file.z.1' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -x \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i bin-file.z.1 -o bin-file.x.1 &&
++	test_cmp bin-file bin-file.x.1
++'
++
++test_expect_success NEED_GNU_DD 'decrypt bin-file.z.2' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -x \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i bin-file.z.2 -o bin-file.x.2 &&
++	test_cmp bin-file bin-file.x.2
++'
++
++test_expect_success NEED_GNU_DD 'decrypt bin-file.z.64' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -x \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i bin-file.z.64 -o bin-file.x.64 &&
++	test_cmp bin-file bin-file.x.64
++'
++
++test_expect_success NEED_GNU_DD 'decrypt bin-file.z.65' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto -x \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i bin-file.z.65 -o bin-file.x.65 &&
++	test_cmp bin-file bin-file.x.65
++'
+diff --git a/t/t0940/once-0002-crypto-map.sh b/t/t0940/once-0002-crypto-map.sh
+new file mode 100644
+index 0000000000..a06d8d0c0a
+--- /dev/null
++++ b/t/t0940/once-0002-crypto-map.sh
+@@ -0,0 +1,418 @@
++#!/bin/sh
++
++# Test crypto
++
++test_expect_success 'create simple text file' '
++	cat >text-file <<-EOF
++	hello, world
++	EOF
++'
++
++test_expect_success 'compress text file (with --mmap)' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -z \
++		-i text-file -o text-file.z.0 &&
++	test-tool agit-od <text-file.z.0 >actual &&
++	cat >expect <<-\EOF &&
++	0000000 78 01 cb 48 cd c9 c9 d7 51 28 cf 2f ca 49 e1 02    | x..H....Q(./.I.. |
++	0000016 00 21 e7 04 93                                     | .!...            |
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'uncompress for text file (with --mmap)' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -x \
++		-i text-file.z.0 -o text-file.x.0 &&
++	test_cmp text-file text-file.x.0
++'
++
++# Base64 is 4*N characters, and after decode will be 3*N characters,
++# padding with zero.
++#
++#     +--------------------------+------------------------------+------------------------------+
++#     |          SECRET          |            BASE64            |            DECODE            |
++#     +--------------------------+------------------------------+------------------------------+
++#     | 12: secret-token         | 16: c2VjcmV0LXRva2Vu         | 12: secret-token             |
++#     | 13: secret-token\0       | 20: c2VjcmV0LXRva2VuAA==     | 15: secret-token\0\0\0       |
++#     | 14: secret-token\0\0     | 20: c2VjcmV0LXRva2VuAAA=     | 15: secret-token\0\0\0       |
++#     | 15: secret-token\0\0\0   | 20: c2VjcmV0LXRva2VuAAAA     | 15: secret-token\0\0\0       |
++#     | 16: secret-token\0\0\0\0 | 24: c2VjcmV0LXRva2VuAAAAAA== | 18: secret-token\0\0\0\0\0\0 |
++#     +---------------------------------------------------------+------------------------------+
++test_expect_success 'encrypt text file using algorithm 1 (with --mmap)' '
++	cat >expect-z-1 <<-\EOF &&
++	0000000 45 4e 43 00 81 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
++	0000016 6f 6e 63 65 2f 41 6f 66 cf 1a 63 b1 e6 aa cb e2    | once/Aof..c..... |
++	0000032 5d e7 6b 2f 57 61 43 2a 91                         | ].k/WaC*.        |
++	EOF
++
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=1 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -z \
++		--secret "{plain}secret-token" \
++		-i text-file -o text-file.z.1 &&
++	test-tool agit-od <text-file.z.1 >actual &&
++	test_cmp expect-z-1 actual
++'
++
++test_expect_success 'encrypt text file using algorithm 2 (with --mmap)' '
++	cat >expect-z-2 <<-\EOF &&
++	0000000 45 4e 43 00 82 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
++	0000016 6f 6e 63 65 f2 a6 04 3d 78 ea 79 46 a6 4d f3 d3    | once...=x.yF.M.. |
++	0000032 3a b7 b9 ae a2 28 48 8c fc                         | :....(H..        |
++	EOF
++
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=2 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -z \
++		--secret c2VjcmV0LXRva2Vu \
++		-i text-file -o text-file.z.2 &&
++	test-tool agit-od <text-file.z.2 >actual &&
++
++	! test_cmp expect-z-1 actual &&
++
++	test_cmp expect-z-2 actual
++'
++
++test_expect_success 'encrypt text file using algorithm 64 (with --mmap)' '
++	show_lo_header <expect-z-1 >expect-z-64 &&
++	printf c0 >>expect-z-64 &&
++	tail -c 218 <expect-z-1 >>expect-z-64 &&
++
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=64 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -z \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i text-file -o text-file.z.64 &&
++	test-tool agit-od <text-file.z.64 >actual &&
++	test_cmp expect-z-64 actual
++'
++
++test_expect_success 'encrypt text file using algorithm 65 (with --mmap)' '
++	show_lo_header <expect-z-2 >expect-z-65 &&
++	printf c1 >>expect-z-65 &&
++	tail -c 218 <expect-z-2 >>expect-z-65 &&
++
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=65 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -z \
++		--secret "{plain}secret-token" \
++		-i text-file -o text-file.z.65 &&
++	test-tool agit-od <text-file.z.65 >actual &&
++
++	test_cmp expect-z-65 actual
++'
++
++test_expect_success 'encrypt text file using default algorithm (with --mmap)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE= GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -z \
++		--secret "{plain}secret-token" \
++		-i text-file -o text-file.z.def &&
++	test_cmp text-file.z.2 text-file.z.def
++'
++
++test_expect_success 'will fail with too short secret (with --mmap)' '
++	test_must_fail env GIT_TEST_CRYPTO_ALGORITHM_TYPE=2 \
++		GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -z \
++		--secret "{plain}pass" \
++		-i text-file -o text-file.bad 2>actual &&
++	cat >expect <<-\EOF &&
++	fatal: secret token is too short
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'encrypt with 12-byte secret (16 effective bytes, with --mmap)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=2 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -z \
++		--secret "{plain}secret-token" \
++		-i text-file -o test-file.z.token &&
++	test-tool agit-od <test-file.z.token >actual &&
++	cat >expect <<-\EOF &&
++	0000000 45 4e 43 00 82 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
++	0000016 6f 6e 63 65 f2 a6 04 3d 78 ea 79 46 a6 4d f3 d3    | once...=x.yF.M.. |
++	0000032 3a b7 b9 ae a2 28 48 8c fc                         | :....(H..        |
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'encrypt with 16-byte secret (16 effective bytes, with --mmap)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=2 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -z \
++		--secret "{plain}secret-token--16" \
++		-i text-file -o test-file.z.token &&
++	test-tool agit-od <test-file.z.token >actual &&
++
++	! test_cmp expect actual &&
++
++	cat >expect <<-\EOF &&
++	0000000 45 4e 43 00 82 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
++	0000016 6f 6e 63 65 c3 20 f1 65 03 13 77 7d 51 66 3b 19    | once. .e..w}Qf;. |
++	0000032 2b 53 f2 0a 97 66 e8 6b a4                         | +S. .f.k.        |
++	EOF
++
++	test_cmp expect actual
++'
++
++test_expect_success 'encrypt with 23-byte secret (same above, 16 effective bytes, with --mmap)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=2 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -z \
++		--secret "{plain}secret-token--16-19--23" \
++		-i text-file -o test-file.z.token &&
++	test-tool agit-od <test-file.z.token >actual &&
++
++	test_cmp expect actual
++'
++
++test_expect_success 'encrypt with 24-byte secret (24 effective bytes, with --mmap)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=2 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -z \
++		--secret "{plain}secret-token--16-19--23-" \
++		-i text-file -o test-file.z.token &&
++	test-tool agit-od <test-file.z.token >actual &&
++
++	! test_cmp expect actual &&
++
++	cat >expect <<-\EOF &&
++	0000000 45 4e 43 00 82 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
++	0000016 6f 6e 63 65 6e 19 2c 7b 95 f3 91 fd f7 f8 3c ab    | oncen.,{......<. |
++	0000032 7a 83 47 2d bb 43 7c 21 65                         | z.G-.C|!e        |
++	EOF
++
++	test_cmp expect actual
++'
++
++test_expect_success 'encrypt with 26-byte secret (same above, 24 effective bytes, with --mmap)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=2 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -z \
++		--secret "{plain}secret-token--16-19--23-26" \
++		-i text-file -o test-file.z.token &&
++	test-tool agit-od <test-file.z.token >actual &&
++
++	test_cmp expect actual
++'
++
++test_expect_success 'encrypt with 32-byte secret (32 effective bytes, with --mmap)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=2 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -z \
++		--secret "{plain}secret-token--16-19--23-26-29-32" \
++		-i text-file -o test-file.z.token &&
++	test-tool agit-od <test-file.z.token >actual &&
++
++	! test_cmp expect actual &&
++
++	cat >expect <<-\EOF &&
++	0000000 45 4e 43 00 82 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
++	0000016 6f 6e 63 65 2f 3d 8a 2c 2d 39 e0 df ab 70 2e 3b    | once/=.,-9...p.; |
++	0000032 df 51 7b 9b fc 01 d1 28 17                         | .Q{....(.        |
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'encrypt with 36-byte secret (same above, 32 effective bytes, with --mmap)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=2 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -z \
++		--secret "{plain}secret-token--16-19--23-26-29-32--36" \
++		-i text-file -o test-file.z.token &&
++	test-tool agit-od <test-file.z.token >actual &&
++
++	test_cmp expect actual
++'
++
++test_expect_success 'decrypt text-file.z.1 (bad token, with --mmap)' '
++	test_must_fail env GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -x \
++		--secret YmFkLXRva2VuMTIzNDU2Nw== \
++		-i text-file.z.1 -o text-file.x.1.bad
++'
++
++test_expect_success 'decrypt text-file.z.1 (bad token, with --mmap)' '
++	test_must_fail env GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -x \
++		--secret "{base64}*BAD*Encode*" \
++		-i text-file.z.1 -o bad 2>actual &&
++	cat >expect <<-EOF &&
++	fatal: decode secret failed
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'decrypt text-file.z.1 (with --mmap)' '
++	test_must_fail env GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -x \
++		--secret "{baseXX}c2VjcmV0LXRva2Vu" \
++		-i text-file.z.1 -o bad 2>actual &&
++	cat >expect <<-EOF &&
++	error: inflate: data stream error (incorrect header check)
++	fatal: unable to inflate (-3)
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'decrypt text-file.z.2 (with --mmap)' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -x \
++		--secret c2VjcmV0LXRva2VuAAA= \
++		-i text-file.z.2 -o text-file.x.2 &&
++
++	test_cmp text-file text-file.x.2
++'
++
++test_expect_success 'decrypt text-file.z.64 (with --mmap)' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -x \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i text-file.z.64 -o text-file.x.64 &&
++	test_cmp text-file text-file.x.64
++'
++
++test_expect_success 'decrypt text-file.z.64-2 (with --mmap)' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -x \
++		--secret c2VjcmV0LXRva2VuAAAA \
++		-i text-file.z.64 -o text-file.x.64 &&
++	test_cmp text-file text-file.x.64
++'
++
++test_expect_success 'decrypt text-file.z.64-3 (with --mmap)' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -x \
++		--secret c2VjcmV0LXRva2Vu \
++		-i text-file.z.64 -o text-file.x.64 &&
++	test_cmp text-file text-file.x.64
++'
++
++test_expect_success 'decrypt text-file.z.65 (with --mmap)' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -x \
++		--secret c2VjcmV0LXRva2Vu \
++		-i text-file.z.65 -o text-file.x.65 &&
++	test_cmp text-file text-file.x.65
++'
++
++test_expect_success 'decrypt text-file.z.65-2 (with --mmap)' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -x \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i text-file.z.65 -o text-file.x.65 &&
++	test_cmp text-file text-file.x.65
++'
++
++test_expect_success 'decrypt text-file.z.65-3 (with --mmap)' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -x \
++		--secret c2VjcmV0LXRva2VuAAAAAA== \
++		-i text-file.z.65 -o text-file.x.65 &&
++	test_cmp text-file text-file.x.65
++'
++
++test_expect_success NEED_GNU_DD 'create large binary file (10MB, with --mmap)' '
++	if type openssl
++	then
++		openssl enc -aes-256-ctr \
++			-pass pass:"$($DD if=/dev/urandom bs=128 count=1 2>/dev/null | base64)" \
++			-nosalt < /dev/zero | $DD of=bin-file bs=1024 count=10240
++	else
++		$DD if=/dev/random of=bin-file bs=1024 count=10240
++	fi
++'
++
++test_expect_success NEED_GNU_DD 'compress binary file (with --mmap)' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -z \
++		-i bin-file -o bin-file.z.0 &&
++	test_copy_bytes 2 <bin-file.z.0 |
++		test-tool agit-od >actual &&
++	cat >expect <<-\EOF &&
++	0000000 78 01                                              | x.               |
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success NEED_GNU_DD 'uncompress for binary file (with --mmap)' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -x \
++		-i bin-file.z.0 -o bin-file.x.0 &&
++	test_cmp bin-file bin-file.x.0
++'
++
++test_expect_success NEED_GNU_DD 'encrypt large binary (algo 1, with --mmap)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=1 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -z \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i bin-file -o bin-file.z.1 &&
++	show_lo_header <bin-file.z.1 | test-tool agit-od >actual &&
++	cat >expect <<-\EOF &&
++	0000000 45 4e 43 00 81 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
++	0000016 6f 6e 63 65                                        | once             |
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success NEED_GNU_DD 'encrypt large binary (algo 2, with --mmap)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=2 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -z \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i bin-file -o bin-file.z.2 &&
++	show_lo_header <bin-file.z.2 | test-tool agit-od >actual &&
++	cat >expect <<-\EOF &&
++	0000000 45 4e 43 00 82 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
++	0000016 6f 6e 63 65                                        | once             |
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success NEED_GNU_DD 'encrypt large binary (algo 64, with --mmap)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=64 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -z \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i bin-file -o bin-file.z.64 &&
++	show_lo_header <bin-file.z.64 | test-tool agit-od >actual &&
++	cat >expect <<-\EOF &&
++	0000000 45 4e 43 00 c0 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
++	0000016 6f 6e 63 65                                        | once             |
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success NEED_GNU_DD 'encrypt large binary (algo 65, with --mmap)' '
++	GIT_TEST_CRYPTO_ALGORITHM_TYPE=65 GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -z \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i bin-file -o bin-file.z.65 &&
++	show_lo_header <bin-file.z.65 | test-tool agit-od >actual &&
++	cat >expect <<-\EOF &&
++	0000000 45 4e 43 00 c1 00 00 00 72 61 6e 64 6f 6d 5f 6e    | ENC.....random_n |
++	0000016 6f 6e 63 65                                        | once             |
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success NEED_GNU_DD 'decrypt bin-file.z.1 (with --mmap)' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -x \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i bin-file.z.1 -o bin-file.x.1 &&
++	test_cmp bin-file bin-file.x.1
++'
++
++test_expect_success NEED_GNU_DD 'decrypt bin-file.z.2 (with --mmap)' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -x \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i bin-file.z.2 -o bin-file.x.2 &&
++	test_cmp bin-file bin-file.x.2
++'
++
++test_expect_success NEED_GNU_DD 'decrypt bin-file.z.64 (with --mmap)' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -x \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i bin-file.z.64 -o bin-file.x.64 &&
++	test_cmp bin-file bin-file.x.64
++'
++
++test_expect_success NEED_GNU_DD 'decrypt bin-file.z.65 (with --mmap)' '
++	GIT_TRACE_CRYPTO=1 \
++		test-tool agit-crypto --mmap -x \
++		--secret c2VjcmV0LXRva2VuAA== \
++		-i bin-file.z.65 -o bin-file.x.65 &&
++	test_cmp bin-file bin-file.x.65
++'
+-- 
+patchwork

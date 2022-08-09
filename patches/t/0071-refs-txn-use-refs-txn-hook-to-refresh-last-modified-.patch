@@ -1,0 +1,326 @@
+From 80f6bff87329352650ab5df90073a81d2f2f63d8 Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Tue, 23 Oct 2018 11:18:16 +0800
+Subject: [PATCH 71/75] refs-txn: use refs-txn hook to refresh last modified
+ time of a repo
+
+Add an internal function "refs_txn_post_hook()" and run it along with
+the "reference-transaction committed" hook command. If there are some
+real changes for the repository, update the timestamp of the repository
+by recording in the ".git/info/last-modified" file.
+
+Add test cases in `t/t0902-last-modified.sh`.
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ Makefile                 |   1 +
+ refs.c                   |   6 ++
+ refs/refs-internal.h     |   8 ++
+ refs/txn-post-hook.c     |  87 ++++++++++++++++++++++
+ t/t0902-last-modified.sh | 155 +++++++++++++++++++++++++++++++++++++++
+ 5 files changed, 257 insertions(+)
+ create mode 100644 refs/txn-post-hook.c
+ create mode 100755 t/t0902-last-modified.sh
+
+diff --git a/Makefile b/Makefile
+index 67443fddc6..8876e3f537 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1031,6 +1031,7 @@ LIB_OBJS += refs/iterator.o
+ LIB_OBJS += refs/packed-backend.o
+ LIB_OBJS += refs/ref-cache.o
+ LIB_OBJS += refs/txn-pre-hook.o
++LIB_OBJS += refs/txn-post-hook.o
+ LIB_OBJS += refspec.o
+ LIB_OBJS += remote.o
+ LIB_OBJS += replace-object.o
+diff --git a/refs.c b/refs.c
+index 21f63177f6..517bac986e 100644
+--- a/refs.c
++++ b/refs.c
+@@ -2137,6 +2137,12 @@ static int run_transaction_hook(struct ref_transaction *transaction,
+ 	} else if (!strcmp(state, "committed")) {
+ 		if (!(transaction->hook_flags & REF_TRANSACTION_RUN_COMMITTED_HOOK))
+ 			return 0;
++
++		/*
++		 * Run internal hook process for committed state to do some post
++		 * actions when there are changes happened in a repository.
++		 */
++		refs_txn_post_hook(transaction);
+ 	} else if (!strcmp(state, "aborted")) {
+ 		if (!(transaction->hook_flags & REF_TRANSACTION_RUN_ABORTED_HOOK))
+ 			return 0;
+diff --git a/refs/refs-internal.h b/refs/refs-internal.h
+index b4c0e89d36..1f86887155 100644
+--- a/refs/refs-internal.h
++++ b/refs/refs-internal.h
+@@ -761,4 +761,12 @@ struct ref_store *maybe_debug_wrap_ref_store(const char *gitdir, struct ref_stor
+  */
+ int refs_txn_pre_hook(struct ref_transaction *);
+ 
++/*
++ * refs_txn_post_hook run as an internal implementation for "refs-txn committed" hook,
++ * and can be used to do some post actions if there are changes in a repository.
++ * E.g.: record last-modified time of the repository, or calculate checksum of the
++ * repository.
++ */
++void refs_txn_post_hook(struct ref_transaction *transaction);
++
+ #endif /* REFS_REFS_INTERNAL_H */
+diff --git a/refs/txn-post-hook.c b/refs/txn-post-hook.c
+new file mode 100644
+index 0000000000..e642ca8d3a
+--- /dev/null
++++ b/refs/txn-post-hook.c
+@@ -0,0 +1,87 @@
++#include "../cache.h"
++#include "refs-internal.h"
++#include "run-command.h"
++#include "sigchain.h"
++
++static GIT_PATH_FUNC(git_path_info_last_modified, "info/last-modified")
++
++static int update_is_needed(struct ref_update *update) {
++	if (update->flags & REF_LOG_ONLY)
++		return 0;
++	if (!oidcmp(&update->old_oid, &update->new_oid))
++		return 0;
++	return 1;
++}
++
++static int update_is_needed_and_well_known(struct ref_update *update) {
++	if (!update_is_needed(update))
++		return 0;
++	if (!strncmp(update->refname, "refs/heads/", 11) ||
++	    !strncmp(update->refname, "refs/tags/", 10) ||
++	    !strncmp(update->refname, "refs/change/", 12) ||
++	    !strncmp(update->refname, "refs/changes/", 13) ||
++	    !strncmp(update->refname, "refs/merge-requests/", 20) ||
++	    !strncmp(update->refname, "refs/pull/", 10))
++	       return 1;
++	return 0;
++}
++
++/*
++ * Create/update last_modified file for post action of files_transaction.
++ */
++static void refs_txn_post_update_last_modified(struct ref_transaction *transaction) {
++	const char *path = git_path_info_last_modified();
++	struct stat fstat;
++	int fd;
++	int i;
++	int has_change = 0;
++
++	for (i = 0; i < transaction->nr; i++) {
++		/*
++		 * Do not update last-modified for trivial refs updates,
++		 * such as: refs/tmp, refs/keep-around, ...
++		 */
++		if (update_is_needed_and_well_known(transaction->updates[i])) {
++			has_change = 1;
++			break;
++		}
++	}
++	if (!has_change)
++		return;
++
++	/* Create .git/info/last-modified file if not exist */
++	if (access(path, F_OK)) {
++		fd = creat(path, 0666);
++		if (fd < 0)
++			error("fail to create file %s", path);
++		else {
++			close(fd);
++			adjust_shared_perm(path);
++		}
++		goto cleanup;
++	}
++
++	if (stat(path, &fstat)) {
++		error("fail to stat %s", path);
++		goto cleanup;
++	}
++
++	if (utimes(path, NULL)) {
++		error("fail to change mtime of %s", path);
++		goto cleanup;
++	}
++
++cleanup:
++	return;
++}
++
++/*
++ * Called from "reference-transaction committed" for our internal
++ * refs post routines.
++ */
++void refs_txn_post_hook(struct ref_transaction *transaction) {
++	if (!transaction->nr || !the_repository->gitdir)
++		return;
++
++	refs_txn_post_update_last_modified(transaction);
++}
+diff --git a/t/t0902-last-modified.sh b/t/t0902-last-modified.sh
+new file mode 100755
+index 0000000000..171e9b0b8b
+--- /dev/null
++++ b/t/t0902-last-modified.sh
+@@ -0,0 +1,155 @@
++#!/bin/sh
++#
++# Copyright (c) 2018 Jiang Xin
++#
++
++test_description='Test git update-ref create last-modified timestamp'
++
++GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
++export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
++
++. ./test-lib.sh
++
++m=refs/heads/main
++topic=refs/heads/topic
++bare=bare-repo.git
++last_modified=info/last-modified
++
++create_bare_repo () {
++	test "$#" = 1 ||
++	BUG "not 1 parameter to test-create-repo"
++	repo="$1"
++	mkdir -p "$repo"
++	(
++		cd "$repo" || error "Cannot setup test environment"
++		git -c \
++			init.defaultBranch="${GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME-master}" \
++			init --bare \
++			"--template=$GIT_BUILD_DIR/templates/blt/" >&3 2>&4 ||
++		error "cannot run git init -- have you built things yet?"
++		mv hooks hooks-disabled &&
++		git config core.abbrev 7
++	) || exit
++}
++
++create_commits_in () {
++	repo="$1" &&
++	if ! parent=$(git -C "$repo" rev-parse HEAD^{} 2>/dev/null)
++	then
++		parent=
++	fi &&
++	T=$(git -C "$repo" write-tree) &&
++	shift &&
++	while test $# -gt 0
++	do
++		name=$1 &&
++		test_tick &&
++		if test -z "$parent"
++		then
++			oid=$(echo $name | git -C "$repo" commit-tree $T)
++		else
++			oid=$(echo $name | git -C "$repo" commit-tree -p $parent $T)
++		fi &&
++		eval $name=$oid &&
++		parent=$oid &&
++		shift ||
++		return 1
++	done &&
++	git -C "$repo" update-ref $m $oid
++}
++
++restore_repo_last_modified () {
++	cp -p "$bare/$last_modified-1" "$bare/$last_modified" &&
++	test ! "$bare/$last_modified" -nt "$bare/$last_modified-1" &&
++	test ! "$bare/$last_modified" -ot "$bare/$last_modified-1"
++}
++
++test_expect_success setup '
++	test_when_finished "rm -f $bare/$last_modified" &&
++	create_bare_repo "$bare" &&
++	create_commits_in "$bare" A B C D E F &&
++	test_path_is_file $bare/HEAD &&
++	test_path_is_dir  $bare/info &&
++	test_path_is_file $bare/$last_modified
++'
++
++test_expect_success "update-ref: update timestamp file" '
++	test_when_finished "rm -f $bare/$last_modified" &&
++	git -C $bare update-ref $m $A &&
++	test_path_is_file $bare/$last_modified
++'
++
++test_expect_success "change master to the same commit, won't trigger hook" '
++	test_when_finished "rm -f $bare/$last_modified" &&
++	git -C $bare update-ref $m $A &&
++	test_path_is_missing $bare/$last_modified
++'
++
++test_expect_success "remove no-exist branch, won't trigger hook" '
++	test_when_finished "rm -f $bare/$last_modified" &&
++	git -C $bare update-ref -d refs/heads/non-exist &&
++	test_path_is_missing $bare/$last_modified
++'
++
++test_expect_success "create $topic (run hook)" '
++	test_when_finished "rm -f $bare/$last_modified" &&
++	git -C "$bare" update-ref $topic $A &&
++	test_path_is_file "$bare/$last_modified"
++'
++
++test_expect_success "backup last-modified file" '
++	touch -t 200504071513.13 "$bare/$last_modified" &&
++	cp -p "$bare/$last_modified" "$bare/$last_modified-1" &&
++	test ! "$bare/$last_modified" -nt "$bare/$last_modified-1" &&
++	test ! "$bare/$last_modified" -ot "$bare/$last_modified-1"
++'
++
++test_expect_success "new ref refs/tmp/* won't change last-modified" '
++	git -C "$bare" update-ref refs/tmp/a $A &&
++	test ! "$bare/$last_modified" -nt "$bare/$last_modified-1" &&
++	test ! "$bare/$last_modified" -ot "$bare/$last_modified-1"
++'
++
++test_expect_success "new ref refs/keep-around/* won't change last-modified" '
++	git -C "$bare" update-ref refs/keep-around/abcdef0123456789/abcdef0123456789 $B &&
++	test ! "$bare/$last_modified" -nt "$bare/$last_modified-1" &&
++	test ! "$bare/$last_modified" -ot "$bare/$last_modified-1"
++'
++
++test_expect_success "new ref refs/tags/ will change last-modified" '
++	git -C "$bare" tag -m v1.0.0 v1.0.0 $A &&
++	test "$bare/$last_modified" -nt "$bare/$last_modified-1"
++'
++
++test_expect_success "restore last-modified" '
++	restore_repo_last_modified
++'
++
++test_expect_success "new ref refs/merge-requests/ will change last-modified" '
++	git -C "$bare" update-ref refs/merge-requests/123/head $A &&
++	test "$bare/$last_modified" -nt "$bare/$last_modified-1"
++'
++
++test_expect_success "restore last-modified" '
++	restore_repo_last_modified
++'
++
++test_expect_success "new ref refs/pull/* will change last-modified" '
++	git -C "$bare" update-ref refs/pull/12/123 $A &&
++	test "$bare/$last_modified" -nt "$bare/$last_modified-1"
++'
++
++test_expect_success "restore last-modified" '
++	restore_repo_last_modified
++'
++
++test_expect_success "update $topic and different last-modified" '
++	git -C "$bare" update-ref $topic $B &&
++	test "$bare/$last_modified" -nt "$bare/$last_modified-1"
++'
++
++test_expect_success "restore last-modified" '
++	restore_repo_last_modified
++'
++
++test_done
+-- 
+patchwork

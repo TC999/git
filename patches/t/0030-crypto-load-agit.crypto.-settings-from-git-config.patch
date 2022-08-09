@@ -1,0 +1,161 @@
+From 478ae9bad7318fd96568fe1218da5032ee7e9513 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=E7=82=BD=E5=A4=A9?= <hanxin.hx@alibaba-inc.com>
+Date: Tue, 29 Dec 2020 16:12:29 +0800
+Subject: [PATCH 30/47] crypto: load agit.crypto.* settings from git config
+
+Load agit.crypto.* settings by calling `git_default_config()`, and also
+fix commands which forget to load default git config, such as:
+"git-bundle", "git-mktree", and "git-prune".
+
+Signed-off-by: Han Xin <hanxin.hx@alibaba-inc.com>
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ builtin/bundle.c  |  4 ++++
+ builtin/mktree.c  |  4 ++++
+ builtin/prune.c   |  4 ++++
+ config.c          | 25 +++++++++++++++++++++++++
+ config.h          |  1 +
+ git-compat-util.h |  1 +
+ 6 files changed, 39 insertions(+)
+
+diff --git a/builtin/bundle.c b/builtin/bundle.c
+index 2adad545a2..ef9ab80bb3 100644
+--- a/builtin/bundle.c
++++ b/builtin/bundle.c
+@@ -3,6 +3,7 @@
+ #include "parse-options.h"
+ #include "cache.h"
+ #include "bundle.h"
++#include "config.h"
+ 
+ /*
+  * Basic handler for bundle files to connect repositories via sneakernet.
+@@ -200,6 +201,9 @@ int cmd_bundle(int argc, const char **argv, const char *prefix)
+ 	};
+ 	int result;
+ 
++	/* load default agit config, such as agit.crypto settings */
++	git_config(git_default_agit_config, NULL);
++
+ 	argc = parse_options(argc, argv, prefix, options, builtin_bundle_usage,
+ 		PARSE_OPT_STOP_AT_NON_OPTION);
+ 
+diff --git a/builtin/mktree.c b/builtin/mktree.c
+index 902edba6d2..5a7ac9255d 100644
+--- a/builtin/mktree.c
++++ b/builtin/mktree.c
+@@ -4,6 +4,7 @@
+  * Copyright (c) Junio C Hamano, 2006, 2009
+  */
+ #include "builtin.h"
++#include "config.h"
+ #include "quote.h"
+ #include "tree.h"
+ #include "parse-options.h"
+@@ -157,6 +158,9 @@ int cmd_mktree(int ac, const char **av, const char *prefix)
+ 		OPT_END()
+ 	};
+ 
++	/* load default agit config, such as agit.crypto settings */
++	git_config(git_default_agit_config, NULL);
++
+ 	ac = parse_options(ac, av, prefix, option, mktree_usage, 0);
+ 	getline_fn = nul_term_line ? strbuf_getline_nul : strbuf_getline_lf;
+ 
+diff --git a/builtin/prune.c b/builtin/prune.c
+index c2bcdc07db..10e66d2d5c 100644
+--- a/builtin/prune.c
++++ b/builtin/prune.c
+@@ -1,5 +1,6 @@
+ #include "cache.h"
+ #include "commit.h"
++#include "config.h"
+ #include "diff.h"
+ #include "revision.h"
+ #include "builtin.h"
+@@ -157,6 +158,9 @@ int cmd_prune(int argc, const char **argv, const char *prefix)
+ 	read_replace_refs = 0;
+ 	repo_init_revisions(the_repository, &revs, prefix);
+ 
++	/* load default agit config, such as agit.crypto settings */
++	git_config(git_default_agit_config, NULL);
++
+ 	argc = parse_options(argc, argv, prefix, options, prune_usage, 0);
+ 
+ 	if (repository_format_precious_objects)
+diff --git a/config.c b/config.c
+index a5e11aad7f..0d02d26404 100644
+--- a/config.c
++++ b/config.c
+@@ -9,6 +9,7 @@
+ #include "date.h"
+ #include "branch.h"
+ #include "config.h"
++#include "crypto.h"
+ #include "environment.h"
+ #include "repository.h"
+ #include "lockfile.h"
+@@ -1891,6 +1892,9 @@ int git_default_config(const char *var, const char *value, void *cb)
+ 		return 0;
+ 	}
+ 
++	if (starts_with(var, "agit."))
++		return git_default_agit_config(var, value, cb);
++
+ 	if (starts_with(var, "sparse."))
+ 		return git_default_sparse_config(var, value);
+ 
+@@ -1898,6 +1902,27 @@ int git_default_config(const char *var, const char *value, void *cb)
+ 	return 0;
+ }
+ 
++int git_default_agit_config(const char *var, const char *value, void *cb)
++{
++	if (!strcmp(var, "agit.crypto.secret"))
++		return git_config_string(&agit_crypto_secret, var, value);
++
++	if (!strcmp(var, "agit.crypto.nonce"))
++		return git_config_string(&agit_crypto_nonce, var, value);
++
++	if (!strcmp(var, "agit.crypto.enabled")) {
++		agit_crypto_enabled = git_config_bool(var, value);
++		return 0;
++	}
++
++	if (!strcmp(var, "agit.crypto.algorithm")) {
++		agit_crypto_default_algorithm = git_config_int(var, value);
++		return 0;
++	}
++
++	return 0;
++}
++
+ /*
+  * All source specific fields in the union, die_on_error, name and the callbacks
+  * fgetc, ungetc, ftell of top need to be initialized before calling
+diff --git a/config.h b/config.h
+index 7654f61c63..fad4773269 100644
+--- a/config.h
++++ b/config.h
+@@ -131,6 +131,7 @@ struct config_options {
+ typedef int (*config_fn_t)(const char *, const char *, void *);
+ 
+ int git_default_config(const char *, const char *, void *);
++int git_default_agit_config(const char *, const char *, void *);
+ 
+ /**
+  * Read a specific file in git-config format.
+diff --git a/git-compat-util.h b/git-compat-util.h
+index ccf06289c3..2781357d52 100644
+--- a/git-compat-util.h
++++ b/git-compat-util.h
+@@ -338,6 +338,7 @@ char *gitdirname(char *);
+ 
+ #ifndef NO_OPENSSL
+ #ifdef __APPLE__
++#undef __AVAILABILITY_MACROS_USES_AVAILABILITY
+ #define __AVAILABILITY_MACROS_USES_AVAILABILITY 0
+ #include <AvailabilityMacros.h>
+ #undef DEPRECATED_ATTRIBUTE
+-- 
+patchwork

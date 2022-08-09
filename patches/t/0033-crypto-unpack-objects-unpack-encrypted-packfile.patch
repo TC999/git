@@ -1,0 +1,213 @@
+From db638323a08b35c658aa0b8d2fb0e3c189a81040 Mon Sep 17 00:00:00 2001
+From: Han Xin <hanxin.hx@alibaba-inc.com>
+Date: Thu, 7 Jan 2021 17:47:17 +0800
+Subject: [PATCH 33/47] crypto: unpack-objects: unpack encrypted packfile
+
+The first part of an encrypted packfile is the plain header, while the
+other data (excluding the tailer checksum) are encrypted.  When we
+calling the function `fill()`, it will decrypt all the data and mangle
+the header.
+
+So, add a new function `fill_header()` which will read and parse the
+plain header and try to decrypt remaining data in buffer, if packfile
+is encrypted.
+
+Signed-off-by: Han Xin <hanxin.hx@alibaba-inc.com>
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ builtin/unpack-objects.c                 | 102 ++++++++++++++++++++---
+ pack.h                                   |   3 +-
+ t/t0940/test-0020-read-write-packfile.sh |   2 +-
+ 3 files changed, 92 insertions(+), 15 deletions(-)
+
+diff --git a/builtin/unpack-objects.c b/builtin/unpack-objects.c
+index dbeb0680a5..7c34bc3de7 100644
+--- a/builtin/unpack-objects.c
++++ b/builtin/unpack-objects.c
+@@ -19,12 +19,15 @@ static const char unpack_usage[] = "git unpack-objects [-n] [-q] [-r] [--strict]
+ 
+ /* We always read in 4kB chunks. */
+ static unsigned char buffer[4096];
++static unsigned char decrypt_buffer[4096];
+ static unsigned int offset, len;
+ static off_t consumed_bytes;
+ static off_t max_input_size;
+ static git_hash_ctx ctx;
+ static struct fsck_options fsck_options = FSCK_OPTIONS_STRICT;
+ static struct progress *progress;
++static struct git_cryptor cryptor_r;
++static int pack_is_encrypted;
+ 
+ /*
+  * When running under --strict mode, objects whose reachability are
+@@ -59,13 +62,20 @@ static void add_object_buffer(struct object *object, char *buffer, unsigned long
+  */
+ static void *fill(int min)
+ {
+-	if (min <= len)
+-		return buffer + offset;
++	if (min <= len) {
++		if (pack_is_encrypted)
++			return decrypt_buffer + offset;
++		else
++			return buffer + offset;
++	}
+ 	if (min > sizeof(buffer))
+ 		die("cannot fill %d bytes", min);
+ 	if (offset) {
++		/* Calculate checksum from raw data before decryption. */
+ 		the_hash_algo->update_fn(&ctx, buffer, offset);
+ 		memmove(buffer, buffer + offset, len);
++		if (pack_is_encrypted)
++			memmove(decrypt_buffer, decrypt_buffer + offset, len);
+ 		offset = 0;
+ 	}
+ 	do {
+@@ -75,9 +85,16 @@ static void *fill(int min)
+ 				die("early EOF");
+ 			die_errno("read error on input");
+ 		}
++		/* Decrypt new raw data from stdin. */
++		if (pack_is_encrypted)
++			cryptor_r.decrypt(&cryptor_r, buffer + len,
++					  decrypt_buffer + len, ret, ret);
+ 		len += ret;
+ 	} while (len < min);
+-	return buffer;
++	if (pack_is_encrypted)
++		return decrypt_buffer;
++	else
++		return buffer;
+ }
+ 
+ static void use(int bytes)
+@@ -168,6 +185,69 @@ struct obj_info {
+ static struct obj_info *obj_list;
+ static unsigned nr_objects;
+ 
++/*
++ * Return plain pack header and try to decrypt remain data in buffer.
++ */
++static void fill_header(void)
++{
++	struct pack_header *hdr;
++	unsigned char *in;
++	int hdr_size = sizeof(struct pack_header);
++	uint32_t hdr_version;
++
++	/* If has option "--pack_header=" in command line, header is already
++	 * given and fill the buffer.
++	 *
++	 * The first time we call fill() will try to read more data to fill
++	 * the whole buffer, which contains not only the plain header, but
++	 * also the un-decrypted data, which should be decrypted if packfile
++	 * is encrypted.
++	 */
++	in = fill(hdr_size);
++	/* 'pack_is_encrypted' should be set here only, */
++	assert(pack_is_encrypted == 0);
++	/* and 'in' should always points to input_buffer. */
++	assert(in == buffer);
++
++	hdr = (struct pack_header *)in;
++	nr_objects = ntohl(hdr->hdr_entries);
++	hdr_version = hdr->hdr_version;
++	if (ntohl(hdr->hdr_signature) != PACK_SIGNATURE)
++		die("bad pack file");
++	if (!pack_version_ok(hdr_version))
++		die("unknown pack file version %"PRIu32,
++			ntohl(hdr_version));
++	use(hdr_size);
++	if (git_crypto_pack_is_encrypt(hdr_version)) {
++		if (crypto_pack_has_longer_nonce_for_version(hdr_version)) {
++			/* Read nonce from raw input. */
++			in = fill(NONCE_LEN);
++
++			/* Setup cryptor after fill(NONCE_LEN), for we want to
++			* return date from buffer, not return decrypted buffer,
++			* which is empty by now. */
++			pack_is_encrypted = 1;
++			git_decryptor_init_or_die(&cryptor_r, hdr_version, in);
++			cryptor_r.byte_counter = sizeof(struct pack_header_with_nonce);
++
++			use(NONCE_LEN);
++		} else {
++			pack_is_encrypted = 1;
++			git_decryptor_init_or_die(&cryptor_r, hdr_version,
++						  NULL);
++			cryptor_r.byte_counter = sizeof(struct pack_header);
++		}
++
++		/* Decrypt buffer follows the header. */
++		if (len)
++			cryptor_r.decrypt(&cryptor_r,
++					  buffer + offset,
++					  decrypt_buffer + offset,
++					  len,
++					  len);
++	}
++}
++
+ /*
+  * Called only from check_object() after it verified this object
+  * is Ok.
+@@ -489,16 +569,8 @@ static void unpack_one(unsigned nr)
+ static void unpack_all(void)
+ {
+ 	int i;
+-	struct pack_header *hdr = fill(sizeof(struct pack_header));
+ 
+-	nr_objects = ntohl(hdr->hdr_entries);
+-
+-	if (ntohl(hdr->hdr_signature) != PACK_SIGNATURE)
+-		die("bad pack file");
+-	if (!pack_version_ok(hdr->hdr_version))
+-		die("unknown pack file version %"PRIu32,
+-			ntohl(hdr->hdr_version));
+-	use(sizeof(struct pack_header));
++	fill_header();
+ 
+ 	if (!quiet)
+ 		progress = start_progress(_("Unpacking objects"), nr_objects);
+@@ -583,7 +655,11 @@ int cmd_unpack_objects(int argc, const char **argv, const char *prefix)
+ 		if (fsck_finish(&fsck_options))
+ 			die(_("fsck error in pack objects"));
+ 	}
+-	if (!hasheq(fill(the_hash_algo->rawsz), oid.hash))
++	fill(the_hash_algo->rawsz);
++	/* The checksum at the end of packfile is unencrypted, but
++	 * after call fill, the return decrypt_buffer is mangled.
++	 */
++	if (!hasheq(buffer + offset, oid.hash))
+ 		die("final sha1 did not match");
+ 	use(the_hash_algo->rawsz);
+ 
+diff --git a/pack.h b/pack.h
+index 8b743a2322..fc98b9966b 100644
+--- a/pack.h
++++ b/pack.h
+@@ -11,7 +11,8 @@ struct repository;
+  */
+ #define PACK_SIGNATURE 0x5041434b	/* "PACK" */
+ #define PACK_VERSION 2
+-#define pack_version_ok(v) ((v) == htonl(2) || (v) == htonl(3))
++#define pack_version_ok(v) \
++	((ntohl(v) & 0x000000ff) == 2 || (ntohl(v) & 0x000000ff) == 3)
+ struct pack_header {
+ 	uint32_t hdr_signature;
+ 	uint32_t hdr_version;
+diff --git a/t/t0940/test-0020-read-write-packfile.sh b/t/t0940/test-0020-read-write-packfile.sh
+index 0652124d63..0010aeebb1 100644
+--- a/t/t0940/test-0020-read-write-packfile.sh
++++ b/t/t0940/test-0020-read-write-packfile.sh
+@@ -70,7 +70,7 @@ test_expect_success 'verify-pack on uncrypted packfile' '
+ 	git -C index-pack.0 verify-pack .git/objects/pack/pack-$pack.pack
+ '
+ 
+-test_expect_failure 'unpack-objects on encrypted packfile' '
++test_expect_success 'unpack-objects on encrypted packfile' '
+ 	test_create_repo unpack.1 &&
+ 	git -C unpack.1 config agit.crypto.enabled 1 &&
+ 	git -C unpack.1 config agit.crypto.secret c2VjcmV0LXRva2VuMTIzNA== &&
+-- 
+patchwork

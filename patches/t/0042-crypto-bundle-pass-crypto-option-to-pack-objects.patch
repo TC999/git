@@ -1,0 +1,103 @@
+From ffa9aa211dcf48238e70b296257135529adb95ca Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Sun, 20 Dec 2020 18:54:18 +0800
+Subject: [PATCH 42/47] crypto: bundle: pass crypto option to pack-objects
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ builtin/bundle.c            |  7 +++++++
+ t/t0940/test-1011-bundle.sh | 12 ++++++------
+ 2 files changed, 13 insertions(+), 6 deletions(-)
+
+diff --git a/builtin/bundle.c b/builtin/bundle.c
+index ef9ab80bb3..d6f50e00aa 100644
+--- a/builtin/bundle.c
++++ b/builtin/bundle.c
+@@ -40,6 +40,8 @@ static const char * const builtin_bundle_unbundle_usage[] = {
+   NULL
+ };
+ 
++static int encrypt_bundle;
++
+ static int parse_options_cmd_bundle(int argc,
+ 		const char **argv,
+ 		const char* prefix,
+@@ -73,6 +75,9 @@ static int cmd_bundle_create(int argc, const char **argv, const char *prefix) {
+ 			 N_("similar to --all-progress when progress meter is shown")),
+ 		OPT_INTEGER(0, "version", &version,
+ 			    N_("specify bundle format version")),
++		OPT_BOOL(0, "encrypt",
++			 &encrypt_bundle,
++			 N_("encrypt bundle")),
+ 		OPT_END()
+ 	};
+ 	char *bundle_file;
+@@ -90,6 +95,8 @@ static int cmd_bundle_create(int argc, const char **argv, const char *prefix) {
+ 		strvec_push(&pack_opts, "--all-progress");
+ 	if (progress && all_progress_implied)
+ 		strvec_push(&pack_opts, "--all-progress-implied");
++	if (!encrypt_bundle)
++		strvec_push(&pack_opts, "--no-pack-enc");
+ 
+ 	if (!startup_info->have_repository)
+ 		die(_("Need a repository to create a bundle."));
+diff --git a/t/t0940/test-1011-bundle.sh b/t/t0940/test-1011-bundle.sh
+index a2064766fd..5159fd8e92 100644
+--- a/t/t0940/test-1011-bundle.sh
++++ b/t/t0940/test-1011-bundle.sh
+@@ -13,7 +13,7 @@ test_expect_success 'create unencrypted bundle from main' '
+ 	test -f 1.bundle
+ '
+ 
+-test_expect_failure 'clone from unencrypted bundle' '
++test_expect_success 'clone from unencrypted bundle' '
+ 	git clone --mirror 1.bundle repo1.git &&
+ 	git -C repo1.git show-ref |
+ 		make_user_friendly_and_stable_output >actual &&
+@@ -30,7 +30,7 @@ test_expect_success 'create additional unencrypted bundle' '
+ 	test -f 2.bundle
+ '
+ 
+-test_expect_failure 'fetch from additional bundle' '
++test_expect_success 'fetch from additional bundle' '
+ 	(
+ 		cd repo1.git &&
+ 		git fetch ../2.bundle "+refs/*:refs/*"
+@@ -49,7 +49,7 @@ test_expect_failure 'fetch from additional bundle' '
+ '
+ 
+ ###################################
+-test_expect_failure 'create encrypted bundle from main' '
++test_expect_success 'create encrypted bundle from main' '
+ 	git -C "$COMMON_GITDIR" bundle create \
+ 		--encrypt \
+ 		"$(pwd)/3.bundle" \
+@@ -65,7 +65,7 @@ test_expect_success 'cannot clone from encrypted bundle without crypto settings'
+ 	)
+ '
+ 
+-test_expect_failure 'fetch from encrypted bundle' '
++test_expect_success 'fetch from encrypted bundle' '
+ 	(
+ 		cd repo2.git &&
+ 		git config agit.crypto.enabled 1 &&
+@@ -81,7 +81,7 @@ test_expect_failure 'fetch from encrypted bundle' '
+ 	test_cmp expect actual
+ '
+ 
+-test_expect_failure 'create additional encrypted bundle' '
++test_expect_success 'create additional encrypted bundle' '
+ 	git -C "$COMMON_GITDIR" bundle create \
+ 		--encrypt \
+ 		"$(pwd)/4.bundle" \
+@@ -89,7 +89,7 @@ test_expect_failure 'create additional encrypted bundle' '
+ 	test -f 4.bundle
+ '
+ 
+-test_expect_failure 'fetch from additional encrypted bundle' '
++test_expect_success 'fetch from additional encrypted bundle' '
+ 	(
+ 		cd repo2.git &&
+ 		git fetch ../4.bundle "+refs/*:refs/*"
+-- 
+patchwork

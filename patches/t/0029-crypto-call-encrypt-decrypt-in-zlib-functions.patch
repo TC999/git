@@ -1,0 +1,358 @@
+From e46276064e73353c3d0224c4e8d82b5be9e82a2f Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Wed, 3 Feb 2021 17:34:07 +0800
+Subject: [PATCH 29/47] crypto: call encrypt/decrypt in zlib functions
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ cache.h                     |   2 +
+ t/helper/test-agit-crypto.c | 121 +++++++++++-------------------------
+ zlib.c                      |  90 +++++++++++++++++++++++++--
+ 3 files changed, 122 insertions(+), 91 deletions(-)
+
+diff --git a/cache.h b/cache.h
+index 595582becc..6996d15a73 100644
+--- a/cache.h
++++ b/cache.h
+@@ -17,9 +17,11 @@
+ #include "oid-array.h"
+ #include "repository.h"
+ #include "mem-pool.h"
++#include "crypto.h"
+ 
+ typedef struct git_zstream {
+ 	z_stream z;
++	git_cryptor *cryptor;
+ 	unsigned long avail_in;
+ 	unsigned long avail_out;
+ 	unsigned long total_in;
+diff --git a/t/helper/test-agit-crypto.c b/t/helper/test-agit-crypto.c
+index 22e13b63f5..0f108dd290 100644
+--- a/t/helper/test-agit-crypto.c
++++ b/t/helper/test-agit-crypto.c
+@@ -19,7 +19,6 @@ static int do_deflate(int in, int out, size_t total)
+ 	git_zstream strm;
+ 	unsigned char *map = NULL;
+ 	unsigned char buf[4096];
+-	unsigned char crypto_buf[4096];
+ 	ssize_t size;
+ 	int flush = 0;
+ 	int ret;
+@@ -54,6 +53,9 @@ static int do_deflate(int in, int out, size_t total)
+ 	strm.avail_in = size;
+ 	strm.next_out = buf;
+ 	strm.avail_out = sizeof(buf);
++	if (agit_crypto_enabled)
++		strm.cryptor = &cryptor;
++
+ 	do {
+ 		size_t len;
+ 
+@@ -88,18 +90,8 @@ static int do_deflate(int in, int out, size_t total)
+ 		}
+ 		len = strm.next_out - buf;
+ 		if (len > 0) {
+-			/* Encrypt: init crypto, and write header */
+-			if (agit_crypto_enabled) {
+-				cryptor.encrypt(&cryptor,
+-					buf,
+-					crypto_buf,
+-					len);
+-				if (write(out, crypto_buf, len) != len)
+-					die("unable to write output");
+-			} else {
+-				if (write(out, buf, len) != len)
+-					die("unable to write output");
+-			}
++			if (write(out, buf, len) != len)
++				die("unable to write output");
+ 		}
+ 		strm.next_out = buf;
+ 		strm.avail_out = sizeof(buf);
+@@ -129,7 +121,6 @@ static int do_inflate(int in, int out, size_t total)
+ {
+ 	git_zstream strm;
+ 	unsigned char *map = NULL;
+-	unsigned char *decrypt_map = NULL;
+ 	unsigned char buf[4096];
+ 	ssize_t size;
+ 	int flush = 0;
+@@ -160,35 +151,22 @@ static int do_inflate(int in, int out, size_t total)
+ 		encrypted = 1;
+ 		git_decryptor_init_or_die(&cryptor, *(unsigned int *)(map + 4),
+ 					  map + 8);
+-		decrypt_map = malloc(INPUT_BUF_SIZE);
+-		if (!decrypt_map)
+-			die("fail to allocate decrypt_map");
+-	}
+-
+-	/* Decrypt: decrypt to buffer */
+-	if (encrypted) {
+-		size -= GIT_CRYPTO_LO_HEADER_SIZE;
+-		if (size > INPUT_BUF_SIZE) {
+-			size = INPUT_BUF_SIZE;
+-			flush = 0;
+-		}
+-		cryptor.decrypt(&cryptor,
+-				map + GIT_CRYPTO_LO_HEADER_SIZE,
+-				decrypt_map,
+-				size,
+-				size);
+ 	}
+ 
+ 	/* Set it up */
+ 	memset(&strm, 0, sizeof(strm));
+-	if (encrypted)
+-		strm.next_in = decrypt_map;
+-	else
++	if (encrypted) {
++		strm.cryptor = &cryptor;
++		strm.next_in = map + GIT_CRYPTO_LO_HEADER_SIZE;
++		strm.avail_in = size - GIT_CRYPTO_LO_HEADER_SIZE;
++	} else {
+ 		strm.next_in = map;
+-	strm.avail_in = size;
++		strm.avail_in = size;
++	}
+ 	strm.next_out = buf;
+ 	strm.avail_out = sizeof(buf);
+ 	git_inflate_init(&strm);
++
+ 	do {
+ 		size_t len;
+ 		unsigned char *phead = strm.next_out;
+@@ -202,53 +180,28 @@ static int do_inflate(int in, int out, size_t total)
+ 		strm.next_out = buf;
+ 		strm.avail_out = sizeof(buf);
+ 
+-		if (strm.avail_in == 0) {
+-			if (use_mmap) {
+-				if (encrypted && strm.total_in < total - GIT_CRYPTO_LO_HEADER_SIZE) {
+-					size = total - GIT_CRYPTO_LO_HEADER_SIZE - strm.total_in;
+-					if (size > INPUT_BUF_SIZE)
+-						size = INPUT_BUF_SIZE;
+-					cryptor.decrypt(&cryptor,
+-							map + GIT_CRYPTO_LO_HEADER_SIZE + strm.total_in,
+-							decrypt_map,
+-							size,
+-							size);
+-					strm.next_in= decrypt_map;
+-					strm.avail_in = size;
+-				}
++		if (strm.avail_in == 0 && !use_mmap) {
++			size = read(in, map, INPUT_BUF_SIZE);
++			/* EOF */
++			if (size == 0) {
++				flush = Z_FINISH;
++				trace_printf_key(&trace_crypto_key,
++					"debug: inflate set flush to %d"
++					", avail_in: %ld"
++					", avail_out: %ld"
++					", total_in: %ld"
++					", total_out: %ld"
++					"\n",
++					flush,
++					strm.avail_in,
++					strm.avail_out,
++					strm.total_in,
++					strm.total_out);
++			} else if (size < 0) {
++				die("fail to read input file");
+ 			} else {
+-				size = read(in, map, INPUT_BUF_SIZE);
+-				/* EOF */
+-				if (size == 0) {
+-					flush = Z_FINISH;
+-					trace_printf_key(&trace_crypto_key,
+-						"debug: inflate set flush to %d"
+-						", avail_in: %ld"
+-						", avail_out: %ld"
+-						", total_in: %ld"
+-						", total_out: %ld"
+-						"\n",
+-						flush,
+-						strm.avail_in,
+-						strm.avail_out,
+-						strm.total_in,
+-						strm.total_out);
+-				} else if (size < 0) {
+-					die("fail to read input file");
+-				} else {
+-					if (encrypted) {
+-						cryptor.decrypt(&cryptor,
+-								map,
+-								decrypt_map,
+-								size,
+-								size);
+-						strm.next_in = decrypt_map;
+-						strm.avail_in = size;
+-					} else  {
+-						strm.next_in = map;
+-						strm.avail_in = size;
+-					}
+-				}
++				strm.next_in = map;
++				strm.avail_in = size;
+ 			}
+ 		}
+ 
+@@ -261,12 +214,10 @@ static int do_inflate(int in, int out, size_t total)
+ 		die("unable to inflate (%d)", ret);
+ 	git_inflate_end(&strm);
+ 
+-	if (use_mmap) {
++	if (use_mmap)
+ 		munmap(map, total);
+-	} else {
++	else
+ 		free(map);
+-		free(decrypt_map);
+-	}
+ 	return 0;
+ }
+ 
+diff --git a/zlib.c b/zlib.c
+index d594cba3fc..6ad76cb6f5 100644
+--- a/zlib.c
++++ b/zlib.c
+@@ -110,28 +110,94 @@ void git_inflate_end(git_zstream *strm)
+ 
+ int git_inflate(git_zstream *strm, int flush)
+ {
++	unsigned char *phead = strm->next_in;
++	unsigned char decrypt_buf[4096];
++	unsigned long input_remains = strm->avail_in;
++	unsigned long input_decrypted = 0;
++	int orig_flush = flush;
+ 	int status;
+ 
+ 	for (;;) {
++		/* Decrypt before uncompress */
++		if (strm->cryptor && input_remains &&
++		    (!input_decrypted || !strm->avail_in)) {
++			/* if decrypt buffer is bigger than avali_out, avali_out maybe enough */
++			int decrypt_buf_size = strm->avail_out && strm->avail_out < sizeof(decrypt_buf)?
++					      strm->avail_out : sizeof(decrypt_buf);
++
++			if (decrypt_buf_size > input_remains)
++				decrypt_buf_size = input_remains;
++			strm->cryptor->decrypt(strm->cryptor,
++					       phead + input_decrypted,
++					       decrypt_buf,
++					       decrypt_buf_size,
++					       decrypt_buf_size);
++			strm->next_in = decrypt_buf;
++			strm->avail_in = decrypt_buf_size;
++			input_remains -= decrypt_buf_size;
++			input_decrypted += decrypt_buf_size;
++			if (input_remains > 0)
++				flush = 0;
++			else
++				flush = orig_flush;
++		}
++
++		/* Propagate variables from strm to strm->z. */
+ 		zlib_pre_call(strm);
++
+ 		/* Never say Z_FINISH unless we are feeding everything */
+-		status = inflate(&strm->z,
+-				 (strm->z.avail_in != strm->avail_in)
+-				 ? 0 : flush);
++		flush = (strm->z.avail_in != strm->avail_in) ? 0 : flush;
++		status = inflate(&strm->z, flush);
+ 		if (status == Z_MEM_ERROR)
+ 			die("inflate: out of memory");
++		/* cryptor buffer may bring empty output, fix Z_BUF_ERROR to Z_OK */
++		/* Note that Z_BUF_ERROR is not fatal, and
++		  deflate() can be called again with more input and more output space to
++		  continue compressing. */
++		if (strm->cryptor && flush == orig_flush && !strm->avail_out &&
++		    status == Z_BUF_ERROR)
++			status = Z_OK;
+ 		zlib_post_call(strm);
+ 
+ 		/*
+ 		 * Let zlib work another round, while we can still
+ 		 * make progress.
++		 *
++		 * (If strm->avail_out is greater than 1GB (ZLIB_BUF_MAX),
++		 *  strm->z.avail_out will be set to 1GB after calling
++		 *  zlib_pre_call() and will be consumed to 0, but
++		 *  strm->avail_out is left with a number greater than 0.
+ 		 */
+ 		if ((strm->avail_out && !strm->z.avail_out) &&
+ 		    (status == Z_OK || status == Z_BUF_ERROR))
+ 			continue;
++
++		/* Has more input buffer to decrypt for output. */
++		if (strm->cryptor && input_remains &&
++		    (status == Z_OK || status == Z_BUF_ERROR)) {
++			/* Still has output buffers */
++			if (strm->avail_out)
++				continue;
++			/* Can consume more input data to finish zstream,
++			 * even no output buffer available.
++			 */
++			if (!strm->avail_in)
++				continue;
++		}
++
+ 		break;
+ 	}
+ 
++	/* Fix input for zstream */
++	if (strm->cryptor && strm->avail_in)
++		strm->cryptor->byte_counter -= strm->avail_in;
++	if (strm->cryptor && input_decrypted) {
++		strm->next_in = phead + input_decrypted - strm->avail_in;
++		strm->z.next_in = strm->next_in;
++		strm->avail_in += input_remains;
++		strm->z.avail_in = zlib_buf_cap(strm->avail_in);
++	}
++
+ 	switch (status) {
+ 	/* Z_BUF_ERROR: normal, needs more space in the output buffer */
+ 	case Z_BUF_ERROR:
+@@ -236,6 +302,7 @@ int git_deflate_end_gently(git_zstream *strm)
+ int git_deflate(git_zstream *strm, int flush)
+ {
+ 	int status;
++	unsigned char *phead = strm->next_out;
+ 
+ 	for (;;) {
+ 		zlib_pre_call(strm);
+@@ -251,6 +318,11 @@ int git_deflate(git_zstream *strm, int flush)
+ 		/*
+ 		 * Let zlib work another round, while we can still
+ 		 * make progress.
++		 *
++		 * (If strm->avail_out is greater than 1GB (ZLIB_BUF_MAX),
++		 *  strm->z.avail_out will be set to 1GB after calling
++		 *  zlib_pre_call() and will be consumed to 0, but
++		 *  strm->avail_out is left with a number greater than 0.
+ 		 */
+ 		if ((strm->avail_out && !strm->z.avail_out) &&
+ 		    (status == Z_OK || status == Z_BUF_ERROR))
+@@ -263,11 +335,17 @@ int git_deflate(git_zstream *strm, int flush)
+ 	case Z_BUF_ERROR:
+ 	case Z_OK:
+ 	case Z_STREAM_END:
+-		return status;
++		break;
+ 	default:
++		error("deflate: %s (%s)", zerr_to_string(status),
++		      strm->z.msg ? strm->z.msg : "no message");
+ 		break;
+ 	}
+-	error("deflate: %s (%s)", zerr_to_string(status),
+-	      strm->z.msg ? strm->z.msg : "no message");
++	if (strm->cryptor && strm->next_out > phead) {
++		strm->cryptor->encrypt(strm->cryptor,
++				       phead,
++				       phead,
++				       strm->next_out - phead);
++	}
+ 	return status;
+ }
+-- 
+patchwork

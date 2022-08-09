@@ -1,6 +1,5 @@
-t0901-repo-locked.sh
-t0902-last-modified.sh
-t0903-git-checksum.sh
+t1416-ref-transaction-hooks.sh
+t5510-fetch.sh
 t0910-fetch-blackhole.sh
 t0920-quilt-export.sh
 t0930-git-fetch-rate-limit.sh
@@ -21,3 +20,6 @@ t5594-remote-update-write-packed-refs.sh
 t6500-gc.sh
 t7703-repack-geometric.sh
 t5583-http-curl-netrc-file.sh
+t0901-repo-locked.sh
+t0902-last-modified.sh
+t0903-git-checksum.sh

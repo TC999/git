@@ -1,0 +1,112 @@
+From c25fbb66c88120f5c1503fe015a9b83e65fdd0f8 Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Wed, 20 Jul 2022 16:32:53 +0800
+Subject: [PATCH 10/12] refs: get error message via refs_update_ref_extended()
+
+The last parameter for "refs_update_ref_extended()" is an enum
+"action_on_err", and we can not use this function to get the specific
+error message. Extend this function again to get error message.
+
+We will use the function "refs_update_ref_extended()" to reimplement
+the function "files_copy_or_rename_ref()" in later commit.
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ refs.c | 50 +++++++++++++++++++++++++-------------------------
+ refs.h |  2 +-
+ 2 files changed, 26 insertions(+), 26 deletions(-)
+
+diff --git a/refs.c b/refs.c
+index f2d5eb8a6a..6e383af4b8 100644
+--- a/refs.c
++++ b/refs.c
+@@ -1183,11 +1183,29 @@ int refs_update_ref(struct ref_store *refs, const char *msg,
+ 		    enum action_on_err onerr)
+ {
+ 	struct reflog_info reflog_info;
++	struct strbuf err = STRBUF_INIT;
++	int ret;
+ 
+ 	reflog_info.msg = (char *)msg;
+ 	reflog_info.old_oid = NULL;
+-	return refs_update_ref_extended(refs, refname, new_oid, old_oid,
+-					flags, &reflog_info, onerr);
++	ret = refs_update_ref_extended(refs, refname, new_oid, old_oid,
++				       flags, &reflog_info, &err);
++	if (ret) {
++		const char *str = _("update_ref failed for ref '%s': %s");
++
++		switch (onerr) {
++		case UPDATE_REFS_MSG_ON_ERR:
++			error(str, refname, err.buf);
++			break;
++		case UPDATE_REFS_DIE_ON_ERR:
++			die(str, refname, err.buf);
++			break;
++		case UPDATE_REFS_QUIET_ON_ERR:
++			break;
++		}
++	}
++	strbuf_release(&err);
++	return ret;
+ }
+ 
+ int refs_update_ref_extended(struct ref_store *refs,
+@@ -1196,37 +1214,19 @@ int refs_update_ref_extended(struct ref_store *refs,
+ 			     const struct object_id *old_oid,
+ 			     unsigned int flags,
+ 			     const struct reflog_info *reflog_info,
+-			     enum action_on_err onerr)
++			     struct strbuf *err)
+ {
+ 	struct ref_transaction *t = NULL;
+-	struct strbuf err = STRBUF_INIT;
+-	int ret = 0;
+ 
+-	t = ref_store_transaction_begin(refs, &err);
++	t = ref_store_transaction_begin(refs, err);
+ 	if (!t ||
+ 	    ref_transaction_update_extended(t, refname, new_oid, old_oid,
+-					    flags, reflog_info, &err) ||
+-	    ref_transaction_commit(t, &err)) {
+-		ret = 1;
++					    flags, reflog_info, err) ||
++	    ref_transaction_commit(t, err)) {
+ 		ref_transaction_free(t);
+-	}
+-	if (ret) {
+-		const char *str = _("update_ref failed for ref '%s': %s");
+-
+-		switch (onerr) {
+-		case UPDATE_REFS_MSG_ON_ERR:
+-			error(str, refname, err.buf);
+-			break;
+-		case UPDATE_REFS_DIE_ON_ERR:
+-			die(str, refname, err.buf);
+-			break;
+-		case UPDATE_REFS_QUIET_ON_ERR:
+-			break;
+-		}
+-		strbuf_release(&err);
+ 		return 1;
+ 	}
+-	strbuf_release(&err);
++
+ 	if (t)
+ 		ref_transaction_free(t);
+ 	return 0;
+diff --git a/refs.h b/refs.h
+index 0f21ba259f..85832c4863 100644
+--- a/refs.h
++++ b/refs.h
+@@ -825,7 +825,7 @@ int refs_update_ref_extended(struct ref_store *refs,
+ 			     const struct object_id *old_oid,
+ 			     unsigned int flags,
+ 			     const struct reflog_info *reflog_info,
+-			     enum action_on_err onerr);
++			     struct strbuf *err);
+ int update_ref(const char *msg, const char *refname,
+ 	       const struct object_id *new_oid, const struct object_id *old_oid,
+ 	       unsigned int flags, enum action_on_err onerr);
+-- 
+patchwork

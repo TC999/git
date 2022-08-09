@@ -1,0 +1,111 @@
+From 01d897a524a8bb74e02acc81d06c34d706313397 Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Tue, 12 Jul 2022 18:09:23 +0800
+Subject: [PATCH 05/12] refs: update missing old-oid in transaction from
+ lockfile
+
+For commands that update a reference without providing an old-oid, the
+"reference-transaction" hook will receive a zero-oid instead of the
+correct old-oid.
+
+In order to provide the "reference-transaction" hook with a real old-oid
+in any case, get proper old_oid from the lock file and propagate it to
+the corresponding update entry of a transaction.
+
+The behavior of the following git commands and four testcases have been
+fixed in t1416:
+
+ * git branch [-f] <ref> <new-oid>              # update branch
+ * git cherry-pick <oid>
+ * git rebase
+ * git tag -d <tag>
+ * git update-ref --stdin                       # update refs
+ * git update-ref -d <ref>
+ * git update-ref <ref> <new-oid> [<old-oid>]   # update ref
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ refs/files-backend.c             |  9 +++++++++
+ t/t1416-ref-transaction-hooks.sh | 12 ++++++------
+ 2 files changed, 15 insertions(+), 6 deletions(-)
+
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index 8db7882aac..957ebe08c0 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -2565,6 +2565,15 @@ static int lock_ref_for_update(struct files_ref_store *refs,
+ 			goto out;
+ 		}
+ 
++		/*
++		 * Propagate old_oid from the lock to the update entry, so we can
++		 * provide a real old-oid of to the "reference-transaction" hook.
++		 */
++		if (!(update->flags & REF_HAVE_OLD)) {
++			oidcpy(&update->old_oid, &lock->old_oid);
++			update->flags |= REF_HAVE_OLD;
++		}
++
+ 		/*
+ 		 * If this update is happening indirectly because of a
+ 		 * symref update, record the old OID in the parent
+diff --git a/t/t1416-ref-transaction-hooks.sh b/t/t1416-ref-transaction-hooks.sh
+index 03d467a0f2..2eddf3f301 100755
+--- a/t/t1416-ref-transaction-hooks.sh
++++ b/t/t1416-ref-transaction-hooks.sh
+@@ -53,7 +53,7 @@ test_expect_success 'hook gets all queued updates in prepared state' '
+ 	EOF
+ 	cat >expect <<-EOF &&
+ 		$ZERO_OID $POST_OID HEAD
+-		$ZERO_OID $POST_OID refs/heads/main
++		$PRE_OID $POST_OID refs/heads/main
+ 	EOF
+ 	git update-ref HEAD POST <<-EOF &&
+ 		update HEAD $ZERO_OID $POST_OID
+@@ -76,7 +76,7 @@ test_expect_success 'hook gets all queued updates in committed state' '
+ 	EOF
+ 	cat >expect <<-EOF &&
+ 		$ZERO_OID $POST_OID HEAD
+-		$ZERO_OID $POST_OID refs/heads/main
++		$PRE_OID $POST_OID refs/heads/main
+ 	EOF
+ 	git update-ref HEAD POST &&
+ 	test_cmp expect actual
+@@ -320,7 +320,7 @@ test_expect_success "update-ref: create new refs" '
+ 	test_cmp_heads_and_tags -C workdir expect
+ '
+ 
+-test_expect_failure "update-ref: update HEAD, a symbolic-ref" '
++test_expect_success "update-ref: update HEAD, a symbolic-ref" '
+ 	test_when_finished "git switch main; rm -f $HOOK_OUTPUT" &&
+ 
+ 	cat >expect <<-\EOF &&
+@@ -364,7 +364,7 @@ test_expect_failure "update-ref: call git-pack-refs to create packed_ref_store"
+ 	test_path_is_missing $HOOK_OUTPUT
+ '
+ 
+-test_expect_failure "update-ref: update refs already packed to .git/packed-refs" '
++test_expect_success "update-ref: update refs already packed to .git/packed-refs" '
+ 	test_when_finished "rm -f $HOOK_OUTPUT" &&
+ 
+ 	cat >expect <<-\EOF &&
+@@ -484,7 +484,7 @@ test_expect_success "update-ref --stdin: create new refs" '
+ 	test_cmp_heads_and_tags -C workdir expect
+ '
+ 
+-test_expect_failure "update-ref --stdin: update refs" '
++test_expect_success "update-ref --stdin: update refs" '
+ 	test_when_finished "rm -f $HOOK_OUTPUT" &&
+ 
+ 	cat >expect <<-\EOF &&
+@@ -638,7 +638,7 @@ test_expect_failure "branch: call git-gc to create packed_ref_store" '
+ 	test_path_is_missing $HOOK_OUTPUT
+ '
+ 
+-test_expect_failure "branch: update refs to create loose refs" '
++test_expect_success "branch: update refs to create loose refs" '
+ 	test_when_finished "rm -f $HOOK_OUTPUT" &&
+ 
+ 	cat >expect <<-\EOF &&
+-- 
+patchwork
