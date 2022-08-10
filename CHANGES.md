@@ -17,7 +17,24 @@ Release all topic branches to agit-master branch based on v2.36.2 and agit versi
 AGIT Release Notes
 ==================
 
+
+v6.6.0-dev
+----------
+* refactor-refs-txn: new topic to fix "reference-transaction" hook.
+* refs-txn-hook: rebase to "refactor-refs-txn" and refactor internal
+  pre-txn-hook and post-txn-hook based on "reference-transaction"
+  hook.
+* black-hole: refactor from one commit to several commits.
+* agit-gc: refactor to improve readability.
+* auto-gc-if-too-many-loose-refs: ignore "\*.lock" files when checking
+  loose references.
+* auto-gc-if-too-many-loose-refs: fix memory leak by release buf.
+* write-packed-refs: do not pack unfetched references.
+* write-packed-refs: rebased to "refactor-refs-txn".
+* Remove topic end-of-options.
+
 v6.5.9
+------
 * builtin/repack.c: ensure that names is sorted
 * http: support read netrc file from a specific path
 
