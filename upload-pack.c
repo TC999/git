@@ -95,6 +95,7 @@ struct upload_pack_data {
 	struct packet_writer writer;
 
 	const char *pack_objects_hook;
+	unsigned agit_clause_attached : 1;
 
 	unsigned stateless_rpc : 1;				/* v0 only */
 	unsigned no_done : 1;					/* v0 only */
@@ -326,7 +327,9 @@ static void create_pack_file(struct upload_pack_data *pack_data,
 	if (wait_for_avail_loadavg(pack_data->use_sideband))
 		die("failed to wait_for_avail_loadavg");
 
-	if (!pack_data->pack_objects_hook)
+	if (!pack_data->pack_objects_hook ||
+	    (pack_data->agit_clause_attached &&
+	     pack_data->have_obj.nr > 0))
 		pack_objects.git_cmd = 1;
 	else {
 		strvec_push(&pack_objects.args, pack_data->pack_objects_hook);
@@ -1372,6 +1375,9 @@ static int upload_pack_config(const char *var, const char *value, void *cb_data)
 	    current_config_scope() != CONFIG_SCOPE_WORKTREE) {
 		if (!strcmp("uploadpack.packobjectshook", var))
 			return git_config_string(&data->pack_objects_hook, var, value);
+		else if (!strcmp("uploadpack.packobjectshookaddagitclause", var)) {
+			data->agit_clause_attached = git_config_bool(var, value);
+		}
 	}
 
 	if (parse_object_filter_config(var, value, data) < 0)

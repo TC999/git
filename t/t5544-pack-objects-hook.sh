@@ -69,4 +69,23 @@ test_expect_success 'hook works with partial clone' '
 	! grep blob types
 '
 
+test_expect_success 'hook run with agit clause and no haves' '
+	clear_hook_results &&
+	test_config_global uploadpack.packObjectsHook "./hook" &&
+	test_config_global uploadpack.packObjectsHookAddAGitClause true &&
+	git clone --no-local . dst.git 2>stderr &&
+	grep "hook running" stderr
+'
+
+test_expect_success 'hook dose not run with agit clause and haves' '
+	clear_hook_results &&
+	test_config_global uploadpack.packObjectsHook "./hook" &&
+	test_config_global uploadpack.packObjectsHookAddAGitClause true &&
+	git clone --no-local --bare . dst.git 2>stderr &&
+	grep "hook running" stderr &&
+	test_commit three &&
+	git --git-dir dst.git fetch origin +refs/*:refs/* 2>stderr &&
+	! grep "hook running" stderr
+'
+
 test_done
