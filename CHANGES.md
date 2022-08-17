@@ -32,6 +32,12 @@ v6.6.0-dev
 * write-packed-refs: do not pack unfetched references.
 * write-packed-refs: rebased to "refactor-refs-txn".
 * Remove topic end-of-options.
+* commit-graph-genv2-upgrade-fix: fix the commit-graph bug introduced 
+  in Git version v2.36.1. This patch Git has been merged into v2.37.2,
+  if we use v2.37.2 and later to package, then this patch needs to be 
+  discarded.
+* pack-objects-hook-agit-clause: introduce new configuration to improve
+  the cache hit rate of pack-objects.
 
 v6.5.9
 ------
