@@ -67,6 +67,10 @@
 ### topic/0130-write-packed-refs
 说明：
 * 通过fetch.writePackedRefs或--write-packed-refs开启特性，在执行仓库更新时，将引用合并写入packed-refs，而不写入松散引用，从而提升效率
+### topic/0160-auto-gc-if-too-many-loose-refs
+说明：
+* 增加 gc.autoLooseRefsLimit，默认50
+* 当松散引用数大于给定限制时，也会触发自动gc，从而将松散引用打包
 ### topic/5351-support-streaming-blobs-to-disk
 说明：
 * 改写原有的unpack-objects过程，对于大于core.bigFileThreshold的blob对象的写入，通过流的方式优化性能
@@ -105,11 +109,6 @@ environment variables of httpd host can be used in other test cases.
   说明：
 * 增加 core.tempfileExpire ，默认7天
 * 在尝试创建临时文件数，若目标文件已存在且超过失效时间，会先删除再重新创建，而不是直接报错退出
-### topic/0160-auto-gc-if-too-many-loose-refs
-说明：
-* 增加 gc.autoLooseRefsLimit，默认50
-* 当松散引用数大于给定限制时，也会触发自动gc，从而将松散引用打包
-
 ## 已经退役的特性
 * 0010-git-bundle：已经合入上游
 
