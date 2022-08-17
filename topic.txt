@@ -15,4 +15,5 @@ auto-gc-if-too-many-loose-refs
 midx-fixup-deleting-packfile
 support-read-netrc-file-from-a-specific-path
 commit-graph-genv2-upgrade-fix
+pack-objects-hook-agit-clause: rate-limit
 agit-version
