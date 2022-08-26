@@ -51,7 +51,7 @@ init_base_topics(){
 		git checkout topic/0001-feature1 &&
 		printf "append new feature on topic/0001-feature1" >>feature1 &&
 		mkdir -p t &&
-		printf "test execute" >t/t0001-feature1.sh
+		printf "test execute" >t/t0001-feature1.sh &&
 		git add feature1 t/t0001-feature1.sh &&
 		test_tick &&
 		git commit -m "feature1 update" &&
@@ -60,9 +60,9 @@ init_base_topics(){
 		git checkout topic/0002-feature2 &&
 		printf "append new feature on topic/0002-feature2" >>feature2 &&
 		printf "feature2 new file" >feature2.keep &&
-		mkdir -p t/0002
-		printf "subtest" >t/0002/t0002-subtest.sh
-		printf "root test" >t/t0002-feature2.sh
+		mkdir -p t/0002 &&
+		printf "subtest" >t/0002/t0002-subtest.sh &&
+		printf "root test" >t/t0002-feature2.sh &&
 		git add feature2 feature2.keep t/0002/t0002-subtest.sh t/t0002-feature2.sh &&
 		test_tick &&
 		git commit -m "add feature2" &&
@@ -72,11 +72,11 @@ init_base_topics(){
 		rm -rf feature3 &&
 		printf "new files on feature3" >feature3.keep &&
 		mkdir -p t &&
-		printf "execute test file" >t/t0003-feature3.sh
-		printf "the test lib file" >t/http-curl.sh
+		printf "execute test file" >t/t0003-feature3.sh &&
+		printf "the test lib file" >t/http-curl.sh &&
 		git add feature3.keep t/t0003-feature3.sh t/http-curl.sh &&
-		test_tick
-		git commit -m "update feature3"
+		test_tick &&
+		git commit -m "update feature3" &&
 		git checkout master &&
 		printf "feature1\nfeature2\nfeature3\n" >topic.txt &&
 		git add topic.txt &&
