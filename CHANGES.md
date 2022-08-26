@@ -24,13 +24,14 @@ v6.6.0-dev
 * refs-txn-hook: rebase to "refactor-refs-txn" and refactor internal
   pre-txn-hook and post-txn-hook based on "reference-transaction"
   hook.
+* write-packed-refs: do not pack unfetched references.
+* write-packed-refs: depends on refs-txt-hook, and replace with new
+  implementation which support git-checksum well.
 * black-hole: refactor from one commit to several commits.
 * agit-gc: refactor to improve readability.
 * auto-gc-if-too-many-loose-refs: ignore "\*.lock" files when checking
   loose references.
-* auto-gc-if-too-many-loose-refs: fix memory leak by release buf.
-* write-packed-refs: do not pack unfetched references.
-* write-packed-refs: rebased to "refactor-refs-txn".
+* auto-gc-if-too-many-loose-refs: fix memory leak by releasing buf.
 * Remove topic end-of-options.
 * commit-graph-genv2-upgrade-fix: fix the commit-graph bug introduced 
   in Git version v2.36.1. This patch Git has been merged into v2.37.2,
