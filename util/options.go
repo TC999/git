@@ -27,4 +27,7 @@ type Options struct {
 
 	// User custom folder for patch generate
 	PatchFolder string
+
+	// Add number at the beginning of patch files name
+	PatchNumber bool
 }

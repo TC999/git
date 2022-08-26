@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -138,6 +139,13 @@ func (g *GeneratePatches) Generate(o *Options, taskContext *TaskContext) error {
 				return err
 			}
 
+			if !o.PatchNumber {
+				tmpPatchPath, err = g.removeNumberFormFileName(tmpPatchPath)
+				if err != nil {
+					return err
+				}
+			}
+
 			patchName := filepath.Join(_outputFolderName, filepath.Base(tmpPatchPath))
 			f.WriteString(fmt.Sprintf("%s\n", patchName))
 			patchNumber++
@@ -193,4 +201,21 @@ func (g *GeneratePatches) createPatchFolder(patchPath, prefix string) error {
 	}
 
 	return os.MkdirAll(patchFolder, 0o755)
+}
+
+func (g *GeneratePatches) removeNumberFormFileName(patchPath string) (string, error) {
+	var (
+		patchFolder  = path.Dir(patchPath)
+		patchName    = path.Base(patchPath)
+		newPatchName = patchName
+		newPatchPath = patchPath
+	)
+
+	if index := strings.Index(patchName, "-"); index > -1 {
+		newPatchName = patchName[index+1:]
+		newPatchPath = path.Join(patchFolder, newPatchName)
+		return newPatchPath, os.Rename(patchPath, newPatchPath)
+	}
+
+	return patchPath, nil
 }

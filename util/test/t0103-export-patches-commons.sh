@@ -42,19 +42,19 @@ test_expect_success "comment out some line on topic.txt and will skip the line" 
 		git add topic.txt &&
 		git commit -m "update topic.txt" &&
 		patchwork export-patches &&
-		ls patches/t/ >files.txt
+		ls -tr patches/t/ >files.txt
 	) &&
 	cat >expect-series <<-EOF &&
-		t/0001-feature1-update.patch
-		t/0002-update-feature3.patch
+		t/feature1-update.patch
+		t/update-feature3.patch
 	EOF
 	cat >expect-test-scripts <<-EOF &&
 		t0001-feature1.sh
 		t0003-feature3.sh
 	EOF
 	cat >expect-patches <<-EOF &&
-		0001-feature1-update.patch
-		0002-update-feature3.patch
+		feature1-update.patch
+		update-feature3.patch
 	EOF
 	test_cmp expect-series workspace/patches/series &&
 	test_cmp expect-test-scripts workspace/patches/test-scripts &&
@@ -93,13 +93,13 @@ test_expect_success "use git and agit version as argument" '
 		git add topic.txt &&
 		git commit -m "add agit-version" &&
 		patchwork export-patches --use-local --git-version v2.36.2 --agit-version 6.6.0 &&
-		ls patches/t/ >files.txt
+		ls -tr patches/t/ >files.txt
 	) &&
 	cat >expect-series <<-EOF &&
-		t/0001-feature1-update.patch
-		t/0002-add-feature2.patch
-		t/0003-update-feature3.patch
-		t/0004-add-agit-version-file.patch
+		t/feature1-update.patch
+		t/add-feature2.patch
+		t/update-feature3.patch
+		t/add-agit-version-file.patch
 	EOF
 	cat >expect-test-scripts <<-EOF &&
 		t0001-feature1.sh
@@ -107,10 +107,10 @@ test_expect_success "use git and agit version as argument" '
 		t0003-feature3.sh
 	EOF
 	cat >expect-patches <<-EOF &&
-		0001-feature1-update.patch
-		0002-add-feature2.patch
-		0003-update-feature3.patch
-		0004-add-agit-version-file.patch
+		feature1-update.patch
+		add-feature2.patch
+		update-feature3.patch
+		add-agit-version-file.patch
 	EOF
 	cat >expect-agit-version-patches <<-EOF &&
 		From 370f9a5a12fca1ec04f75b000a5474ce7e76c35a Mon Sep 17 00:00:00 2001
@@ -137,7 +137,7 @@ test_expect_success "use git and agit version as argument" '
 	test_cmp expect-series workspace/patches/series &&
 	test_cmp expect-test-scripts workspace/patches/test-scripts &&
 	test_cmp expect-patches workspace/files.txt &&
-	test_cmp expect-agit-version-patches workspace/patches/t/0004-add-agit-version-file.patch
+	test_cmp expect-agit-version-patches workspace/patches/t/add-agit-version-file.patch
 '
 
 test_expect_success "export patches to other patch, the path not exist" '
@@ -147,12 +147,12 @@ test_expect_success "export patches to other patch, the path not exist" '
 		cd workspace && 
 		git switch master &&
 		patchwork export-patches --patches ../testfolder/mypatches &&
-		ls ../testfolder/mypatches/t >files.txt
+		ls -tr ../testfolder/mypatches/t >files.txt
 	) &&
 	cat >expect-series <<-EOF &&
-		t/0001-feature1-update.patch
-		t/0002-add-feature2.patch
-		t/0003-update-feature3.patch
+		t/feature1-update.patch
+		t/add-feature2.patch
+		t/update-feature3.patch
 	EOF
 	cat >expect-test-scripts <<-EOF &&
 		t0001-feature1.sh
@@ -160,9 +160,9 @@ test_expect_success "export patches to other patch, the path not exist" '
 		t0003-feature3.sh
 	EOF
 	cat >expect-patches <<-EOF &&
-		0001-feature1-update.patch
-		0002-add-feature2.patch
-		0003-update-feature3.patch
+		feature1-update.patch
+		add-feature2.patch
+		update-feature3.patch
 	EOF
 	test_cmp expect-series testfolder/mypatches/series &&
 	test_cmp expect-test-scripts testfolder/mypatches/test-scripts &&

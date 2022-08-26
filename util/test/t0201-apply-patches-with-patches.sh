@@ -117,8 +117,8 @@ test_expect_success "apply patches with --patches, and series file have comment"
 		cd tmp &&
 		# Just export the test patches
 		git switch master &&
-		patchwork export-patches --patches ../patches &&
-		cat >../patches/series <<-\EOF
+		patchwork export-patches --number --patches ../patches &&
+		cat >../patches/series <<-\EOF &&
 			# this is comment
 			t/0001-feature1-update.patch
 			t/0002-add-feature2.patch

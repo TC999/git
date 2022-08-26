@@ -106,5 +106,13 @@ func init() {
 		"the patches path, if not set, it will use current patches folder",
 	)
 
+	exportPatchCmd.Flags().BoolVarP(
+		&agitOptions.PatchNumber,
+		"number",
+		"n",
+		false,
+		"add patches number for every patches file name",
+	)
+
 	rootCmd.AddCommand(exportPatchCmd)
 }

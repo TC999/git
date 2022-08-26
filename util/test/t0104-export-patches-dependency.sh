@@ -47,14 +47,14 @@ test_expect_success "have depends on, and successfully" '
 		test_tick &&
 		git commit -m "update topic.txt with feature4 and feature5" &&
 		patchwork export-patches &&
-		ls patches/t/ >files.txt
+		ls -tr patches/t/ >files.txt
 	) &&
 	cat >expect-series <<-EOF &&
-		t/0001-feature1-update.patch
-		t/0002-add-feature2.patch
-		t/0003-update-feature3.patch
-		t/0004-add-feature4.patch
-		t/0005-add-feature5.patch
+		t/feature1-update.patch
+		t/add-feature2.patch
+		t/update-feature3.patch
+		t/add-feature4.patch
+		t/add-feature5.patch
 	EOF
 	cat >expect-test-scripts <<-EOF &&
 		t0001-feature1.sh
@@ -62,11 +62,11 @@ test_expect_success "have depends on, and successfully" '
 		t0003-feature3.sh
 	EOF
 	cat >expect-patches <<-EOF &&
-		0001-feature1-update.patch
-		0002-add-feature2.patch
-		0003-update-feature3.patch
-		0004-add-feature4.patch
-		0005-add-feature5.patch
+		feature1-update.patch
+		add-feature2.patch
+		update-feature3.patch
+		add-feature4.patch
+		add-feature5.patch
 	EOF
 	test_cmp expect-series workspace/patches/series &&
 	test_cmp expect-test-scripts workspace/patches/test-scripts &&
@@ -79,7 +79,7 @@ test_expect_success "have depends on, feature4 is wrong order" '
 	(
 		cd workspace &&
 		git switch master &&
-		cat >topic.txt <<-\EOF
+		cat >topic.txt <<-\EOF &&
 			feature1
 			feature4:  feature2
 			feature2
@@ -90,14 +90,14 @@ test_expect_success "have depends on, feature4 is wrong order" '
 		test_tick &&
 		git commit -m "update topic.txt with feature4 and feature5" &&
 		patchwork export-patches &&
-		ls patches/t/ >files.txt
+		ls -tr patches/t/ >files.txt
 	) &&
 	cat >expect-series <<-EOF &&
-		t/0001-feature1-update.patch
-		t/0002-add-feature2.patch
-		t/0003-update-feature3.patch
-		t/0004-add-feature5.patch
-		t/0005-add-feature4.patch
+		t/feature1-update.patch
+		t/add-feature2.patch
+		t/update-feature3.patch
+		t/add-feature5.patch
+		t/add-feature4.patch
 	EOF
 	cat >expect-test-scripts <<-EOF &&
 		t0001-feature1.sh
@@ -105,11 +105,11 @@ test_expect_success "have depends on, feature4 is wrong order" '
 		t0003-feature3.sh
 	EOF
 	cat >expect-patches <<-EOF &&
-		0001-feature1-update.patch
-		0002-add-feature2.patch
-		0003-update-feature3.patch
-		0004-add-feature5.patch
-		0005-add-feature4.patch
+		feature1-update.patch
+		add-feature2.patch
+		update-feature3.patch
+		add-feature5.patch
+		add-feature4.patch
 	EOF
 	test_cmp expect-series workspace/patches/series &&
 	test_cmp expect-test-scripts workspace/patches/test-scripts &&
@@ -122,7 +122,7 @@ test_expect_success "have depends on, feature4 is wrong order, and feature5 prec
 	(
 		cd workspace &&
 		git switch master &&
-		cat >topic.txt <<-\EOF
+		cat >topic.txt <<-\EOF &&
 			feature1
 			feature5: feature3
 			feature4: feature2
@@ -133,14 +133,14 @@ test_expect_success "have depends on, feature4 is wrong order, and feature5 prec
 		test_tick &&
 		git commit -m "update topic.txt with feature4 and feature5" &&
 		patchwork export-patches &&
-		ls patches/t/ >files.txt
+		ls -tr patches/t/ >files.txt
 	) &&
 	cat >expect-series <<-EOF &&
-		t/0001-feature1-update.patch
-		t/0002-add-feature2.patch
-		t/0003-update-feature3.patch
-		t/0004-add-feature4.patch
-		t/0005-add-feature5.patch
+		t/feature1-update.patch
+		t/add-feature2.patch
+		t/update-feature3.patch
+		t/add-feature4.patch
+		t/add-feature5.patch
 	EOF
 	cat >expect-test-scripts <<-EOF &&
 		t0001-feature1.sh
@@ -148,11 +148,11 @@ test_expect_success "have depends on, feature4 is wrong order, and feature5 prec
 		t0003-feature3.sh
 	EOF
 	cat >expect-patches <<-EOF &&
-		0001-feature1-update.patch
-		0002-add-feature2.patch
-		0003-update-feature3.patch
-		0004-add-feature4.patch
-		0005-add-feature5.patch
+		feature1-update.patch
+		add-feature2.patch
+		update-feature3.patch
+		add-feature4.patch
+		add-feature5.patch
 	EOF
 	test_cmp expect-series workspace/patches/series &&
 	test_cmp expect-test-scripts workspace/patches/test-scripts &&
@@ -183,14 +183,14 @@ test_expect_success "have depends on, feature4 is wrong order, and feature5(will
 		git commit -m "feature5 depends on feature4" &&
 		git switch master &&
 		patchwork export-patches --use-local &&
-		ls patches/t/ >files.txt
+		ls -tr patches/t/ >files.txt
 	) &&
 	cat >expect-series <<-EOF &&
-		t/0001-feature1-update.patch
-		t/0002-add-feature2.patch
-		t/0003-update-feature3.patch
-		t/0004-add-feature4.patch
-		t/0005-feature5-depends-on-feature4.patch
+		t/feature1-update.patch
+		t/add-feature2.patch
+		t/update-feature3.patch
+		t/add-feature4.patch
+		t/feature5-depends-on-feature4.patch
 	EOF
 	cat >expect-test-scripts <<-EOF &&
 		t0001-feature1.sh
@@ -198,11 +198,11 @@ test_expect_success "have depends on, feature4 is wrong order, and feature5(will
 		t0003-feature3.sh
 	EOF
 	cat >expect-patches <<-EOF &&
-		0001-feature1-update.patch
-		0002-add-feature2.patch
-		0003-update-feature3.patch
-		0004-add-feature4.patch
-		0005-feature5-depends-on-feature4.patch
+		feature1-update.patch
+		add-feature2.patch
+		update-feature3.patch
+		add-feature4.patch
+		feature5-depends-on-feature4.patch
 	EOF
 	test_cmp expect-series workspace/patches/series &&
 	test_cmp expect-test-scripts workspace/patches/test-scripts &&
