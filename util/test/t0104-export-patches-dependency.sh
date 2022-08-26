@@ -36,7 +36,13 @@ test_expect_success "have depends on, and successfully" '
 	(
 		cd workspace &&
 		git switch master &&
-		printf "feature1\nfeature2\nfeature3\nfeature4: feature2\nfeature5: feature3\n" >topic.txt &&
+		cat >topic.txt <<-\EOF &&
+			feature1
+			feature2
+			feature3
+			feature4: feature2
+			feature5: feature3
+		EOF
 		git add topic.txt &&
 		test_tick &&
 		git commit -m "update topic.txt with feature4 and feature5" &&
@@ -73,7 +79,13 @@ test_expect_success "have depends on, feature4 is wrong order" '
 	(
 		cd workspace &&
 		git switch master &&
-		printf "feature1\nfeature4: feature2\nfeature2\nfeature3\nfeature5: feature3\n" >topic.txt &&
+		cat >topic.txt <<-\EOF
+			feature1
+			feature4:  feature2
+			feature2
+			feature3
+			feature5:feature3
+		EOF
 		git add topic.txt &&
 		test_tick &&
 		git commit -m "update topic.txt with feature4 and feature5" &&
@@ -110,7 +122,13 @@ test_expect_success "have depends on, feature4 is wrong order, and feature5 prec
 	(
 		cd workspace &&
 		git switch master &&
-		printf "feature1\nfeature5: feature3\nfeature4: feature2\nfeature2\nfeature3\n" >topic.txt &&
+		cat >topic.txt <<-\EOF
+			feature1
+			feature5: feature3
+			feature4: feature2
+			feature2
+			feature3
+		EOF
 		git add topic.txt &&
 		test_tick &&
 		git commit -m "update topic.txt with feature4 and feature5" &&
@@ -147,7 +165,13 @@ test_expect_success "have depends on, feature4 is wrong order, and feature5(will
 	(
 		cd workspace &&
 		git switch master &&
-		printf "feature1\nfeature5: feature4\nfeature4: feature2\nfeature2\nfeature3\n" >topic.txt &&
+		cat >topic.txt <<-\EOF &&
+			feature1
+			feature5: feature4
+			feature4: feature2
+			feature2
+			feature3
+		EOF
 		git add topic.txt &&
 		test_tick &&
 		git commit -m "update topic.txt with feature4 and feature5" &&
@@ -191,7 +215,13 @@ test_expect_success "feature4 depends on feature2 but not rebase" '
 	(
 		cd workspace &&
 		git switch master &&
-		printf "feature1\nfeature2\nfeature3\nfeature4: feature2\nfeature5: feature3\n" >topic.txt &&
+		cat >topic.txt <<-\EOF &&
+			feature1
+			feature2
+			feature3
+			feature4: feature2
+			feature5: feature3
+		EOF
 		git add topic.txt &&
 		test_tick &&
 		git commit -m "update topic.txt with feature4 and feature5" &&

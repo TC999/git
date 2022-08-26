@@ -15,7 +15,7 @@ test_expect_success "topic.txt exist, but local and remote not exist" '
 	(
 		cd workspace &&
 		git switch master &&
-		printf "feature4\n" >>topic.txt &&
+		echo "feature4" >>topic.txt &&
 		git add topic.txt &&
 		git commit -m "add feature4 on topic.txt" &&
 		test_must_fail patchwork export-patches >failed-message
@@ -34,7 +34,11 @@ test_expect_success "comment out some line on topic.txt and will skip the line" 
 	(
 		cd workspace &&
 		git switch master &&
-		printf "feature1\n# feature2\nfeature3\n" >topic.txt &&
+		cat >topic.txt <<-\EOF &&
+			feature1
+			# feature2
+			feature3
+		EOF
 		git add topic.txt &&
 		git commit -m "update topic.txt" &&
 		patchwork export-patches &&

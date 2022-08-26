@@ -90,7 +90,11 @@ test_expect_success "apply patches with --patches, and series file have garbage 
 		# Just export the test patches
 		git switch master &&
 		patchwork export-patches --patches ../patches &&
-		printf "feature1 h01 something #abc\nfeature2\feature3" >../patches/series &&
+		cat >../patches/series <<-\EOF &&
+			feature1 h01 something #abc
+			feature2
+			feature3
+		EOF
 		test_must_fail patchwork apply-patches --patches ../patches --apply-to ../workspace >failed-message
 	)&&
 	cat >expect <<-EOF &&
@@ -114,7 +118,12 @@ test_expect_success "apply patches with --patches, and series file have comment"
 		# Just export the test patches
 		git switch master &&
 		patchwork export-patches --patches ../patches &&
-		printf "# this is comment\nt/0001-feature1-update.patch\nt/0002-add-feature2.patch\nt/0003-update-feature3.patch\n" >../patches/series &&
+		cat >../patches/series <<-\EOF
+			# this is comment
+			t/0001-feature1-update.patch
+			t/0002-add-feature2.patch
+			t/0003-update-feature3.patch
+		EOF
 		patchwork apply-patches --patches ../patches --apply-to ../workspace
 	)&&
 	(
