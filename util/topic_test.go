@@ -522,7 +522,12 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 				_, _, err = repoSpace.Execute(ctx, `
 					git clone base.git workdir &&
 					cd workdir && 
-					printf "topic/branch1\ntopic/branch2:topic/branch1\ntopic/003-branch3" >topic.txt
+					cat >topic.txt <<-\EOF
+						# comment a
+						topic/branch1#comment b
+						topic/branch2:topic/branch1 #comment c
+						topic/003-branch3
+					EOF
 				`)
 				if err != nil {
 					return nil, "", err
@@ -604,7 +609,10 @@ func TestAGitTopicScheduler_GetTopics(t *testing.T) {
 
 				_, _, err = repoSpace.Execute(ctx, `
 					cd workdir && 
-					printf "topic/branch1\n#topic/branch2" >topic.txt
+					cat >topic.txt <<-\EOF
+						topic/branch1
+						#topic/branch2
+					EOF
 				`)
 				if err != nil {
 					return nil, "", err

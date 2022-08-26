@@ -63,7 +63,7 @@ type AGitTopicScheduler struct {
 func (a *AGitTopicScheduler) preReadTopicFiles(o *Options) error {
 	var (
 		res       = make(map[string]int)
-		index int = -1
+		index int = 0
 	)
 
 	topicFilePath := path.Join(o.CurrentPath, _topicName)
@@ -74,19 +74,13 @@ func (a *AGitTopicScheduler) preReadTopicFiles(o *Options) error {
 
 	scanner := bufio.NewScanner(bytes.NewReader(contents))
 	for scanner.Scan() {
-		index++
-		tmpTopic := strings.TrimSpace(scanner.Text())
-
-		// Current line is code comment, just ignore it
-		if strings.HasPrefix(tmpTopic, "#") {
+		// Trim comment
+		tmpTopic := a.trimTopicComment(scanner.Text())
+		if len(tmpTopic) == 0 {
 			continue
 		}
 
 		tmpArray := strings.Split(tmpTopic, ":")
-		if len(tmpArray) == 0 {
-			continue
-		}
-
 		tmpTopic = TrimTopicPrefixNumber(tmpArray[0])
 
 		if _, ok := res[tmpTopic]; ok {
@@ -94,6 +88,7 @@ func (a *AGitTopicScheduler) preReadTopicFiles(o *Options) error {
 		}
 
 		res[tmpTopic] = index
+		index++
 	}
 
 	a.preTopics = res
@@ -262,10 +257,8 @@ func (a *AGitTopicScheduler) GetTopics(o *Options) error {
 				tmpDependIndex = -1
 			)
 
-			line := strings.TrimSpace(scanner.Text())
-
-			// Current line is code comment, just ignore it
-			if strings.HasPrefix(line, "#") {
+			line := a.trimTopicComment(scanner.Text())
+			if len(line) == 0 {
 				continue
 			}
 
@@ -359,4 +352,13 @@ func (a *AGitTopicScheduler) choiceBranch(o *Options, topicName string, localTop
 	}
 
 	return nil, 0, fmt.Errorf("BUG: branch mode invalid")
+}
+
+// trimTopicComment
+func (a *AGitTopicScheduler) trimTopicComment(line string) string {
+	if index := strings.Index(line, "#"); index > -1 {
+		line = line[:index]
+	}
+
+	return strings.TrimSpace(line)
 }
