@@ -1,4 +1,4 @@
-From 1d2e767737aa7ecea3bd8ff6558f1628538109a6 Mon Sep 17 00:00:00 2001
+From d9d72450c0e019a27b8a100a21533d67242c3a31 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Mon, 18 Jul 2022 22:21:08 +0800
 Subject: [PATCH 09/12] refs: add reflog_info to hold more fields for reflog
@@ -12,9 +12,10 @@ different from the oid we get from the lock file. Therefore, we create
 a new structure "reflog_info" to hold more custom fields for the new
 reflog entry, and add two additional extended version functions.
 
-We will use this extension in a later commit to reimplement
-"files_copy_or_rename_ref()" using "refs_update_ref_extended()" to
-create new reference in a transaction and add proper reflog entry.
+We will use this extension in a later commit to reimplement the function
+"files_copy_or_rename_ref()" by calling "refs_update_ref_extended()" to
+create a new reference in a transaction, while adding proper reflog
+entry.
 
 Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---
@@ -191,7 +192,7 @@ index eed8bc94b0..1e60507249 100644
  	trace_printf_key(&trace_refs, "}\n");
  }
 diff --git a/refs/files-backend.c b/refs/files-backend.c
-index e8d12cb343..e2eabe9d8e 100644
+index 9ec4c23a16..336384daa0 100644
 --- a/refs/files-backend.c
 +++ b/refs/files-backend.c
 @@ -2340,7 +2340,7 @@ static int split_head_update(struct ref_update *update,
@@ -212,7 +213,7 @@ index e8d12cb343..e2eabe9d8e 100644
  
  	new_update->parent_update = update;
  
-@@ -2893,9 +2893,15 @@ static int files_transaction_finish(struct ref_store *ref_store,
+@@ -2902,9 +2902,15 @@ static int files_transaction_finish(struct ref_store *ref_store,
  		    update->flags & REF_LOG_ONLY) {
  			if (files_log_ref_write(refs,
  						lock->ref_name,

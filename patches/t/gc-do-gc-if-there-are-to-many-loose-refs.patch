@@ -1,4 +1,4 @@
-From 08418d4a255548f4a4d14deafa653bab337f053a Mon Sep 17 00:00:00 2001
+From a26db9a9bc4ca7029e50a17aba9d8ff215434d90 Mon Sep 17 00:00:00 2001
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Wed, 23 Mar 2022 20:33:10 +0800
 Subject: [PATCH] gc: do gc if there are to many loose refs
@@ -12,12 +12,19 @@ To improve this, lets add a configuration "gc.autoLooseRefsLimit" which
 will also trigger automatic gc when there are more than this loose
 references.
 
+Edit:
+
+ * Jiang Xin:
+   + 2022/8/10: release buf to fix memory leak in if_too_many_loose_refs().
+   + 2022/8/10: ignore "*.lock" files when checking loose refs.
+
 Signed-off-by: Han Xin <hanxin.hx@alibaba-inc.com>
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---
- Documentation/config/gc.txt |  6 ++++++
- builtin/gc.c                | 43 ++++++++++++++++++++++++++++++++++++-
+ Documentation/config/gc.txt |  6 +++++
+ builtin/gc.c                | 45 ++++++++++++++++++++++++++++++++++++-
  t/t6500-gc.sh               | 13 +++++++++++
- 3 files changed, 61 insertions(+), 1 deletion(-)
+ 3 files changed, 63 insertions(+), 1 deletion(-)
 
 diff --git a/Documentation/config/gc.txt b/Documentation/config/gc.txt
 index c834e07991..d9cf8615d3 100644
@@ -37,7 +44,7 @@ index c834e07991..d9cf8615d3 100644
  	Make `git gc --auto` return immediately and run in background
  	if the system supports it. Default is true.
 diff --git a/builtin/gc.c b/builtin/gc.c
-index b335cffa33..e6fc989790 100644
+index b335cffa33..824845baec 100644
 --- a/builtin/gc.c
 +++ b/builtin/gc.c
 @@ -46,6 +46,7 @@ static int aggressive_depth = 50;
@@ -56,7 +63,7 @@ index b335cffa33..e6fc989790 100644
  	git_config_get_bool("gc.autodetach", &detach_auto);
  	git_config_get_expiry("gc.pruneexpire", &prune_expire);
  	git_config_get_expiry("gc.worktreepruneexpire", &prune_worktrees_expire);
-@@ -248,6 +250,45 @@ static int too_many_packs(void)
+@@ -248,6 +250,47 @@ static int too_many_packs(void)
  	return gc_auto_pack_limit < cnt;
  }
  
@@ -72,20 +79,22 @@ index b335cffa33..e6fc989790 100644
 +	while ((ent = readdir(dir)) != NULL) {
 +		if (ent->d_name[0] == '.')
 +			continue;
++		if (ends_with(ent->d_name, ".lock"))
++			continue;
 +		if (ent->d_type == DT_DIR) {
 +			strbuf_reset(&buf);
 +			strbuf_addf(&buf, "%s/%s", path, ent->d_name);
-+			if ((ret = if_too_many_loose_refs(buf.buf, count)))
-+				goto done;
-+			continue;
-+		}
-+		if (++*count > gc_auto_loose_refs_limit) {
++			ret = if_too_many_loose_refs(buf.buf, count);
++			if (ret)
++				break;
++		} else if (++*count > gc_auto_loose_refs_limit) {
 +			ret = 1;
-+			goto done;
++			break;
 +		}
 +	}
-+done:
++
 +	closedir(dir);
++	strbuf_release(&buf);
 +	return ret;
 +}
 +
@@ -102,7 +111,7 @@ index b335cffa33..e6fc989790 100644
  static uint64_t total_ram(void)
  {
  #if defined(HAVE_SYSINFO)
-@@ -389,7 +430,7 @@ static int need_to_gc(void)
+@@ -389,7 +432,7 @@ static int need_to_gc(void)
  
  		add_repack_all_option(&keep_pack);
  		string_list_clear(&keep_pack, 0);

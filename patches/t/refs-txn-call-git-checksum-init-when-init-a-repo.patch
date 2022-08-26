@@ -1,7 +1,7 @@
-From a3bc83d7c5f33d4b449ad9aefd6cde582baf1fd4 Mon Sep 17 00:00:00 2001
+From 90169932470e741aebf84f5f62e4087565f7eac0 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 9 Aug 2022 10:28:53 +0800
-Subject: [PATCH 74/75] refs-txn: call "git-checksum --init" when init a repo
+Subject: [PATCH 72/73] refs-txn: call "git-checksum --init" when init a repo
 
 When initializing a repository, call "git checksum --init" to create
 initial checksum file. This behavior can be disabled by providing config
@@ -62,7 +62,7 @@ index 546f9c595e..f304de6fa6 100644
  	return 0;
  }
 diff --git a/t/t0903-git-checksum.sh b/t/t0903-git-checksum.sh
-index cb11e78e25..fdb19e7da7 100755
+index 4a3566c136..58c9bcd91d 100755
 --- a/t/t0903-git-checksum.sh
 +++ b/t/t0903-git-checksum.sh
 @@ -135,6 +135,21 @@ test_cmp_heads_and_tags () {
@@ -107,40 +107,40 @@ index cb11e78e25..fdb19e7da7 100755
  	test_must_fail git -C bare.git checksum >actual 2>&1 &&
  	cat >expect<<-\EOF &&
  		ERROR: checksum file does not exist, please run `git-checksum --init` to create one
-@@ -300,7 +315,6 @@ test_expect_success "setup git config and test_tick" '
+@@ -300,7 +315,6 @@ test_expect_success GIT_CHECKSUM "setup git config and test_tick" '
  
- test_expect_success "setup base repository" '
+ test_expect_success GIT_CHECKSUM "setup base repository" '
  	git init base &&
 -	git -C base checksum --init &&
  	create_commits_in base A B C &&
  	git -C base checksum --verify &&
  
-@@ -312,7 +326,6 @@ test_expect_success "setup base repository" '
+@@ -312,7 +326,6 @@ test_expect_success GIT_CHECKSUM "setup base repository" '
  
- test_expect_success "update-ref: setup workdir using git-clone" '
+ test_expect_success GIT_CHECKSUM "update-ref: setup workdir using git-clone" '
  	git clone base workdir &&
 -	git -C workdir checksum --init &&
  	git -C workdir checksum --verify &&
  
  	cat >expect <<-\EOF &&
-@@ -480,7 +493,6 @@ test_expect_success "update-ref --stdin: delete refs" '
- test_expect_success "branch: setup workdir using git-fetch" '
+@@ -480,7 +493,6 @@ test_expect_success GIT_CHECKSUM "update-ref --stdin: delete refs" '
+ test_expect_success GIT_CHECKSUM "branch: setup workdir using git-fetch" '
  	rm -rf workdir &&
  	git init workdir &&
 -	git -C workdir checksum --init &&
  	git -C workdir remote add origin ../base &&
  	git -C workdir fetch origin &&
  	git -C workdir checksum --verify &&
-@@ -589,7 +601,6 @@ test_expect_success "branch: remove branches" '
- test_expect_success "tag: setup workdir using git-push" '
+@@ -589,7 +601,6 @@ test_expect_success GIT_CHECKSUM "branch: remove branches" '
+ test_expect_success GIT_CHECKSUM "tag: setup workdir using git-push" '
  	rm -rf workdir &&
  	git init workdir &&
 -	git -C workdir checksum --init &&
  	git -C workdir config receive.denyCurrentBranch ignore &&
  	git -C base push ../workdir "+refs/heads/*:refs/heads/*" &&
  	git -C workdir checksum --verify &&
-@@ -660,12 +671,10 @@ test_expect_success "tag: remove tags with mixed ref_stores" '
- test_expect_success "worktree: setup workdir using push --atomic" '
+@@ -660,12 +671,10 @@ test_expect_success GIT_CHECKSUM "tag: remove tags with mixed ref_stores" '
+ test_expect_success GIT_CHECKSUM "worktree: setup workdir using push --atomic" '
  	rm -rf workdir &&
  	git init --bare repo.git &&
 -	git -C repo.git checksum --init &&

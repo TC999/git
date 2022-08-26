@@ -1,0 +1,161 @@
+From 0e3712a2e431dcc35e33166c64096c8ed9ef4de5 Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Tue, 23 Aug 2022 13:53:19 +0800
+Subject: [PATCH 75/77] fetch-to-packed-refs: implement extended refs API for
+ files-backend
+
+When we use "git fetch", references are always written as loose
+references. When using "git-fetch" to fetch from a repository with a
+large number of references, save the references as the same large number
+of loose reference files will result in an IO bottleneck.
+
+Implement new extended APIs "files_transaction_prepare_extended" and
+"files_transaction_finish_extended" to write reference updates directly
+to packed ref-store. We will use this API in later commit to fetch a
+batch reference updates directly to packed-ref file to save performace.
+This is because fetch lots of references and save as loose references
+will slow down later git operations. Instead of call "git pack-refs"
+in another process, we can use this API to save batch reference updates
+directly to the packed-ref file.
+
+Han Xin's original implementation was based on implementations of "git
+clone" and "git pack-refs".
+
+ * Lock the packed-ref-store first and Make a batch updates for the
+   packed-ref-store, which did not provide proper old-oid for each
+   reference we updated. This cause inaccurate calling of the
+   "reference-transaction" hook.
+
+ * Prune the loose references. But the reflogs for references we
+   really want to delete were left as garbage in the repository.
+
+The new implementation resolved all above issues.
+
+Inspired-by: Han Xin <hanxin.hx@alibaba-inc.com>
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ refs/files-backend.c | 83 +++++++++++++++++++++++++++++++++-----------
+ 1 file changed, 62 insertions(+), 21 deletions(-)
+
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index c320a4a19c..e5499cf315 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -2704,28 +2704,64 @@ static int files_transaction_prepare_extended(struct ref_store *ref_store,
+ 		if (ret)
+ 			goto cleanup;
+ 
+-		if (update->flags & REF_DELETING &&
+-		    !(update->flags & REF_LOG_ONLY) &&
+-		    !(update->flags & REF_IS_PRUNING)) {
++		/*
++		 * Bypass entries with no real changes that should not make change
++		 * in the "packed-refs" file.
++		 */
++		if ((update->flags & REF_LOG_ONLY) ||
++		    (update->flags & REF_IS_PRUNING)) {
++			continue;
++		} else if (!direct_to_packed_refs) {
+ 			/*
+-			 * This reference has to be deleted from
+-			 * packed-refs if it exists there.
++			 * For normal process, only need to update packed-refs
++			 * for deleting operations.
+ 			 */
+-			if (!packed_transaction) {
+-				packed_transaction = ref_store_transaction_begin_extended(
+-						refs->packed_ref_store,
+-						transaction->hook_flags &
+-							REF_TRANSACTION_RUN_PREPARED_HOOK,
+-						err);
+-				if (!packed_transaction) {
+-					ret = TRANSACTION_GENERIC_ERROR;
+-					goto cleanup;
+-				}
++			if (!(update->flags & REF_DELETING))
++			    continue;
++		} else {
++			/*
++			 * For direct to packed-refs case, we should update the
++			 * "packed-refs" file when there are any changed refs,
++			 * including: deleted refs, new refs or changed refs.
++			 * And we should ignore other cases.
++			 */
++			if (!(update->flags & REF_DELETING) &&
++			    !(update->flags & REF_NEEDS_COMMIT))
++			    continue;
++		}
+ 
+-				backend_data->packed_transaction =
+-					packed_transaction;
++		/*
++		 * This reference has to be deleted from
++		 * packed-refs if it exists there.
++		 */
++		if (!packed_transaction) {
++			packed_transaction = ref_store_transaction_begin_extended(
++					refs->packed_ref_store,
++					transaction->hook_flags &
++						REF_TRANSACTION_RUN_PREPARED_HOOK,
++					err);
++			if (!packed_transaction) {
++				ret = TRANSACTION_GENERIC_ERROR;
++				goto cleanup;
+ 			}
+ 
++			backend_data->packed_transaction =
++				packed_transaction;
++		}
++
++		/* For normal process, add delete reference job to packed_transaction */
++		if (update->flags & REF_DELETING) {
++			ref_transaction_add_update(
++					packed_transaction, update->refname,
++					REF_HAVE_NEW | REF_NO_DEREF,
++					&update->new_oid, NULL,
++					NULL);
++		} else if (direct_to_packed_refs &&
++			   (update->flags & REF_NEEDS_COMMIT)) {
++			/*
++			 * Only save changed references (not deleting) to
++			 * packed_transaction for direct_to_packed_refs case.
++			 */
+ 			ref_transaction_add_update(
+ 					packed_transaction, update->refname,
+ 					REF_HAVE_NEW | REF_NO_DEREF,
+@@ -2862,7 +2898,6 @@ static int files_transaction_finish_extended(struct ref_store *ref_store,
+ 	struct files_transaction_backend_data *backend_data;
+ 	struct ref_transaction *packed_transaction;
+ 
+-
+ 	assert(err);
+ 
+ 	if (!transaction->nr) {
+@@ -2903,7 +2938,11 @@ static int files_transaction_finish_extended(struct ref_store *ref_store,
+ 				goto cleanup;
+ 			}
+ 		}
+-		if (update->flags & REF_NEEDS_COMMIT) {
++		/*
++		 * If direct_to_packed_refs is true, we should delete the reference
++		 * instead of commit it.
++		 */
++		if (!direct_to_packed_refs && (update->flags & REF_NEEDS_COMMIT)) {
+ 			clear_loose_ref_cache(refs);
+ 			if (commit_ref(lock)) {
+ 				strbuf_addf(err, "couldn't set '%s'", lock->ref_name);
+@@ -2956,8 +2995,10 @@ static int files_transaction_finish_extended(struct ref_store *ref_store,
+ 		struct ref_update *update = transaction->updates[i];
+ 		struct ref_lock *lock = update->backend_data;
+ 
+-		if (update->flags & REF_DELETING &&
+-		    !(update->flags & REF_LOG_ONLY)) {
++		if ((update->flags & REF_DELETING &&
++		    !(update->flags & REF_LOG_ONLY)) ||
++		    /* Remove loose reference, if we save ref directly into packed-refs */
++		    (direct_to_packed_refs && (update->flags & REF_NEEDS_COMMIT))) {
+ 			update->flags |= REF_DELETED_RMDIR;
+ 			if (!(update->type & REF_ISPACKED) ||
+ 			    update->type & REF_ISSYMREF) {
+-- 
+patchwork

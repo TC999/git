@@ -1,7 +1,7 @@
-From 80f6bff87329352650ab5df90073a81d2f2f63d8 Mon Sep 17 00:00:00 2001
+From 07da93330b3da6bd0ccac28c5a9db63fb1a1bf5c Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 23 Oct 2018 11:18:16 +0800
-Subject: [PATCH 71/75] refs-txn: use refs-txn hook to refresh last modified
+Subject: [PATCH 69/73] refs-txn: use refs-txn hook to refresh last modified
  time of a repo
 
 Add an internal function "refs_txn_post_hook()" and run it along with
@@ -70,7 +70,7 @@ index b4c0e89d36..1f86887155 100644
  #endif /* REFS_REFS_INTERNAL_H */
 diff --git a/refs/txn-post-hook.c b/refs/txn-post-hook.c
 new file mode 100644
-index 0000000000..e642ca8d3a
+index 0000000000..52b696cd70
 --- /dev/null
 +++ b/refs/txn-post-hook.c
 @@ -0,0 +1,87 @@
@@ -84,7 +84,7 @@ index 0000000000..e642ca8d3a
 +static int update_is_needed(struct ref_update *update) {
 +	if (update->flags & REF_LOG_ONLY)
 +		return 0;
-+	if (!oidcmp(&update->old_oid, &update->new_oid))
++	if (oideq(&update->old_oid, &update->new_oid))
 +		return 0;
 +	return 1;
 +}
@@ -142,7 +142,7 @@ index 0000000000..e642ca8d3a
 +		goto cleanup;
 +	}
 +
-+	if (utimes(path, NULL)) {
++	if (utime(path, NULL)) {
 +		error("fail to change mtime of %s", path);
 +		goto cleanup;
 +	}

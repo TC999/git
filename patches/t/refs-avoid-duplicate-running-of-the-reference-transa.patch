@@ -1,4 +1,4 @@
-From a01822f25da9107ba8d2982254f5f0292ebe4dd6 Mon Sep 17 00:00:00 2001
+From 1a3b1875f3d38ef72a96035c23942a6416e113cf Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 12 Jul 2022 09:21:46 +0800
 Subject: [PATCH 08/12] refs: avoid duplicate running of the
@@ -7,15 +7,16 @@ Subject: [PATCH 08/12] refs: avoid duplicate running of the
 If there are references to be deleted in a transaction, we should remove
 each reference from both loose references and the "packed-refs" file.
 The "reference-transaction" hook will run twice, once for the primary
-ref-store (loose references), and another for the second ref-store (i.e.
+ref-store (loose ref-store), and another for the second ref-store (i.e.
 packed ref-store).
 
 To avoid duplicate running of the "reference-trancaction" hook, we pass
 a special "hook-flags" parameter to initialize the second ref-store.
 The "REF_TRANSACTION_RUN_PREPARED_HOOK" bit is preserved for the
 transaction of the second ref-store because we may still want to call
-command "reference-trancaction prepared" for some pre-checks, such as
-terminate unwanted transaction for the "packed-refs" file.
+command "reference-trancaction prepared" to do some checks. E.g.: We
+can create a global lock file (such as "site.lock") to disable writing
+permissions for one or multiple repositories.
 
 The behavior of the following git commands and five testcases have been
 fixed in t1416:
@@ -28,15 +29,15 @@ fixed in t1416:
 
 Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---
- refs/files-backend.c             |  7 +++++--
- t/t1416-ref-transaction-hooks.sh | 10 +++++-----
- 2 files changed, 10 insertions(+), 7 deletions(-)
+ refs/files-backend.c             |   7 +-
+ t/t1416-ref-transaction-hooks.sh | 156 ++-----------------------------
+ 2 files changed, 15 insertions(+), 148 deletions(-)
 
 diff --git a/refs/files-backend.c b/refs/files-backend.c
-index 3be317d524..e8d12cb343 100644
+index f0947c9dca..9ec4c23a16 100644
 --- a/refs/files-backend.c
 +++ b/refs/files-backend.c
-@@ -2788,8 +2788,11 @@ static int files_transaction_prepare(struct ref_store *ref_store,
+@@ -2797,8 +2797,11 @@ static int files_transaction_prepare(struct ref_store *ref_store,
  			 * packed-refs if it exists there.
  			 */
  			if (!packed_transaction) {
@@ -51,49 +52,263 @@ index 3be317d524..e8d12cb343 100644
  					ret = TRANSACTION_GENERIC_ERROR;
  					goto cleanup;
 diff --git a/t/t1416-ref-transaction-hooks.sh b/t/t1416-ref-transaction-hooks.sh
-index 3e28dc91a0..0a7ae812a4 100755
+index b7ffc9415b..6ba7ba746c 100755
 --- a/t/t1416-ref-transaction-hooks.sh
 +++ b/t/t1416-ref-transaction-hooks.sh
-@@ -406,7 +406,7 @@ test_expect_success "update-ref: update refs already packed to .git/packed-refs"
+@@ -441,45 +441,7 @@ test_expect_success "update-ref: update refs already in packed_ref_store" '
  	test_cmp_heads_and_tags -C workdir expect
  '
  
+-# Mismatched hook output when deleting refs using "git update-refs -d":
+-#
+-#  * The "reference-transaction committed" command was executed twice,
+-#    once for packed ref-store, and once for loose ref-store.
+-#
+-#  * Unexpected execution of the "reference-transaction abort" command.
+-#
+-# The differences are as follows:
+-#
+-#     @@ -4,6 +4,8 @@
+-#      <COMMIT-A> <ZERO-OID> refs/heads/topic1
+-#      <COMMIT-A> <ZERO-OID> HEAD
+-#      ## Call hook: reference-transaction committed ##
+-#     +<ZERO-OID> <ZERO-OID> refs/heads/topic1
+-#     +## Call hook: reference-transaction committed ##
+-#      <COMMIT-A> <ZERO-OID> refs/heads/topic1
+-#      <COMMIT-A> <ZERO-OID> HEAD
+-#      ## Call hook: reference-transaction  prepared ##
+-#     @@ -11,13 +13,19 @@
+-#      ## Call hook: reference-transaction  prepared ##
+-#      <COMMIT-B> <ZERO-OID> refs/heads/topic2
+-#      ## Call hook: reference-transaction committed ##
+-#     +<ZERO-OID> <ZERO-OID> refs/heads/topic2
+-#     +## Call hook: reference-transaction committed ##
+-#      <COMMIT-B> <ZERO-OID> refs/heads/topic2
+-#      ## Call hook: reference-transaction  prepared ##
+-#      <ZERO-OID> <ZERO-OID> refs/heads/topic3
+-#      ## Call hook: reference-transaction  prepared ##
+-#      <COMMIT-C> <ZERO-OID> refs/heads/topic3
+-#      ## Call hook: reference-transaction committed ##
+-#     +<ZERO-OID> <ZERO-OID> refs/heads/topic3
+-#     +## Call hook: reference-transaction committed ##
+-#      <COMMIT-C> <ZERO-OID> refs/heads/topic3
+-#     +## Call hook: reference-transaction   aborted ##
+-#     +<ZERO-OID> <ZERO-OID> refs/heads/topic4
+-#      ## Call hook: reference-transaction  prepared ##
+-#      <COMMIT-C> <ZERO-OID> refs/heads/topic4
+-#      ## Call hook: reference-transaction committed ##
 -test_expect_failure "update-ref: remove refs with mixed ref_stores" '
 +test_expect_success "update-ref: remove refs with mixed ref_stores" '
  	test_when_finished "rm -f $HOOK_OUTPUT" &&
  
  	cat >expect <<-\EOF &&
-@@ -522,7 +522,7 @@ test_expect_success "update-ref --stdin: update refs" '
+@@ -604,27 +566,7 @@ test_expect_success "update-ref --stdin: update refs" '
  	test_cmp_heads_and_tags -C workdir expect
  '
  
+-# Mismatched hook output when deleting refs using "git update-refs
+-# --stdin":
+-#
+-#  * The "reference-transaction committed" command was executed twice,
+-#    once for packed ref-store, and once for loose ref-store.
+-#
+-# The differences are as follows:
+-#
+-#     @@ -10,6 +10,11 @@
+-#      <COMMIT-C> <ZERO-OID> refs/heads/topic4
+-#      <COMMIT-A> <ZERO-OID> HEAD
+-#      ## Call hook: reference-transaction committed ##
+-#     +<ZERO-OID> <ZERO-OID> refs/heads/topic1
+-#     +<ZERO-OID> <ZERO-OID> refs/heads/topic2
+-#     +<ZERO-OID> <ZERO-OID> refs/heads/topic3
+-#     +<ZERO-OID> <ZERO-OID> refs/heads/topic4
+-#     +## Call hook: reference-transaction committed ##
+-#      <COMMIT-A> <ZERO-OID> refs/heads/topic1
+-#      <COMMIT-B> <ZERO-OID> refs/heads/topic2
+-#      <COMMIT-C> <ZERO-OID> refs/heads/topic3
 -test_expect_failure "update-ref --stdin: delete refs" '
 +test_expect_success "update-ref --stdin: delete refs" '
  	test_when_finished "rm -f $HOOK_OUTPUT" &&
  
  	cat >expect <<-\EOF &&
-@@ -1022,7 +1022,7 @@ test_expect_success "worktree: topic2: merge" '
+@@ -813,24 +755,16 @@ test_expect_failure "branch: copy branches" '
+ #  * The "reference-transaction committed" command was not executed
+ #    for the target branch.
+ #
+-#  * Unexpected execution of the "reference-transaction abort" command.
+-#
+ # The differences are as follows:
+ #
+-#     @@ -1,16 +1,12 @@
+-#     +## Call hook: reference-transaction   aborted ##
+-#     +<ZERO-OID> <ZERO-OID> refs/heads/topic4
+-#      ## Call hook: reference-transaction  prepared ##
+-#      <COMMIT-B> <ZERO-OID> refs/heads/topic4
++#     @@ -3,14 +3,6 @@
+ #      ## Call hook: reference-transaction committed ##
+ #      <COMMIT-B> <ZERO-OID> refs/heads/topic4
+-#     -## Call hook: reference-transaction  prepared ##
++#      ## Call hook: reference-transaction  prepared ##
+ #     -<ZERO-OID> <COMMIT-B> refs/heads/topic6
+ #     -## Call hook: reference-transaction committed ##
+ #     -<ZERO-OID> <COMMIT-B> refs/heads/topic6
+-#     +## Call hook: reference-transaction   aborted ##
+-#     +<ZERO-OID> <ZERO-OID> refs/heads/topic5
+-#      ## Call hook: reference-transaction  prepared ##
++#     -## Call hook: reference-transaction  prepared ##
+ #      <COMMIT-C> <ZERO-OID> refs/heads/topic5
+ #      ## Call hook: reference-transaction committed ##
+ #      <COMMIT-C> <ZERO-OID> refs/heads/topic5
+@@ -886,11 +820,9 @@ test_expect_failure "branch: rename branches" '
+ #    and the "reference-transaction committed" command was executed
+ #    redundantly on the packed-ref-store.
+ #
+-#  * Unexpected execution of the "reference-transaction abort" command.
+-#
+ # The differences are as follows:
+ #
+-#     @@ -2,11 +2,25 @@
++#     @@ -2,11 +2,19 @@
+ #      <ZERO-OID> <ZERO-OID> refs/heads/topic1
+ #      <ZERO-OID> <ZERO-OID> refs/heads/topic2
+ #      <ZERO-OID> <ZERO-OID> refs/heads/topic3
+@@ -898,14 +830,10 @@ test_expect_failure "branch: rename branches" '
+ #     +<ZERO-OID> <ZERO-OID> refs/heads/topic1
+ #     +<ZERO-OID> <ZERO-OID> refs/heads/topic2
+ #     +<ZERO-OID> <ZERO-OID> refs/heads/topic3
+-#     +## Call hook: reference-transaction   aborted ##
+-#     +<ZERO-OID> <ZERO-OID> refs/heads/topic1
+ #     +## Call hook: reference-transaction  prepared ##
+ #     +<ZERO-OID> <ZERO-OID> refs/heads/topic1
+ #     +## Call hook: reference-transaction committed ##
+ #     +<ZERO-OID> <ZERO-OID> refs/heads/topic1
+-#     +## Call hook: reference-transaction   aborted ##
+-#     +<ZERO-OID> <ZERO-OID> refs/heads/topic2
+ #      ## Call hook: reference-transaction  prepared ##
+ #     -<COMMIT-A> <ZERO-OID> refs/heads/topic1
+ #      <COMMIT-B> <ZERO-OID> refs/heads/topic2
+@@ -913,8 +841,6 @@ test_expect_failure "branch: rename branches" '
+ #      ## Call hook: reference-transaction committed ##
+ #     -<COMMIT-A> <ZERO-OID> refs/heads/topic1
+ #      <COMMIT-B> <ZERO-OID> refs/heads/topic2
+-#     +## Call hook: reference-transaction   aborted ##
+-#     +<ZERO-OID> <ZERO-OID> refs/heads/topic3
+ #     +## Call hook: reference-transaction  prepared ##
+ #     +<COMMIT-C> <ZERO-OID> refs/heads/topic3
+ #     +## Call hook: reference-transaction committed ##
+@@ -1055,11 +981,9 @@ test_expect_success "tag: update refs to create loose refs" '
+ #    and the "reference-transaction committed" command was executed
+ #    redundantly on the packed-ref-store.
+ #
+-#  * Unexpected execution of the "reference-transaction abort" command.
+-#
+ # The differences are as follows:
+ #
+-#     @@ -2,11 +2,25 @@
++#     @@ -2,11 +2,19 @@
+ #      <ZERO-OID> <ZERO-OID> refs/tags/v1
+ #      <ZERO-OID> <ZERO-OID> refs/tags/v2
+ #      <ZERO-OID> <ZERO-OID> refs/tags/v3
+@@ -1067,14 +991,10 @@ test_expect_success "tag: update refs to create loose refs" '
+ #     +<ZERO-OID> <ZERO-OID> refs/tags/v1
+ #     +<ZERO-OID> <ZERO-OID> refs/tags/v2
+ #     +<ZERO-OID> <ZERO-OID> refs/tags/v3
+-#     +## Call hook: reference-transaction   aborted ##
+-#     +<ZERO-OID> <ZERO-OID> refs/tags/v1
+ #     +## Call hook: reference-transaction  prepared ##
+ #     +<ZERO-OID> <ZERO-OID> refs/tags/v1
+ #     +## Call hook: reference-transaction committed ##
+ #     +<ZERO-OID> <ZERO-OID> refs/tags/v1
+-#     +## Call hook: reference-transaction   aborted ##
+-#     +<ZERO-OID> <ZERO-OID> refs/tags/v2
+ #      ## Call hook: reference-transaction  prepared ##
+ #     -<COMMIT-A> <ZERO-OID> refs/tags/v1
+ #      <COMMIT-B> <ZERO-OID> refs/tags/v2
+@@ -1082,8 +1002,6 @@ test_expect_success "tag: update refs to create loose refs" '
+ #      ## Call hook: reference-transaction committed ##
+ #     -<COMMIT-A> <ZERO-OID> refs/tags/v1
+ #      <COMMIT-B> <ZERO-OID> refs/tags/v2
+-#     +## Call hook: reference-transaction   aborted ##
+-#     +<ZERO-OID> <ZERO-OID> refs/tags/v3
+ #     +## Call hook: reference-transaction  prepared ##
+ #     +<COMMIT-C> <ZERO-OID> refs/tags/v3
+ #     +## Call hook: reference-transaction committed ##
+@@ -1232,22 +1150,7 @@ test_expect_success "worktree: topic2: merge" '
  	test_cmp_heads_and_tags -C workdir expect
  '
  
+-# Mismatched hook output for git-cherry-pick:
+-#
+-#  * Unexpected execution of the "reference-transaction abort" command.
+-#
+-# The differences are as follows:
+-#
+-#     @@ -12,6 +12,8 @@
+-#      ## Call hook: reference-transaction committed ##
+-#      <COMMIT-A> <COMMIT-F> HEAD
+-#      <COMMIT-A> <COMMIT-F> refs/heads/topic3
+-#     +## Call hook: reference-transaction   aborted ##
+-#     +<ZERO-OID> <ZERO-OID> CHERRY_PICK_HEAD
+-#      ## Call hook: reference-transaction  prepared ##
+-#      <COMMIT-C> <ZERO-OID> CHERRY_PICK_HEAD
+-#      ## Call hook: reference-transaction committed ##
 -test_expect_failure "worktree: topic3: cherry-pick" '
 +test_expect_success "worktree: topic3: cherry-pick" '
  	test_when_finished "rm -f $HOOK_OUTPUT" &&
  
  	cat >expect <<-\EOF &&
-@@ -1066,7 +1066,7 @@ test_expect_failure "worktree: topic3: cherry-pick" '
+@@ -1291,31 +1194,7 @@ test_expect_failure "worktree: topic3: cherry-pick" '
  	test_cmp_heads_and_tags -C workdir expect
  '
  
+-# Mismatched hook output for git-rebase:
+-#
+-#  * Unexpected execution of the "reference-transaction abort" command.
+-#
+-# The differences are as follows:
+-#
+-#     @@ -6,6 +6,8 @@
+-#      <COMMIT-G> <COMMIT-C> HEAD
+-#      ## Call hook: reference-transaction committed ##
+-#      <COMMIT-G> <COMMIT-C> HEAD
+-#     +## Call hook: reference-transaction   aborted ##
+-#     +<ZERO-OID> <ZERO-OID> REBASE_HEAD
+-#      ## Call hook: reference-transaction  prepared ##
+-#      <ZERO-OID> <ZERO-OID> REBASE_HEAD
+-#      ## Call hook: reference-transaction committed ##
+-#     @@ -18,6 +20,8 @@
+-#      <COMMIT-C> <COMMIT-H> HEAD
+-#      ## Call hook: reference-transaction committed ##
+-#      <COMMIT-C> <COMMIT-H> HEAD
+-#     +## Call hook: reference-transaction   aborted ##
+-#     +<ZERO-OID> <ZERO-OID> CHERRY_PICK_HEAD
+-#      ## Call hook: reference-transaction  prepared ##
+-#      <COMMIT-G> <ZERO-OID> CHERRY_PICK_HEAD
+-#      ## Call hook: reference-transaction committed ##
 -test_expect_failure "worktree: topic4: rebase" '
 +test_expect_success "worktree: topic4: rebase" '
  	test_when_finished "rm -f $HOOK_OUTPUT" &&
  
  	cat >expect <<-\EOF &&
-@@ -1118,7 +1118,7 @@ test_expect_failure "worktree: topic4: rebase" '
+@@ -1367,22 +1246,7 @@ test_expect_failure "worktree: topic4: rebase" '
  	test_cmp_heads_and_tags -C workdir expect
  '
  
+-# Mismatched hook output for git-revert:
+-#
+-#  * Unexpected execution of the "reference-transaction abort" command.
+-#
+-# The differences are as follows:
+-#
+-#     @@ -8,6 +8,8 @@
+-#      ## Call hook: reference-transaction committed ##
+-#      <COMMIT-C> <COMMIT-I> HEAD
+-#      <COMMIT-C> <COMMIT-I> refs/heads/topic5
+-#     +## Call hook: reference-transaction   aborted ##
+-#     +<ZERO-OID> <ZERO-OID> CHERRY_PICK_HEAD
+-#      ## Call hook: reference-transaction  prepared ##
+-#      <ZERO-OID> <ZERO-OID> CHERRY_PICK_HEAD
+-#      ## Call hook: reference-transaction committed ##
 -test_expect_failure "worktree: topic5: revert" '
 +test_expect_success "worktree: topic5: revert" '
  	test_when_finished "rm -f $HOOK_OUTPUT" &&

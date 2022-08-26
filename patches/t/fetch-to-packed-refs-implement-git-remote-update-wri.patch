@@ -1,7 +1,7 @@
-From 02c1a7fdbaf7835e7691d1f983dfd3860c50ba4e Mon Sep 17 00:00:00 2001
+From ea256395bd0f28dd4485523fe512d8fbf2d317fd Mon Sep 17 00:00:00 2001
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Thu, 6 Jan 2022 18:03:21 +0800
-Subject: [PATCH 64/65] fetch-to-packed-refs: implement "git-remote update
+Subject: [PATCH 77/77] fetch-to-packed-refs: implement "git-remote update
  --write-packed-refs"
 
 Add new option "--write-packed-refs" to "git-remote update".
@@ -15,8 +15,8 @@ Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---
  Documentation/git-remote.txt               |   2 +
  builtin/remote.c                           |   7 +
- t/t5594-remote-update-write-packed-refs.sh | 241 +++++++++++++++++++++
- 3 files changed, 250 insertions(+)
+ t/t5594-remote-update-write-packed-refs.sh | 298 +++++++++++++++++++++
+ 3 files changed, 307 insertions(+)
  create mode 100755 t/t5594-remote-update-write-packed-refs.sh
 
 diff --git a/Documentation/git-remote.txt b/Documentation/git-remote.txt
@@ -62,10 +62,10 @@ index 5f4cde9d78..a8d28e1436 100644
  	strvec_push(&fetch_argv, "--multiple");
 diff --git a/t/t5594-remote-update-write-packed-refs.sh b/t/t5594-remote-update-write-packed-refs.sh
 new file mode 100755
-index 0000000000..75ebaa0c29
+index 0000000000..7aac04e065
 --- /dev/null
 +++ b/t/t5594-remote-update-write-packed-refs.sh
-@@ -0,0 +1,241 @@
+@@ -0,0 +1,298 @@
 +#!/bin/sh
 +# Copyright (c) 2006, Junio C Hamano.
 +
@@ -74,8 +74,14 @@ index 0000000000..75ebaa0c29
 +
 +GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 +export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
++checksum=info/checksum
 +
 +. ./test-lib.sh
++
++if type git-checksum
++then
++	test_set_prereq GIT_CHECKSUM
++fi
 +
 +test_commit_setvar () {
 +	amend=
@@ -218,6 +224,40 @@ index 0000000000..75ebaa0c29
 +	test_line_count = $EXPECTED_COUNT actual
 +}
 +
++test_loose_refs_count () {
++	DIR="$1/refs" &&
++	EXPECTED_COUNT="$2" &&
++	test_path_is_dir "$DIR" &&
++	find "$DIR" -type f >actual &&
++	test_line_count = $EXPECTED_COUNT actual
++}
++
++test_verify_checksum () {
++	local indir= &&
++	while test $# != 0
++	do
++		case "$1" in
++		-C)
++			indir="$2" &&
++			shift
++			;;
++		*)
++			break
++			;;
++		esac &&
++		shift
++	done &&
++	indir=${indir:+"$indir"/} &&
++	test_path_is_file "${indir:-.}/$checksum" &&
++	if ! git ${indir:+ -C "$indir"} checksum --verify
++	then
++		die "Mismatched git checksum"
++	fi
++}
++
++
++###############################################################################
++
 +# workdir:
 +#
 +#   * main (C)
@@ -245,7 +285,7 @@ index 0000000000..75ebaa0c29
 +#     branch-B (B, tag-B)
 +#     branch-C (C, tag-C)
 +#
-+test_expect_success 'test fetch into loose objects' '
++test_expect_success 'fetch as loose refs' '
 +	git -C dest.git remote update &&
 +	test_path_is_missing dest.git/packed-refs &&
 +	cat >expect <<-EOF &&
@@ -261,6 +301,10 @@ index 0000000000..75ebaa0c29
 +	git -C dest.git show-ref --head |
 +		make_user_friendly_and_stable_output >actual &&
 +	test_cmp expect actual
++'
++
++test_expect_success GIT_CHECKSUM "fetch as loose refs: check git-checksum" '
++	test_verify_checksum -C dest.git
 +'
 +
 +# workdir:
@@ -289,21 +333,34 @@ index 0000000000..75ebaa0c29
 +	echo "$B refs/heads/branch-A" >dest.git/packed-refs
 +'
 +
-+test_expect_success 'test fetch with --write-packed-refs' '
++test_expect_success 'remote update --write-packed-refs' '
 +	git -C dest.git \
 +		remote update --write-packed-refs --prune &&
-+	assert_no_loose &&
++
++	test_loose_refs_count dest.git 4 &&
 +	cat >expect <<-EOF &&
 +	# pack-refs with: peeled fully-peeled sorted
++	<COMMIT-B> refs/heads/branch-A
++	<COMMIT-D> refs/heads/branch-C
++	EOF
++	cat dest.git/packed-refs |
++		make_user_friendly_and_stable_output >actual &&
++	test_cmp expect actual &&
++
++	cat >expect <<-EOF &&
 +	<COMMIT-A> refs/heads/branch-A
 +	<COMMIT-D> refs/heads/branch-C
 +	<COMMIT-A> refs/tags/tag-A
 +	<COMMIT-B> refs/tags/tag-B
 +	<COMMIT-C> refs/tags/tag-C
 +	EOF
-+	cat dest.git/packed-refs |
++	git -C dest.git show-ref --head |
 +		make_user_friendly_and_stable_output >actual &&
 +	test_cmp expect actual
++'
++
++test_expect_success GIT_CHECKSUM "remote update --write-packed-refs: check git-checksum" '
++	test_verify_checksum -C dest.git
 +'
 +
 +test_done

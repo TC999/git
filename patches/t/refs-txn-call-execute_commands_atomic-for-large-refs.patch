@@ -1,7 +1,7 @@
-From 04001f70280b1accd8c00f2ad4cab9a53f2e558b Mon Sep 17 00:00:00 2001
+From b246287d68a2754d57b85a77361eb16c1fd8a8c6 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Thu, 4 Aug 2022 14:07:22 +0800
-Subject: [PATCH 75/75] refs-txn: call execute_commands_atomic for large
+Subject: [PATCH 73/73] refs-txn: call execute_commands_atomic for large
  refs-txn
 
 If there are too many updates for refs, call "execute_commands_atomic()"

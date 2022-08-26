@@ -1,7 +1,7 @@
-From 49e9f3716811c544f2ec98b9b603cd8669ae64b6 Mon Sep 17 00:00:00 2001
+From 74cac43dfac16f41432a6b91d82a47d9b88f08a1 Mon Sep 17 00:00:00 2001
 From: Xu Ziyang <yunhuai.xzy@alibaba-inc.com>
 Date: Mon, 18 Oct 2021 17:16:16 +0800
-Subject: [PATCH 59/61] pre-send-pack: new hook to send notifications before
+Subject: [PATCH 58/60] pre-send-pack: new hook to send notifications before
  sending pack
 
 In order to send notifications when a user is cloning the repository,
@@ -26,15 +26,13 @@ arugments or even typos in arguments. E.g.:
                   --depth=<NUM>
 
 Reviewed-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
-Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Signed-off-by: Xu Ziyang <yunhuai.xzy@alibaba-inc.com>
-Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---
- upload-pack.c | 41 +++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 41 insertions(+)
+ upload-pack.c | 42 ++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 42 insertions(+)
 
 diff --git a/upload-pack.c b/upload-pack.c
-index 3a851b3606..14e0899818 100644
+index 3a851b3606..2c95c982bc 100644
 --- a/upload-pack.c
 +++ b/upload-pack.c
 @@ -14,6 +14,7 @@
@@ -45,7 +43,7 @@ index 3a851b3606..14e0899818 100644
  #include "connect.h"
  #include "sigchain.h"
  #include "version.h"
-@@ -271,6 +272,43 @@ static int relay_pack_data(int pack_objects_out, struct output_state *os,
+@@ -271,6 +272,44 @@ static int relay_pack_data(int pack_objects_out, struct output_state *os,
  	return readsz;
  }
  
@@ -62,7 +60,8 @@ index 3a851b3606..14e0899818 100644
 +
 +	strvec_push(&proc.args, hook);
 +	strvec_pushf(&proc.args, "--have=%d", pack_data->have_obj.nr);
-+	strvec_pushf(&proc.args, "--filter=%" PRIuMAX, pack_data->filter_options.filter_spec.nr);
++	strvec_pushf(&proc.args, "--filter=%" PRIuMAX,
++		     (uintmax_t)pack_data->filter_options.filter_spec.nr);
 +	strvec_pushf(&proc.args, "--depth=%d", pack_data->depth);
 +
 +	proc.stdout_to_stderr = 1;
@@ -89,7 +88,7 @@ index 3a851b3606..14e0899818 100644
  static void create_pack_file(struct upload_pack_data *pack_data,
  			     const struct string_list *uri_protocols)
  {
-@@ -325,6 +363,9 @@ static void create_pack_file(struct upload_pack_data *pack_data,
+@@ -325,6 +364,9 @@ static void create_pack_file(struct upload_pack_data *pack_data,
  	pack_objects.err = -1;
  	pack_objects.clean_on_exit = 1;
  

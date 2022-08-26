@@ -1,12 +1,12 @@
-From 9b444d7a7d45278b557730f1702c644eea89ee05 Mon Sep 17 00:00:00 2001
+From b3e31103c4c449544ac836b2575640d40c3ca5b4 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 12 Jul 2022 09:06:44 +0800
 Subject: [PATCH 07/12] refs: do not run transaction hook for git-pack-refs
 
-git-pack-refs will call "files_pack_refs()" to pack loose references
-into the "packed-refs" file, and there are no real changes to the
-repository. Therefore, by initializing a transaction with an empty
-"hook_flags" field, the "reference-transaction" hook will not run.
+The git-pack-refs command will call "files_pack_refs()" to pack loose
+references into the "packed-refs" file, and there are no real changes
+to the repository. Therefore, by initializing a transaction with an
+empty "hook_flags" field, the "reference-transaction" hook will not run.
 
 The "prune_refs()" and "prune_ref()" functions are called from
 "file_pack_refs()", and they are used to prune loose refereces which
@@ -23,11 +23,11 @@ fixed in t1416:
 Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---
  refs/files-backend.c             | 10 ++++++++--
- t/t1416-ref-transaction-hooks.sh |  6 +++---
- 2 files changed, 11 insertions(+), 5 deletions(-)
+ t/t1416-ref-transaction-hooks.sh | 12 +++---------
+ 2 files changed, 11 insertions(+), 11 deletions(-)
 
 diff --git a/refs/files-backend.c b/refs/files-backend.c
-index 957ebe08c0..3be317d524 100644
+index 7c1c25a25c..f0947c9dca 100644
 --- a/refs/files-backend.c
 +++ b/refs/files-backend.c
 @@ -1136,7 +1136,8 @@ static void prune_ref(struct files_ref_store *refs, struct ref_to_prune *r)
@@ -55,33 +55,39 @@ index 957ebe08c0..3be317d524 100644
  		return -1;
  
 diff --git a/t/t1416-ref-transaction-hooks.sh b/t/t1416-ref-transaction-hooks.sh
-index 2eddf3f301..3e28dc91a0 100755
+index 1ae601a73d..b7ffc9415b 100755
 --- a/t/t1416-ref-transaction-hooks.sh
 +++ b/t/t1416-ref-transaction-hooks.sh
-@@ -357,7 +357,7 @@ test_expect_success "update-ref: update HEAD, a symbolic-ref" '
+@@ -392,9 +392,7 @@ test_expect_success "update-ref: update HEAD" '
  	test_cmp_heads_and_tags -C workdir expect
  '
  
--test_expect_failure "update-ref: call git-pack-refs to create packed_ref_store" '
-+test_expect_success "update-ref: call git-pack-refs to create packed_ref_store" '
+-# Failed because the reference-transaction hook was executed even
+-# though no refs were changed by running git-pack-refs.
+-test_expect_failure "update-ref: prepare packed_ref_store using pack-refs" '
++test_expect_success "update-ref: prepare packed_ref_store using pack-refs" '
  	test_when_finished "rm -f $HOOK_OUTPUT" &&
  	git -C workdir pack-refs --all &&
  	test_path_is_file workdir/.git/packed-refs &&
-@@ -631,7 +631,7 @@ test_expect_success "branch: create new branches" '
+@@ -737,9 +735,7 @@ test_expect_success "branch: create new branches" '
  	test_cmp_heads_and_tags -C workdir expect
  '
  
--test_expect_failure "branch: call git-gc to create packed_ref_store" '
-+test_expect_success "branch: call git-gc to create packed_ref_store" '
+-# Failed because the reference-transaction hook was executed even
+-# though no refs were changed by running git-gc.
+-test_expect_failure "branch: prepare packed_ref_store using gc" '
++test_expect_success "branch: prepare packed_ref_store using gc" '
  	test_when_finished "rm -f $HOOK_OUTPUT" &&
  	git -C workdir gc &&
  	test_path_is_file workdir/.git/packed-refs &&
-@@ -834,7 +834,7 @@ test_expect_success "tag: create new tags" '
+@@ -1014,9 +1010,7 @@ test_expect_success "tag: create new tags" '
  	test_cmp_heads_and_tags -C workdir expect
  '
  
--test_expect_failure "tag: call git-pack-refs to create packed_ref_store" '
-+test_expect_success "tag: call git-pack-refs to create packed_ref_store" '
+-# Failed because the reference-transaction hook was executed even
+-# though no refs were changed by running git-pack-refs.
+-test_expect_failure "tag: prepare packed_ref_store using pack-refs" '
++test_expect_success "tag: prepare packed_ref_store using pack-refs" '
  	test_when_finished "rm -f $HOOK_OUTPUT" &&
  	git -C workdir pack-refs --all &&
  	test_path_is_file workdir/.git/packed-refs &&

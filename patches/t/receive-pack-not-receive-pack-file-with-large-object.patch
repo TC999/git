@@ -1,7 +1,7 @@
 From f210528100564c1c0cfb62200cdb55de8e0a68ff Mon Sep 17 00:00:00 2001
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Thu, 30 Sep 2021 10:58:12 +0800
-Subject: [PATCH 55/57] receive-pack: not receive pack file with large object
+Subject: [PATCH 54/56] receive-pack: not receive pack file with large object
 
 In addition to using 'receive.maxInputSize' to limit the overall size
 of the received packfile, a new config variable

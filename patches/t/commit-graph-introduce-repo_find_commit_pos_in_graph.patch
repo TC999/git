@@ -1,0 +1,84 @@
+From 5822e2df1093e73eed24e7b3752aa587cf6968ee Mon Sep 17 00:00:00 2001
+From: Taylor Blau <me@ttaylorr.com>
+Date: Tue, 12 Jul 2022 19:10:31 -0400
+Subject: [PATCH 65/66] commit-graph: introduce
+ `repo_find_commit_pos_in_graph()`
+
+Low-level callers in systems that are adjacent to the commit-graph (like
+the changed-path Bloom filter code) could benefit from being able to
+call a function like `parse_commit_in_graph()` without modifying the
+corresponding commit slab data.
+
+This is useful in contexts where that slab data is being used to prepare
+for an upcoming commit-graph write, where Git must be careful to avoid
+clobbering any of that data during a read operation.
+
+Introduce a low-level variant of `parse_commit_in_graph()` which returns
+the graph position of a given commit only, without modifying any of the
+slab data.
+
+Signed-off-by: Taylor Blau <me@ttaylorr.com>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+---
+ commit-graph.c | 12 +++++++++---
+ commit-graph.h | 15 +++++++++++++++
+ 2 files changed, 24 insertions(+), 3 deletions(-)
+
+diff --git a/commit-graph.c b/commit-graph.c
+index 2b52818731..6ad4d1817a 100644
+--- a/commit-graph.c
++++ b/commit-graph.c
+@@ -898,6 +898,14 @@ static int find_commit_pos_in_graph(struct commit *item, struct commit_graph *g,
+ 	}
+ }
+ 
++int repo_find_commit_pos_in_graph(struct repository *r, struct commit *c,
++				  uint32_t *pos)
++{
++	if (!prepare_commit_graph(r))
++		return 0;
++	return find_commit_pos_in_graph(c, r->objects->commit_graph, pos);
++}
++
+ struct commit *lookup_commit_in_graph(struct repository *repo, const struct object_id *id)
+ {
+ 	struct commit *commit;
+@@ -955,9 +963,7 @@ int parse_commit_in_graph(struct repository *r, struct commit *item)
+ void load_commit_graph_info(struct repository *r, struct commit *item)
+ {
+ 	uint32_t pos;
+-	if (!prepare_commit_graph(r))
+-		return;
+-	if (find_commit_pos_in_graph(item, r->objects->commit_graph, &pos))
++	if (repo_find_commit_pos_in_graph(r, item, &pos))
+ 		fill_commit_graph_info(item, r->objects->commit_graph, pos);
+ }
+ 
+diff --git a/commit-graph.h b/commit-graph.h
+index 2e3ac35237..f23b9e9026 100644
+--- a/commit-graph.h
++++ b/commit-graph.h
+@@ -40,6 +40,21 @@ int open_commit_graph(const char *graph_file, int *fd, struct stat *st);
+  */
+ int parse_commit_in_graph(struct repository *r, struct commit *item);
+ 
++/*
++ * Fills `*pos` with the graph position of `c`, and returns 1 if `c` is
++ * found in the commit-graph belonging to `r`, or 0 otherwise.
++ * Initializes the commit-graph belonging to `r` if it hasn't been
++ * already.
++ *
++ * Note: this is a low-level helper that does not alter any slab data
++ * associated with `c`. Useful in circumstances where the slab data is
++ * already being modified (e.g., writing the commit-graph itself).
++ *
++ * In most cases, callers should use `parse_commit_in_graph()` instead.
++ */
++int repo_find_commit_pos_in_graph(struct repository *r, struct commit *c,
++				  uint32_t *pos);
++
+ /*
+  * Look up the given commit ID in the commit-graph. This will only return a
+  * commit if the ID exists both in the graph and in the object database such
+-- 
+patchwork

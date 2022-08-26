@@ -1,11 +1,11 @@
-From c25fbb66c88120f5c1503fe015a9b83e65fdd0f8 Mon Sep 17 00:00:00 2001
+From c4b712f720d7c7c0adf9be12b9d2ec1d345d048a Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Wed, 20 Jul 2022 16:32:53 +0800
 Subject: [PATCH 10/12] refs: get error message via refs_update_ref_extended()
 
-The last parameter for "refs_update_ref_extended()" is an enum
-"action_on_err", and we can not use this function to get the specific
-error message. Extend this function again to get error message.
+The last parameter of the function "refs_update_ref()" is an enum
+"action_on_err", and we can not use this function to get the error
+message. Extend this function to get error message.
 
 We will use the function "refs_update_ref_extended()" to reimplement
 the function "files_copy_or_rename_ref()" in later commit.

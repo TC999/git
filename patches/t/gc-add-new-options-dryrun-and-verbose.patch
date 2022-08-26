@@ -1,4 +1,4 @@
-From 68b113d5252b5c229b02ced6ae299357d8a45cd5 Mon Sep 17 00:00:00 2001
+From 4843e879ac55a8fe32e2f91c4ec6cf35df2fb249 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Thu, 9 Jul 2020 15:09:46 +0800
 Subject: [PATCH 24/25] gc: add new options --dryrun and --verbose
@@ -11,7 +11,7 @@ Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
  create mode 100755 t/t6502-git-gc-dryrun.sh
 
 diff --git a/builtin/gc.c b/builtin/gc.c
-index b335cffa33..99af092620 100644
+index b335cffa33..624c520530 100644
 --- a/builtin/gc.c
 +++ b/builtin/gc.c
 @@ -47,6 +47,8 @@ static int aggressive_window = 250;
@@ -146,7 +146,7 @@ index b335cffa33..99af092620 100644
 +				if (verbose)
 +					fprintf(stderr,
 +						"note: too many packs to keep: %" PRIuMAX " > %d, clean and use largest one to keep.\n",
-+						keep_pack.nr, gc_auto_pack_limit);
++						(uintmax_t)keep_pack.nr, gc_auto_pack_limit);
  				big_pack_threshold = 0;
  				string_list_clear(&keep_pack, 0);
  				find_base_packs(&keep_pack, 0);

@@ -1,0 +1,82 @@
+From 4a0c21f929d45294f886f243b40ed82a8a45ec5e Mon Sep 17 00:00:00 2001
+From: Xing Xin <moweng.xx@alibaba-inc.com>
+Date: Fri, 12 Aug 2022 14:43:06 +0800
+Subject: [PATCH] upload-pack: Add pack-objects hook agit clause
+
+If uploadpack.packObjectsHookAddAGitClause=true is configured, only
+fetches with no haves sent by client can trigger pack-objects hook.
+
+This extra constraint is designed for agit pack-objects cache to filter
+out fetches that are usually lighter and hard to reuse. Fetches in CI is
+the core scenario we want to help, adding this constraint can reduce
+disk space usage and improve cache hit rate.
+
+Signed-off-by: Xing Xin <moweng.xx@alibaba-inc.com>
+---
+ t/t5544-pack-objects-hook.sh | 19 +++++++++++++++++++
+ upload-pack.c                |  8 +++++++-
+ 2 files changed, 26 insertions(+), 1 deletion(-)
+
+diff --git a/t/t5544-pack-objects-hook.sh b/t/t5544-pack-objects-hook.sh
+index dd5f44d986..5ce6f4b746 100755
+--- a/t/t5544-pack-objects-hook.sh
++++ b/t/t5544-pack-objects-hook.sh
+@@ -69,4 +69,23 @@ test_expect_success 'hook works with partial clone' '
+ 	! grep blob types
+ '
+ 
++test_expect_success 'hook run with agit clause and no haves' '
++	clear_hook_results &&
++	test_config_global uploadpack.packObjectsHook "./hook" &&
++	test_config_global uploadpack.packObjectsHookAddAGitClause true &&
++	git clone --no-local . dst.git 2>stderr &&
++	grep "hook running" stderr
++'
++
++test_expect_success 'hook dose not run with agit clause and haves' '
++	clear_hook_results &&
++	test_config_global uploadpack.packObjectsHook "./hook" &&
++	test_config_global uploadpack.packObjectsHookAddAGitClause true &&
++	git clone --no-local --bare . dst.git 2>stderr &&
++	grep "hook running" stderr &&
++	test_commit three &&
++	git --git-dir dst.git fetch origin +refs/*:refs/* 2>stderr &&
++	! grep "hook running" stderr
++'
++
+ test_done
+diff --git a/upload-pack.c b/upload-pack.c
+index 320328ba03..0635e309e4 100644
+--- a/upload-pack.c
++++ b/upload-pack.c
+@@ -94,6 +94,7 @@ struct upload_pack_data {
+ 	struct packet_writer writer;
+ 
+ 	const char *pack_objects_hook;
++	unsigned agit_clause_attached : 1;
+ 
+ 	unsigned stateless_rpc : 1;				/* v0 only */
+ 	unsigned no_done : 1;					/* v0 only */
+@@ -287,7 +288,9 @@ static void create_pack_file(struct upload_pack_data *pack_data,
+ 	if (wait_for_avail_loadavg(pack_data->use_sideband))
+ 		die("failed to wait_for_avail_loadavg");
+ 
+-	if (!pack_data->pack_objects_hook)
++	if (!pack_data->pack_objects_hook ||
++	    (pack_data->agit_clause_attached &&
++	     pack_data->have_obj.nr > 0))
+ 		pack_objects.git_cmd = 1;
+ 	else {
+ 		strvec_push(&pack_objects.args, pack_data->pack_objects_hook);
+@@ -1329,6 +1332,9 @@ static int upload_pack_config(const char *var, const char *value, void *cb_data)
+ 	    current_config_scope() != CONFIG_SCOPE_WORKTREE) {
+ 		if (!strcmp("uploadpack.packobjectshook", var))
+ 			return git_config_string(&data->pack_objects_hook, var, value);
++		else if (!strcmp("uploadpack.packobjectshookaddagitclause", var)) {
++			data->agit_clause_attached = git_config_bool(var, value);
++		}
+ 	}
+ 
+ 	if (parse_object_filter_config(var, value, data) < 0)
+-- 
+patchwork

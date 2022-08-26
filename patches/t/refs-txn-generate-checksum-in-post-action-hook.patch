@@ -1,7 +1,7 @@
-From 4323df04080d0dc1ce97f3582b0653896c7ff335 Mon Sep 17 00:00:00 2001
+From 4da0cee354333eff281a9696642e2b78620197fa Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Mon, 23 Dec 2019 18:51:40 +0800
-Subject: [PATCH 72/75] refs-txn: generate checksum in post action hook
+Subject: [PATCH 70/73] refs-txn: generate checksum in post action hook
 
 Call `git-checksum --update` in the internal "refs_txn_post_hook()"
 function to update the checksum of a repository if there are references
@@ -17,7 +17,7 @@ Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
  create mode 100755 t/t0903-git-checksum.sh
 
 diff --git a/refs/txn-post-hook.c b/refs/txn-post-hook.c
-index e642ca8d3a..b812c85177 100644
+index 52b696cd70..e6c5adc43d 100644
 --- a/refs/txn-post-hook.c
 +++ b/refs/txn-post-hook.c
 @@ -4,6 +4,7 @@

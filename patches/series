@@ -8,7 +8,7 @@ t/refs-do-not-run-transaction-hook-for-git-pack-refs.patch
 t/refs-avoid-duplicate-running-of-the-reference-transa.patch
 t/refs-add-reflog_info-to-hold-more-fields-for-reflog-.patch
 t/refs-get-error-message-via-refs_update_ref_extended.patch
-t/refs-reimplement-files_copy_or_rename_ref-to-run-hoo.patch
+t/refs-reimplement-files_copy_or_rename_ref-to-run-ref.patch
 t/refs-reimplement-refs_delete_refs-and-run-hook-once.patch
 t/black-hole-new-option-for-fetch-pack-to-discard-pack.patch
 t/black-hole-black-hole-option-for-transport-layer.patch
@@ -45,7 +45,6 @@ t/crypto-set-default-crypto-algorithm-to-65.patch
 t/crypto-add-new-crypto-algo-AES_X4.patch
 t/crypto-t0940-test-mktag.patch
 t/crypto-fixup-byte_counter-reset-in-copy_pack_data.patch
-t/revision-allow-pseudo-options-after-end-of-options.patch
 t/object-file-refactor-write_loose_object-to-support-r.patch
 t/object-file.c-handle-undetermined-oid-in-write_loose.patch
 t/object-file.c-read-stream-in-a-loop-in-write_loose_o.patch
@@ -59,13 +58,12 @@ t/http-add-http.maxReceiveSpeed-to-limit-receiving-spe.patch
 t/pre-send-pack-new-hook-to-send-notifications-before-.patch
 t/doc-add-document-for-new-pre-send-pack-hook.patch
 t/t5619-add-basic-test-for-pre-send-pack-hook.patch
-t/fetch-to-packed-refs-add-extension-for-refs-API.patch
-t/fetch-to-packed-refs-implement-git-fetch-write-packe.patch
-t/fetch-to-packed-refs-implement-git-remote-update-wri.patch
-t/fetch-to-packed-refs-only-packs-fetched-refs.patch
 t/gc-do-gc-if-there-are-to-many-loose-refs.patch
 t/builtin-repack.c-ensure-that-names-is-sorted.patch
 t/http-support-read-netrc-file-from-a-specific-path.patch
+t/t5318-demonstrate-commit-graph-generation-v2-corrupt.patch
+t/commit-graph-introduce-repo_find_commit_pos_in_graph.patch
+t/commit-graph-fix-corrupt-upgrade-from-generation-v1-.patch
 t/Agit-release-agit.dev.patch
 t/refs-txn-add-internal-process-for-refs-txn-prepared.patch
 t/refs-txn-use-refs-txn-hook-to-refresh-last-modified-.patch
@@ -73,3 +71,8 @@ t/refs-txn-generate-checksum-in-post-action-hook.patch
 t/refs-txn-more-checksum-testcases-in-t0903-from-t1416.patch
 t/refs-txn-call-git-checksum-init-when-init-a-repo.patch
 t/refs-txn-call-execute_commands_atomic-for-large-refs.patch
+t/fetch-to-packed-refs-new-extension-for-refs-API.patch
+t/fetch-to-packed-refs-implement-extended-refs-API-for.patch
+t/fetch-to-packed-refs-implement-git-fetch-write-packe.patch
+t/fetch-to-packed-refs-implement-git-remote-update-wri.patch
+t/upload-pack-Add-pack-objects-hook-agit-clause.patch

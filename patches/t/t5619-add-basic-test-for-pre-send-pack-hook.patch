@@ -1,7 +1,7 @@
-From 92dfa1a149e8db96434dc43bd36907928c7cdd23 Mon Sep 17 00:00:00 2001
+From be01992077a7abe8c6446d3742433f4723d01a65 Mon Sep 17 00:00:00 2001
 From: Xu Ziyang <yunhuai.xzy@alibaba-inc.com>
 Date: Fri, 22 Oct 2021 17:12:50 +0800
-Subject: [PATCH 61/61] t5619: add basic test for pre-send-pack hook
+Subject: [PATCH 60/60] t5619: add basic test for pre-send-pack hook
 
 Add some basic test case, specifically:
 1. normal clone will receive the message from hook

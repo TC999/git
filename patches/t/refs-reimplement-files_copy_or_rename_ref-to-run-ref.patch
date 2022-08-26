@@ -1,14 +1,21 @@
-From 6b323d69e16f69ee80e0677102e6a94426fc28a5 Mon Sep 17 00:00:00 2001
+From e9377a7f55267b2014f02b2fdd82f3f8c0988009 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Wed, 20 Jul 2022 10:39:39 +0800
 Subject: [PATCH 11/12] refs: reimplement files_copy_or_rename_ref() to run
- hook
+ refs-txn hook
 
 When copying or renaming a branch, the "reference-transaction" hook is
-not executed. This is because we used to reinvent the wheel in function
-"files_copy_or_rename_ref()". By calling "refs_update_ref_extended()" to
-reimplement "files_copy_or_rename_ref()", the "reference-transaction"
-hook will run correctly.
+not executed. This is because we called two low-level functions
+"lock_ref_oid_basic()" and "write_ref_to_lockfile()", and reinvented
+the wheel in "commit_ref_update()" to update the reference instead of
+implementing "files_copy_or_rename_ref()" by calling "refs_update_ref()"
+to update a reference in a transaction. The reason for this is that we
+want to create a proper reflog for the newly copied reference.
+
+Refactor "files_copy_or_rename_ref()" by calling the extended version
+of "refs_update_ref", i.e. "refs_update_ref_extended()", so we can
+create the target branch for copying or renaming a branch and generate
+a correct reflog file at the same time.
 
 The behavior of the following git commands and two testcases have been
 fixed in t1416:
@@ -19,11 +26,11 @@ fixed in t1416:
 Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---
  refs/files-backend.c             | 97 +++-----------------------------
- t/t1416-ref-transaction-hooks.sh |  4 +-
- 2 files changed, 9 insertions(+), 92 deletions(-)
+ t/t1416-ref-transaction-hooks.sh | 28 +--------
+ 2 files changed, 9 insertions(+), 116 deletions(-)
 
 diff --git a/refs/files-backend.c b/refs/files-backend.c
-index e2eabe9d8e..8baea66e58 100644
+index 336384daa0..e029f5a885 100644
 --- a/refs/files-backend.c
 +++ b/refs/files-backend.c
 @@ -1376,10 +1376,6 @@ static int rename_tmp_log(struct files_ref_store *refs, const char *newrefname)
@@ -177,22 +184,46 @@ index e2eabe9d8e..8baea66e58 100644
  {
  	int ret = -1;
 diff --git a/t/t1416-ref-transaction-hooks.sh b/t/t1416-ref-transaction-hooks.sh
-index 0a7ae812a4..7d3884e1f2 100755
+index 6ba7ba746c..77996017d7 100755
 --- a/t/t1416-ref-transaction-hooks.sh
 +++ b/t/t1416-ref-transaction-hooks.sh
-@@ -669,7 +669,7 @@ test_expect_success "branch: update refs to create loose refs" '
+@@ -715,9 +715,7 @@ test_expect_success "branch: update branch without old-oid" '
  	test_cmp_heads_and_tags -C workdir expect
  '
  
+-# Failed because the reference-transaction hook was not executed at all
+-# when copying a branch using "git branch -c".
 -test_expect_failure "branch: copy branches" '
 +test_expect_success "branch: copy branches" '
  	test_when_finished "rm -f $HOOK_OUTPUT" &&
  
  	cat >expect <<-\EOF &&
-@@ -702,7 +702,7 @@ test_expect_failure "branch: copy branches" '
+@@ -750,29 +748,7 @@ test_expect_failure "branch: copy branches" '
  	test_cmp_heads_and_tags -C workdir expect
  '
  
+-# Mismatched hook output for "git branch -m":
+-#
+-#  * The "reference-transaction committed" command was not executed
+-#    for the target branch.
+-#
+-# The differences are as follows:
+-#
+-#     @@ -3,14 +3,6 @@
+-#      ## Call hook: reference-transaction committed ##
+-#      <COMMIT-B> <ZERO-OID> refs/heads/topic4
+-#      ## Call hook: reference-transaction  prepared ##
+-#     -<ZERO-OID> <COMMIT-B> refs/heads/topic6
+-#     -## Call hook: reference-transaction committed ##
+-#     -<ZERO-OID> <COMMIT-B> refs/heads/topic6
+-#     -## Call hook: reference-transaction  prepared ##
+-#      <COMMIT-C> <ZERO-OID> refs/heads/topic5
+-#      ## Call hook: reference-transaction committed ##
+-#      <COMMIT-C> <ZERO-OID> refs/heads/topic5
+-#     -## Call hook: reference-transaction  prepared ##
+-#     -<ZERO-OID> <COMMIT-C> refs/heads/topic7
+-#     -## Call hook: reference-transaction committed ##
+-#     -<ZERO-OID> <COMMIT-C> refs/heads/topic7
 -test_expect_failure "branch: rename branches" '
 +test_expect_success "branch: rename branches" '
  	test_when_finished "rm -f $HOOK_OUTPUT" &&

@@ -1,7 +1,7 @@
 From 4421c39ac6cd745377c5e2a32f02be68a9db9e74 Mon Sep 17 00:00:00 2001
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Mon, 6 Dec 2021 17:37:12 +0800
-Subject: [PATCH 56/57] receive-pack: record large blobs when index-pack or
+Subject: [PATCH 55/56] receive-pack: record large blobs when index-pack or
  unpack-objects
 
 Large blobs which larger than "core.bigFileThreshold" will be writen

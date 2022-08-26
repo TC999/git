@@ -1,16 +1,75 @@
-From 01307a5026fc90f454c896202a31218f12cffe79 Mon Sep 17 00:00:00 2001
+From 337c8dd6223dc68f350c84abe292b7903c52fcf1 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 19 Jul 2022 09:35:08 +0800
 Subject: [PATCH 12/12] refs: reimplement refs_delete_refs() and run hook once
 
-When delete references using "git branch -d" or "git tag -d", there will
-be duplicate call of "reference-transaction committed" for same refs.
-This is because "refs_delete_refs()" is called twice, once for
-files-backend and once for packed-backend, and we used to reinvented the
-wheel in "files_delete_refs()" and "packed_delete_refs()". By removing
-"packed_delete_refs()" and reimplement "files_delete_refs()", the
-"reference-transaction" hook will run only once for deleted branches and
-tags.
+When using "git branch -d" or "git tag -d" to delete one or multiple
+references, command "reference-transaction committed" will be called
+repeatedly for the same references. This is because the function
+"refs_delete_refs()" is called twice, once for loose ref-store and once
+for packed ref-store.
+
+The old story starts when running the function "refs_delete_refs()" on a
+loose ref-store:
+
+ 1. Try to remove the references from packed ref-store.
+
+    1.1. Lock the packed-ref-store by calling "packed_refs_lock()" in
+         "files_delete_refs()".
+
+    1.2. Call "refs_delete_refs()" on packed-ref-store, and then call
+         "packed_delete_refs()".
+
+    1.3. Create a transaction for packed-ref-store in function
+         "packed_delete_refs()" by calling the function
+         "ref_store_transaction_begin()".
+
+    2.2. Add update entries for all the references to be removed into
+         this transaction by calling "ref_transaction_delete()".
+
+    2.3. Call "ref_transaction_commit()" to commit the transaction.
+
+    2.4. Unlock the packed-ref-store.
+
+ 2. Try to remove the references one by one by calling the function
+    "refs_delete_ref()".
+
+    2.1. Create a new transaction on loose-ref-store by calling
+         "ref_store_transaction_begin()".
+
+    2.2. Call "ref_transaction_delete()" to add a update entry
+         for the reference to be deleted into the transaction.
+
+    2.3. In "ref_transaction_commit()", it will call functions
+         "files_transaction_prepare()" and "files_transaction_finish()"
+         to commit the transaction.
+
+         2.3.1. Lock the loose reference.
+
+         2.3.2. Create a new packed-transaction, and add a new update
+                entry to this packed-transaction. The previous step 1
+                makes this operation unnecessary.
+
+         2.3.3. Lock the packed-ref-store and call fucntion
+                "is_packed_transaction_needed()" to check whether it
+                is necessary to commit the transaction, and then
+                abort the transaction because the reference is already
+                removed from the packed-ref-store in step 1.
+
+         2.3.4. Remove the reflog and the loose reference file for
+                the reference to be deleted.
+
+         2.3.4. Unlock the loose reference.
+
+From the above steps, we can see that "refs_delete_refs()" is not an
+atomic operation, but a semi-atomic operation. The operation is atomic
+if all references to be deleted are in the packed ref-store, but not
+if some references are loose references because we delete the loose
+references one by one by calling "refs_delete_ref()" .
+
+Refactored function "files_delete_refs()" to delete references within a
+transaction, so the "reference-transaction" hook will only run once for
+deleted branches and tags.
 
 The behavior of the following git commands and the last two testcases
 have been fixed in t1416:
@@ -24,14 +83,14 @@ is not in the "packed-refs" file.
 
 Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---
- refs/files-backend.c             | 21 ++++++-------
- refs/packed-backend.c            | 51 +-------------------------------
- t/t1416-ref-transaction-hooks.sh |  4 +--
- t/t5510-fetch.sh                 | 17 +++++++++++
- 4 files changed, 29 insertions(+), 64 deletions(-)
+ refs/files-backend.c             | 21 +++++-----
+ refs/packed-backend.c            | 51 +-----------------------
+ t/t1416-ref-transaction-hooks.sh | 68 +-------------------------------
+ t/t5510-fetch.sh                 | 16 ++++++++
+ 4 files changed, 28 insertions(+), 128 deletions(-)
 
 diff --git a/refs/files-backend.c b/refs/files-backend.c
-index 8baea66e58..21426efaae 100644
+index e029f5a885..8f3deddc71 100644
 --- a/refs/files-backend.c
 +++ b/refs/files-backend.c
 @@ -1268,31 +1268,27 @@ static int files_pack_refs(struct ref_store *ref_store, unsigned int flags)
@@ -152,29 +211,93 @@ index 97b6837767..fdb7a0a52c 100644
  	.copy_ref = NULL,
  
 diff --git a/t/t1416-ref-transaction-hooks.sh b/t/t1416-ref-transaction-hooks.sh
-index 7d3884e1f2..40f5ab6ee6 100755
+index 77996017d7..3d39e1634a 100755
 --- a/t/t1416-ref-transaction-hooks.sh
 +++ b/t/t1416-ref-transaction-hooks.sh
-@@ -743,7 +743,7 @@ test_expect_success "branch: rename branches" '
+@@ -789,39 +789,7 @@ test_expect_success "branch: rename branches" '
  	test_cmp_heads_and_tags -C workdir expect
  '
  
+-# Mismatched hook output for "git branch -d":
+-#
+-#  * The delete branches operation should be treated as one transaction,
+-#    but was splitted into several transactions on loose references,
+-#    and the "reference-transaction committed" command was executed
+-#    redundantly on the packed-ref-store.
+-#
+-# The differences are as follows:
+-#
+-#     @@ -2,11 +2,19 @@
+-#      <ZERO-OID> <ZERO-OID> refs/heads/topic1
+-#      <ZERO-OID> <ZERO-OID> refs/heads/topic2
+-#      <ZERO-OID> <ZERO-OID> refs/heads/topic3
+-#     +## Call hook: reference-transaction committed ##
+-#     +<ZERO-OID> <ZERO-OID> refs/heads/topic1
+-#     +<ZERO-OID> <ZERO-OID> refs/heads/topic2
+-#     +<ZERO-OID> <ZERO-OID> refs/heads/topic3
+-#     +## Call hook: reference-transaction  prepared ##
+-#     +<ZERO-OID> <ZERO-OID> refs/heads/topic1
+-#     +## Call hook: reference-transaction committed ##
+-#     +<ZERO-OID> <ZERO-OID> refs/heads/topic1
+-#      ## Call hook: reference-transaction  prepared ##
+-#     -<COMMIT-A> <ZERO-OID> refs/heads/topic1
+-#      <COMMIT-B> <ZERO-OID> refs/heads/topic2
+-#     -<COMMIT-C> <ZERO-OID> refs/heads/topic3
+-#      ## Call hook: reference-transaction committed ##
+-#     -<COMMIT-A> <ZERO-OID> refs/heads/topic1
+-#      <COMMIT-B> <ZERO-OID> refs/heads/topic2
+-#     +## Call hook: reference-transaction  prepared ##
+-#     +<COMMIT-C> <ZERO-OID> refs/heads/topic3
+-#     +## Call hook: reference-transaction committed ##
+-#      <COMMIT-C> <ZERO-OID> refs/heads/topic3
 -test_expect_failure "branch: remove branches" '
 +test_expect_success "branch: remove branches" '
  	test_when_finished "rm -f $HOOK_OUTPUT" &&
  
  	cat >expect <<-\EOF &&
-@@ -872,7 +872,7 @@ test_expect_success "tag: update refs to create loose refs" '
+@@ -950,39 +918,7 @@ test_expect_success "tag: update refs to create loose refs" '
  	test_cmp_heads_and_tags -C workdir expect
  '
  
+-# Mismatched hook output for "git tag -d":
+-#
+-#  * The delete tags operation should be treated as one transaction,
+-#    but was splitted into several transactions on loose references,
+-#    and the "reference-transaction committed" command was executed
+-#    redundantly on the packed-ref-store.
+-#
+-# The differences are as follows:
+-#
+-#     @@ -2,11 +2,19 @@
+-#      <ZERO-OID> <ZERO-OID> refs/tags/v1
+-#      <ZERO-OID> <ZERO-OID> refs/tags/v2
+-#      <ZERO-OID> <ZERO-OID> refs/tags/v3
+-#     +## Call hook: reference-transaction committed ##
+-#     +<ZERO-OID> <ZERO-OID> refs/tags/v1
+-#     +<ZERO-OID> <ZERO-OID> refs/tags/v2
+-#     +<ZERO-OID> <ZERO-OID> refs/tags/v3
+-#     +## Call hook: reference-transaction  prepared ##
+-#     +<ZERO-OID> <ZERO-OID> refs/tags/v1
+-#     +## Call hook: reference-transaction committed ##
+-#     +<ZERO-OID> <ZERO-OID> refs/tags/v1
+-#      ## Call hook: reference-transaction  prepared ##
+-#     -<COMMIT-A> <ZERO-OID> refs/tags/v1
+-#      <COMMIT-B> <ZERO-OID> refs/tags/v2
+-#     -<COMMIT-C> <ZERO-OID> refs/tags/v3
+-#      ## Call hook: reference-transaction committed ##
+-#     -<COMMIT-A> <ZERO-OID> refs/tags/v1
+-#      <COMMIT-B> <ZERO-OID> refs/tags/v2
+-#     +## Call hook: reference-transaction  prepared ##
+-#     +<COMMIT-C> <ZERO-OID> refs/tags/v3
+-#     +## Call hook: reference-transaction committed ##
+-#      <COMMIT-C> <ZERO-OID> refs/tags/v3
 -test_expect_failure "tag: remove tags with mixed ref_stores" '
 +test_expect_success "tag: remove tags with mixed ref_stores" '
  	test_when_finished "rm -f $HOOK_OUTPUT" &&
  
  	cat >expect <<-\EOF &&
 diff --git a/t/t5510-fetch.sh b/t/t5510-fetch.sh
-index 4620f0ca7f..58ece65e16 100755
+index 4620f0ca7f..d2903b81e5 100755
 --- a/t/t5510-fetch.sh
 +++ b/t/t5510-fetch.sh
 @@ -168,6 +168,8 @@ test_expect_success REFFILES 'fetch --prune fails to delete branches' '
@@ -186,12 +309,11 @@ index 4620f0ca7f..58ece65e16 100755
  	git update-ref refs/remotes/origin/extrabranch main &&
  	: this will prevent --prune from locking packed-refs for deleting refs, but adding loose refs still succeeds  &&
  	>.git/packed-refs.new &&
-@@ -175,6 +177,21 @@ test_expect_success REFFILES 'fetch --prune fails to delete branches' '
+@@ -175,6 +177,20 @@ test_expect_success REFFILES 'fetch --prune fails to delete branches' '
  	test_must_fail git fetch --prune origin
  '
  
 +test_expect_success REFFILES 'fetch --prune ok for loose refs not in locked packed-refs' '
-+	test_when_finished "cd \"$D\"; rm -rf \"prune-ok-ref-not-packed\"" &&
 +	cd "$D" &&
 +	git clone . prune-ok-ref-not-packed &&
 +	(

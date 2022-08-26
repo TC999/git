@@ -1,7 +1,7 @@
-From a81a3b33346edb08e8db80f61a13f041be3b1b3f Mon Sep 17 00:00:00 2001
+From ee4db8b3ba940ad3299e3cb8ac89f7f4a87c2023 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 9 Aug 2022 10:41:57 +0800
-Subject: [PATCH 73/75] refs-txn: more checksum testcases in t0903 from t1416
+Subject: [PATCH 71/73] refs-txn: more checksum testcases in t0903 from t1416
 
 Adapt testcases from t1416 for git-checksum test in t0903.
 
@@ -11,7 +11,7 @@ Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
  1 file changed, 500 insertions(+)
 
 diff --git a/t/t0903-git-checksum.sh b/t/t0903-git-checksum.sh
-index c9feef18aa..cb11e78e25 100755
+index c9feef18aa..4a3566c136 100755
 --- a/t/t0903-git-checksum.sh
 +++ b/t/t0903-git-checksum.sh
 @@ -288,4 +288,504 @@ test_expect_success GIT_CHECKSUM "recreate checksum" '
@@ -20,7 +20,7 @@ index c9feef18aa..cb11e78e25 100755
  
 +## The following testcases are copied from t1416.
 +
-+test_expect_success "setup git config and test_tick" '
++test_expect_success GIT_CHECKSUM "setup git config and test_tick" '
 +	git config --global core.abbrev 7 &&
 +	if ! test -z "$test_tick"
 +	then
@@ -28,7 +28,7 @@ index c9feef18aa..cb11e78e25 100755
 +	fi
 +'
 +
-+test_expect_success "setup base repository" '
++test_expect_success GIT_CHECKSUM "setup base repository" '
 +	git init base &&
 +	git -C base checksum --init &&
 +	create_commits_in base A B C &&
@@ -40,7 +40,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C base expect
 +'
 +
-+test_expect_success "update-ref: setup workdir using git-clone" '
++test_expect_success GIT_CHECKSUM "update-ref: setup workdir using git-clone" '
 +	git clone base workdir &&
 +	git -C workdir checksum --init &&
 +	git -C workdir checksum --verify &&
@@ -51,7 +51,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "update-ref: create new refs" '
++test_expect_success GIT_CHECKSUM "update-ref: create new refs" '
 +	(
 +		cd workdir &&
 +		git update-ref refs/heads/topic1 $A &&
@@ -69,7 +69,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "update-ref: update HEAD, a symbolic-ref" '
++test_expect_success GIT_CHECKSUM "update-ref: update HEAD, a symbolic-ref" '
 +	test_when_finished "git -C workdir switch main" &&
 +	(
 +		cd workdir &&
@@ -94,7 +94,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "update-ref: call git-pack-refs to create packed_ref_store" '
++test_expect_success GIT_CHECKSUM "update-ref: call git-pack-refs to create packed_ref_store" '
 +	git -C workdir pack-refs --all &&
 +	git -C workdir checksum --verify &&
 +	git -C workdir checksum >actual &&
@@ -104,7 +104,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp expect actual
 +'
 +
-+test_expect_success "update-ref: update refs already packed to .git/packed-refs" '
++test_expect_success GIT_CHECKSUM "update-ref: update refs already packed to .git/packed-refs" '
 +	(
 +		cd workdir &&
 +		git update-ref refs/heads/topic2 $B $A &&
@@ -124,7 +124,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "update-ref: remove refs with mixed ref_stores" '
++test_expect_success GIT_CHECKSUM "update-ref: remove refs with mixed ref_stores" '
 +	(
 +		cd workdir &&
 +		git update-ref -d refs/heads/topic1 $A &&
@@ -140,7 +140,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "update-ref --stdin: create new refs" '
++test_expect_success GIT_CHECKSUM "update-ref --stdin: create new refs" '
 +	test_when_finished "git -C workdir pack-refs --all" &&
 +
 +	(
@@ -162,7 +162,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "update-ref --stdin: update refs" '
++test_expect_success GIT_CHECKSUM "update-ref --stdin: update refs" '
 +	(
 +		cd workdir &&
 +		git update-ref --stdin <<-EOF
@@ -186,7 +186,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "update-ref --stdin: delete refs" '
++test_expect_success GIT_CHECKSUM "update-ref --stdin: delete refs" '
 +	(
 +		cd workdir &&
 +		git update-ref --stdin <<-EOF
@@ -207,7 +207,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "branch: setup workdir using git-fetch" '
++test_expect_success GIT_CHECKSUM "branch: setup workdir using git-fetch" '
 +	rm -rf workdir &&
 +	git init workdir &&
 +	git -C workdir checksum --init &&
@@ -224,7 +224,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "branch: create new branches" '
++test_expect_success GIT_CHECKSUM "branch: create new branches" '
 +	(
 +		cd workdir &&
 +		git branch topic1 $A &&
@@ -240,13 +240,13 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "branch: call git-gc to create packed_ref_store" '
++test_expect_success GIT_CHECKSUM "branch: call git-gc to create packed_ref_store" '
 +	git -C workdir gc &&
 +	test_path_is_file workdir/.git/packed-refs &&
 +	git -C workdir checksum --verify
 +'
 +
-+test_expect_success "branch: update refs to create loose refs" '
++test_expect_success GIT_CHECKSUM "branch: update refs to create loose refs" '
 +	(
 +		cd workdir &&
 +		git branch -f topic2 $B &&
@@ -263,7 +263,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "branch: copy branches" '
++test_expect_success GIT_CHECKSUM "branch: copy branches" '
 +	(
 +		cd workdir &&
 +		git branch -c topic2 topic4 &&
@@ -282,7 +282,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "branch: rename branches" '
++test_expect_success GIT_CHECKSUM "branch: rename branches" '
 +	(
 +		cd workdir &&
 +		git branch -m topic4 topic6 &&
@@ -301,7 +301,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "branch: remove branches" '
++test_expect_success GIT_CHECKSUM "branch: remove branches" '
 +	(
 +		cd workdir &&
 +		git branch -d topic1 topic2 topic3
@@ -316,7 +316,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "tag: setup workdir using git-push" '
++test_expect_success GIT_CHECKSUM "tag: setup workdir using git-push" '
 +	rm -rf workdir &&
 +	git init workdir &&
 +	git -C workdir checksum --init &&
@@ -333,7 +333,7 @@ index c9feef18aa..cb11e78e25 100755
 +	git -C workdir restore -- .
 +'
 +
-+test_expect_success "tag: create new tags" '
++test_expect_success GIT_CHECKSUM "tag: create new tags" '
 +	(
 +		cd workdir &&
 +		git tag v1 $A &&
@@ -349,13 +349,13 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "tag: call git-pack-refs to create packed_ref_store" '
++test_expect_success GIT_CHECKSUM "tag: call git-pack-refs to create packed_ref_store" '
 +	git -C workdir pack-refs --all &&
 +	test_path_is_file workdir/.git/packed-refs &&
 +	git -C workdir checksum --verify
 +'
 +
-+test_expect_success "tag: update refs to create loose refs" '
++test_expect_success GIT_CHECKSUM "tag: update refs to create loose refs" '
 +	(
 +		cd workdir &&
 +		git tag -f v2 $B &&
@@ -372,7 +372,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "tag: remove tags with mixed ref_stores" '
++test_expect_success GIT_CHECKSUM "tag: remove tags with mixed ref_stores" '
 +	(
 +		cd workdir &&
 +		git tag -d v1 &&
@@ -387,7 +387,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "worktree: setup workdir using push --atomic" '
++test_expect_success GIT_CHECKSUM "worktree: setup workdir using push --atomic" '
 +	rm -rf workdir &&
 +	git init --bare repo.git &&
 +	git -C repo.git checksum --init &&
@@ -404,7 +404,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "worktree: topic1: commit --amend" '
++test_expect_success GIT_CHECKSUM "worktree: topic1: commit --amend" '
 +	(
 +		cd workdir &&
 +		git checkout -b topic1 &&
@@ -420,7 +420,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "worktree: topic2: merge" '
++test_expect_success GIT_CHECKSUM "worktree: topic2: merge" '
 +	(
 +		cd workdir &&
 +		git checkout -b topic2 $A &&
@@ -439,7 +439,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "worktree: topic3: cherry-pick" '
++test_expect_success GIT_CHECKSUM "worktree: topic3: cherry-pick" '
 +	(
 +		cd workdir &&
 +		git checkout -b topic3 $A &&
@@ -459,7 +459,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "worktree: topic4: rebase" '
++test_expect_success GIT_CHECKSUM "worktree: topic4: rebase" '
 +	git -C workdir checkout -b topic4 $A &&
 +	create_commits_in workdir G &&
 +	git -C workdir rebase main &&
@@ -476,7 +476,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "worktree: topic5: revert" '
++test_expect_success GIT_CHECKSUM "worktree: topic5: revert" '
 +	(
 +		cd workdir &&
 +		git checkout -b topic5 $C &&
@@ -498,7 +498,7 @@ index c9feef18aa..cb11e78e25 100755
 +	test_cmp_heads_and_tags -C workdir expect
 +'
 +
-+test_expect_success "worktree: topic6: reset" '
++test_expect_success GIT_CHECKSUM "worktree: topic6: reset" '
 +	(
 +		cd workdir &&
 +		git checkout -b topic6 $C &&

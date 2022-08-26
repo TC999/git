@@ -1,7 +1,7 @@
 From 5596dbf3d6ce844e61b46f4e4bc74e267a4646ef Mon Sep 17 00:00:00 2001
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Tue, 7 Dec 2021 10:59:55 +0800
-Subject: [PATCH 53/57] object-file.c: make "write_object_file_flags()" to
+Subject: [PATCH 52/56] object-file.c: make "write_object_file_flags()" to
  support "HASH_STREAM"
 
 We will use "write_object_file_flags()" in "unpack_non_delta_entry()" to

@@ -1,0 +1,76 @@
+From 0f4783a3ebdde50a5d48a981a4f5daa25aba6099 Mon Sep 17 00:00:00 2001
+From: Taylor Blau <me@ttaylorr.com>
+Date: Tue, 12 Jul 2022 19:10:28 -0400
+Subject: [PATCH 64/66] t5318: demonstrate commit-graph generation v2
+ corruption
+
+When upgrading a commit-graph using generation v1 to one using
+generation v2, it is possible to force Git into a corrupt state where it
+(incorrectly) believes that a GDO2 chunk is necessary, *after* deciding
+not to write one.
+
+This makes subsequent reads using the commit-graph produce the following
+error message:
+
+    fatal: commit-graph requires overflow generation data but has none
+
+Demonstrate this bug by increasing our test coverage to include a
+minimal example of upgrading a commit-graph from generation v1 to v2.
+The only notable components of this test are:
+
+  - The committer date of the commit is chosen carefully so that the
+    offset underflows when computed using a v1 generation number, but
+    would not overflow when using v2 generation numbers.
+
+  - The upgrade to generation number v2 must read in the v1 generation
+    numbers, which we can do by passing `--changed-paths`, which will
+    force the commit-graph internals to call `fill_commit_graph_info()`.
+
+A future patch will squash this bug.
+
+Reported-by: Jeff King <peff@peff.net>
+Reproduced-by: Will Chandler <wfc@wfchandler.org>
+Signed-off-by: Taylor Blau <me@ttaylorr.com>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+---
+ t/t5318-commit-graph.sh | 27 +++++++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/t/t5318-commit-graph.sh b/t/t5318-commit-graph.sh
+index fbf0d64578..b85d07f60a 100755
+--- a/t/t5318-commit-graph.sh
++++ b/t/t5318-commit-graph.sh
+@@ -811,4 +811,31 @@ test_expect_success 'set up and verify repo with generation data overflow chunk'
+ 
+ graph_git_behavior 'generation data overflow chunk repo' repo left right
+ 
++test_expect_failure 'overflow during generation version upgrade' '
++	git init overflow-v2-upgrade &&
++	(
++		cd overflow-v2-upgrade &&
++
++		# This commit will have a date at two seconds past the Epoch,
++		# and a (v1) generation number of 1, since it is a root commit.
++		#
++		# The offset will then be computed as 1-2, which will underflow
++		# to 2^31, which is greater than the v2 offset small limit of
++		# 2^31-1.
++		#
++		# This is sufficient to need a large offset table for the v2
++		# generation numbers.
++		test_commit --date "@2 +0000" base &&
++		git repack -d &&
++
++		# Test that upgrading from generation v1 to v2 correctly
++		# produces the overflow table.
++		git -c commitGraph.generationVersion=1 commit-graph write &&
++		git -c commitGraph.generationVersion=2 commit-graph write \
++			--changed-paths &&
++
++		git rev-list --all
++	)
++'
++
+ test_done
+-- 
+patchwork

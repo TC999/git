@@ -1,7 +1,7 @@
 From 8f55b53929b8a2e5282394987139c37e31de021c Mon Sep 17 00:00:00 2001
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Fri, 12 Nov 2021 11:13:45 +0800
-Subject: [PATCH 50/57] object-file.c: handle undetermined oid in
+Subject: [PATCH 49/56] object-file.c: handle undetermined oid in
  write_loose_object()
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
