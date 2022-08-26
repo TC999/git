@@ -62,7 +62,7 @@ init_base_topics(){
 		printf "feature2 new file" >feature2.keep &&
 		mkdir -p t/0002
 		printf "subtest" >t/0002/t0002-subtest.sh
-		print "root test" >t/t0002-feature2.sh
+		printf "root test" >t/t0002-feature2.sh
 		git add feature2 feature2.keep t/0002/t0002-subtest.sh t/t0002-feature2.sh &&
 		test_tick &&
 		git commit -m "add feature2" &&
