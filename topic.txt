@@ -10,7 +10,7 @@ transparent-data-encryption
 not-receive-pack-file-with-large-object
 http-fetch-speed-limit
 pre-send-pack-hook
-write-packed-refs
+write-packed-refs: refs-txn-hook
 auto-gc-if-too-many-loose-refs
 midx-fixup-deleting-packfile
 support-read-netrc-file-from-a-specific-path
