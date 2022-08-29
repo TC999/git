@@ -1,7 +1,7 @@
-From edcd0045f2f7b088ce1ef23be89537d4c163d808 Mon Sep 17 00:00:00 2001
+From 7a962d8365853dc6cbc898bb1e1957b7cf0816d7 Mon Sep 17 00:00:00 2001
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Thu, 6 Jan 2022 17:58:56 +0800
-Subject: [PATCH 76/77] fetch-to-packed-refs: implement "git-fetch
+Subject: [PATCH 76/79] fetch-to-packed-refs: implement "git-fetch
  --write-packed-refs"
 
 Add new option "--write-packed-refs" to git-fetch. We can also provide
@@ -21,9 +21,9 @@ Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---
  Documentation/config/fetch.txt     |    3 +
  Documentation/fetch-options.txt    |    4 +
- builtin/fetch.c                    |   31 +-
+ builtin/fetch.c                    |   25 +-
  t/t5593-fetch-write-packed-refs.sh | 1212 ++++++++++++++++++++++++++++
- 4 files changed, 1248 insertions(+), 2 deletions(-)
+ 4 files changed, 1242 insertions(+), 2 deletions(-)
  create mode 100755 t/t5593-fetch-write-packed-refs.sh
 
 diff --git a/Documentation/config/fetch.txt b/Documentation/config/fetch.txt
@@ -53,25 +53,18 @@ index 622bd84768..f9cccb5ded 100644
  
  --prefetch::
 diff --git a/builtin/fetch.c b/builtin/fetch.c
-index e3791f09ed..df8ce0c115 100644
+index e3791f09ed..12055bb641 100644
 --- a/builtin/fetch.c
 +++ b/builtin/fetch.c
-@@ -84,9 +84,14 @@ static struct list_objects_filter_options filter_options;
+@@ -84,6 +84,7 @@ static struct list_objects_filter_options filter_options;
  static struct string_list server_options = STRING_LIST_INIT_DUP;
  static struct string_list negotiation_tip = STRING_LIST_INIT_NODUP;
  static int fetch_write_commit_graph = -1;
-+static int fetch_write_packed_refs = 0;
++static int fetch_write_packed_refs;
  static int stdin_refspecs = 0;
  static int negotiate_only;
  
-+typedef int ref_txn_commit_fn(struct ref_transaction *transaction,
-+			      struct strbuf *err);
-+static ref_txn_commit_fn *ref_txn_commit;
-+
- static int git_fetch_config(const char *k, const char *v, void *cb)
- {
- 	if (!strcmp(k, "fetch.prune")) {
-@@ -99,6 +104,11 @@ static int git_fetch_config(const char *k, const char *v, void *cb)
+@@ -99,6 +100,11 @@ static int git_fetch_config(const char *k, const char *v, void *cb)
  		return 0;
  	}
  
@@ -83,7 +76,7 @@ index e3791f09ed..df8ce0c115 100644
  	if (!strcmp(k, "fetch.showforcedupdates")) {
  		fetch_show_forced_updates = git_config_bool(k, v);
  		return 0;
-@@ -222,6 +232,8 @@ static struct option builtin_fetch_options[] = {
+@@ -222,6 +228,8 @@ static struct option builtin_fetch_options[] = {
  		 N_("check for forced-updates on all updated branches")),
  	OPT_BOOL(0, "write-commit-graph", &fetch_write_commit_graph,
  		 N_("write the commit-graph after fetching")),
@@ -92,7 +85,7 @@ index e3791f09ed..df8ce0c115 100644
  	OPT_BOOL(0, "stdin", &stdin_refspecs,
  		 N_("accept refspecs from stdin")),
  	OPT_END()
-@@ -715,6 +727,7 @@ static int s_update_ref(const char *action,
+@@ -715,6 +723,7 @@ static int s_update_ref(const char *action,
  	}
  
  	if (our_transaction) {
@@ -100,16 +93,17 @@ index e3791f09ed..df8ce0c115 100644
  		switch (ref_transaction_commit(our_transaction, &err)) {
  		case 0:
  			break;
-@@ -1716,7 +1729,7 @@ static int do_fetch(struct transport *transport,
+@@ -1716,7 +1725,8 @@ static int do_fetch(struct transport *transport,
  		if (retcode)
  			goto cleanup;
  
 -		retcode = ref_transaction_commit(transaction, &err);
-+		retcode = ref_txn_commit(transaction, &err);
++		retcode = ref_transaction_commit_extended(transaction, &err,
++							  fetch_write_packed_refs);
  		if (retcode) {
  			error("%s", err.buf);
  			ref_transaction_free(transaction);
-@@ -1854,6 +1867,8 @@ static void add_options_to_argv(struct strvec *argv)
+@@ -1854,6 +1864,8 @@ static void add_options_to_argv(struct strvec *argv)
  		strvec_push(argv, "--update-head-ok");
  	if (force)
  		strvec_push(argv, "--force");
@@ -118,7 +112,7 @@ index e3791f09ed..df8ce0c115 100644
  	if (keep)
  		strvec_push(argv, "--keep");
  	if (recurse_submodules == RECURSE_SUBMODULES_ON)
-@@ -2122,6 +2137,15 @@ int cmd_fetch(int argc, const char **argv, const char *prefix)
+@@ -2122,6 +2134,12 @@ int cmd_fetch(int argc, const char **argv, const char *prefix)
  	argc = parse_options(argc, argv, prefix,
  			     builtin_fetch_options, builtin_fetch_usage, 0);
  
@@ -127,14 +121,11 @@ index e3791f09ed..df8ce0c115 100644
 +		 * by setting atomic_fetch = 1.
 +		 */
 +		atomic_fetch = 1;
-+		ref_txn_commit = ref_transaction_commit_to_packed_refs;
-+	} else {
-+		ref_txn_commit = ref_transaction_commit;
 +	}
  	if (recurse_submodules_cli != RECURSE_SUBMODULES_DEFAULT)
  		recurse_submodules = recurse_submodules_cli;
  
-@@ -2246,7 +2270,10 @@ int cmd_fetch(int argc, const char **argv, const char *prefix)
+@@ -2246,7 +2264,10 @@ int cmd_fetch(int argc, const char **argv, const char *prefix)
  			die(_("--filter can only be used with the remote "
  			      "configured in extensions.partialclone"));
  

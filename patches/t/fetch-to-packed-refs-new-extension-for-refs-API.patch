@@ -1,7 +1,7 @@
-From 1c2a15820d931b1c90cc8e6575fb11be068bc334 Mon Sep 17 00:00:00 2001
+From e13cd0a78b02e6b113d193549a1de3330ca02c77 Mon Sep 17 00:00:00 2001
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Thu, 6 Jan 2022 17:56:36 +0800
-Subject: [PATCH 74/77] fetch-to-packed-refs: new extension for refs API
+Subject: [PATCH 74/79] fetch-to-packed-refs: new extension for refs API
 
 Add new interfaces to refs API, so we can update references directly
 into packed ref-store instead of files refs-store to increase
@@ -165,31 +165,39 @@ EDIT:
 Signed-off-by: Han Xin <hanxin.hx@alibaba-inc.com>
 Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---
- refs.c                | 43 +++++++++++++++++----
- refs.h                |  7 ++++
+ refs.c                | 50 +++++++++++++++++++++----
+ refs.h                |  6 +++
  refs/debug.c          | 42 ++++++++++++++++-----
  refs/files-backend.c  | 87 ++++++++++++++++++++++++++++++++++++++++---
  refs/packed-backend.c | 30 ++++++++++++---
  refs/refs-internal.h  | 12 ++++++
- 6 files changed, 192 insertions(+), 29 deletions(-)
+ 6 files changed, 198 insertions(+), 29 deletions(-)
 
 diff --git a/refs.c b/refs.c
-index 517bac986e..f4b72609fa 100644
+index 517bac986e..88b0a69195 100644
 --- a/refs.c
 +++ b/refs.c
-@@ -2190,8 +2190,9 @@ static int run_transaction_hook(struct ref_transaction *transaction,
+@@ -2190,8 +2190,17 @@ static int run_transaction_hook(struct ref_transaction *transaction,
  	return ret;
  }
  
 -int ref_transaction_prepare(struct ref_transaction *transaction,
 -			    struct strbuf *err)
-+static int ref_transaction_prepare_extended(struct ref_transaction *transaction,
-+					    struct strbuf *err,
-+					    int direct_to_packed_refs)
++/*
++ * The extended version of ref_transaction_prepare will prepare transaction
++ * for the main ref-store or for the packed ref-store * according to the
++ * argument "direct_to_packed_refs".
++ *
++ * We should use ref_transaction_prepare* and ref_transaction_commit* in
++ * pairs.
++ */
++int ref_transaction_prepare_extended(struct ref_transaction *transaction,
++				     struct strbuf *err,
++				     int direct_to_packed_refs)
  {
  	struct ref_store *refs = transaction->ref_store;
  	int ret;
-@@ -2217,7 +2218,8 @@ int ref_transaction_prepare(struct ref_transaction *transaction,
+@@ -2217,7 +2226,8 @@ int ref_transaction_prepare(struct ref_transaction *transaction,
  		return -1;
  	}
  
@@ -199,7 +207,7 @@ index 517bac986e..f4b72609fa 100644
  	if (ret)
  		return ret;
  
-@@ -2230,6 +2232,13 @@ int ref_transaction_prepare(struct ref_transaction *transaction,
+@@ -2230,6 +2240,13 @@ int ref_transaction_prepare(struct ref_transaction *transaction,
  	return 0;
  }
  
@@ -213,19 +221,27 @@ index 517bac986e..f4b72609fa 100644
  int ref_transaction_abort(struct ref_transaction *transaction,
  			  struct strbuf *err)
  {
-@@ -2257,8 +2266,9 @@ int ref_transaction_abort(struct ref_transaction *transaction,
+@@ -2257,8 +2274,17 @@ int ref_transaction_abort(struct ref_transaction *transaction,
  	return ret;
  }
  
 -int ref_transaction_commit(struct ref_transaction *transaction,
 -			   struct strbuf *err)
-+static int ref_transaction_commit_extended(struct ref_transaction *transaction,
-+					   struct strbuf *err,
-+					   int direct_to_packed_refs)
++/*
++ * The extended version of ref_transaction_commit can write changes
++ * of references directly to "packed-refs" if the given argument
++ * "direct_to_packed_refs" is set to 1.
++ *
++ * We should use ref_transaction_prepare* and ref_transaction_commit* in
++ * pairs.
++ */
++int ref_transaction_commit_extended(struct ref_transaction *transaction,
++				    struct strbuf *err,
++				    int direct_to_packed_refs)
  {
  	struct ref_store *refs = transaction->ref_store;
  	int ret;
-@@ -2266,7 +2276,8 @@ int ref_transaction_commit(struct ref_transaction *transaction,
+@@ -2266,7 +2292,8 @@ int ref_transaction_commit(struct ref_transaction *transaction,
  	switch (transaction->state) {
  	case REF_TRANSACTION_OPEN:
  		/* Need to prepare first. */
@@ -235,7 +251,7 @@ index 517bac986e..f4b72609fa 100644
  		if (ret)
  			return ret;
  		break;
-@@ -2281,12 +2292,30 @@ int ref_transaction_commit(struct ref_transaction *transaction,
+@@ -2281,12 +2308,21 @@ int ref_transaction_commit(struct ref_transaction *transaction,
  		break;
  	}
  
@@ -255,36 +271,33 @@ index 517bac986e..f4b72609fa 100644
 +	return ref_transaction_commit_extended(transaction, err, 0);
 +}
 +
-+/*
-+ * Write refs diretly to packed ref-store.
-+ */
-+int ref_transaction_commit_to_packed_refs(struct ref_transaction *transaction,
-+					  struct strbuf *err)
-+{
-+	return ref_transaction_commit_extended(transaction, err, 1);
-+}
-+
  int refs_verify_refname_available(struct ref_store *refs,
  				  const char *refname,
  				  const struct string_list *extras,
 diff --git a/refs.h b/refs.h
-index 85832c4863..d69ea48312 100644
+index 85832c4863..2b73736cc4 100644
 --- a/refs.h
 +++ b/refs.h
-@@ -412,6 +412,13 @@ void warn_dangling_symrefs(FILE *fp, const char *msg_fmt,
+@@ -757,6 +757,9 @@ int ref_transaction_verify(struct ref_transaction *transaction,
   */
- int refs_pack_refs(struct ref_store *refs, unsigned int flags);
+ int ref_transaction_prepare(struct ref_transaction *transaction,
+ 			    struct strbuf *err);
++int ref_transaction_prepare_extended(struct ref_transaction *transaction,
++				     struct strbuf *err,
++				     int direct_to_packed_refs);
  
-+/*
-+ * Directly save refs in transaction into the "packed-refs" file,
-+ * instead of saving them as loose references.
-+ */
-+int ref_transaction_commit_to_packed_refs(struct ref_transaction *transaction,
-+					  struct strbuf *err);
-+
  /*
-  * Setup reflog before using. Fill in err and return -1 on failure.
+  * Commit all of the changes that have been queued in transaction, as
+@@ -767,6 +770,9 @@ int ref_transaction_prepare(struct ref_transaction *transaction,
   */
+ int ref_transaction_commit(struct ref_transaction *transaction,
+ 			   struct strbuf *err);
++int ref_transaction_commit_extended(struct ref_transaction *transaction,
++				    struct strbuf *err,
++				    int direct_to_packed_refs);
+ 
+ /*
+  * Abort `transaction`, which has been begun and possibly prepared,
 diff --git a/refs/debug.c b/refs/debug.c
 index 1e60507249..c2deedd398 100644
 --- a/refs/debug.c

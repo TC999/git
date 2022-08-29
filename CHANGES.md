@@ -1,44 +1,43 @@
-How to merge all topic branches
-===============================
-
-Release all topic branches to agit-master branch based on v2.36.2 and agit version 6.5.9:
-1. Update GIT-VERSION contents to v2.36.2
-2. Update PATCH-VERSION contents to 6.5.9
-3. Run make, will build 'patchwork' binary
-4. Export patches:
-```shell
-./patchwork export-patches
-```
-5. Apply patches:
-```shell
-./patchwork apply-patches --apply-to <the git repo path>
-```
-
 AGIT Release Notes
 ==================
-
 
 v6.6.0-dev
 ----------
 * refactor-refs-txn: new topic to fix "reference-transaction" hook.
+
 * refs-txn-hook: rebase to "refactor-refs-txn" and refactor internal
   pre-txn-hook and post-txn-hook based on "reference-transaction"
-  hook.
-* write-packed-refs: do not pack unfetched references.
-* write-packed-refs: depends on refs-txt-hook, and replace with new
-  implementation which support git-checksum well.
-* black-hole: refactor from one commit to several commits.
+  hook, so all git commands could generate git-checksum correctly.
+
+* fetch --[no-]write-packed-refs: even without this argument, we can
+  write fetched references directly to the "packed-refs" file if the
+  number of entries in the transaction is greater than config variable
+  "pack.refStoreThreshold".
+
+* update-ref --stdin: write references to packed-refs automatically
+  if number of entries in the transaction is greater than config
+  variable "pack.refStoreThreshold".
+
+* black-hole: refactor from one commit to several commits, and it
+  is easy to understand what's under the hood.
+
 * agit-gc: refactor to improve readability.
+
 * auto-gc-if-too-many-loose-refs: ignore "\*.lock" files when checking
   loose references.
+
 * auto-gc-if-too-many-loose-refs: fix memory leak by releasing buf.
+
 * Remove topic end-of-options.
+
 * commit-graph-genv2-upgrade-fix: fix the commit-graph bug introduced 
   in Git version v2.36.1. This patch Git has been merged into v2.37.2,
   if we use v2.37.2 and later to package, then this patch needs to be 
   discarded.
+
 * pack-objects-hook-agit-clause: introduce new configuration to improve
   the cache hit rate of pack-objects.
+
 
 v6.5.9
 ------
@@ -229,3 +228,22 @@ v1
 * In order to support centralize workflow like gerrit in git, add a `.git/hooks/execute-commands`
   hook.  If user has set `receive.executeCommandsRefs` config variables, git will check and mark
   commands, and run external hook instead of internal functions on marked commands.
+
+
+How to merge all topic branches
+===============================
+
+Release all topic branches to agit-master branch based on v2.36.2 and agit version 6.5.9:
+1. Update GIT-VERSION contents to v2.36.2
+2. Update PATCH-VERSION contents to 6.5.9
+3. Run make, will build 'patchwork' binary
+4. Export patches:
+```shell
+./patchwork export-patches
+```
+5. Apply patches:
+```shell
+./patchwork apply-patches --apply-to <the git repo path>
+```
+
+

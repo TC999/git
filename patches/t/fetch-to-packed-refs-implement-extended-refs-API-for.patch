@@ -1,7 +1,7 @@
-From 0e3712a2e431dcc35e33166c64096c8ed9ef4de5 Mon Sep 17 00:00:00 2001
+From def47e59309890bd655efeb77f6df01ae42f251c Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 23 Aug 2022 13:53:19 +0800
-Subject: [PATCH 75/77] fetch-to-packed-refs: implement extended refs API for
+Subject: [PATCH 75/79] fetch-to-packed-refs: implement extended refs API for
  files-backend
 
 When we use "git fetch", references are always written as loose
@@ -17,6 +17,18 @@ This is because fetch lots of references and save as loose references
 will slow down later git operations. Instead of call "git pack-refs"
 in another process, we can use this API to save batch reference updates
 directly to the packed-ref file.
+
+Because the two extended version of transaction interfaces must use
+in pairs. If providing them with different "direct_to_packed_refs"
+arguments, we may get wrong result.
+
+So we add a new filed "flags" in transaction to sync the argument
+"direct_to_packed_refs". By removing "transaction_finish_extended",
+we only need to call the interface "transaction_prepare_extended" for
+the transaction we need to write refs directly into "packed-refs".
+
+In future version, we may use one "flags" field instead of two of
+them ("hook_flags" and "flags").
 
 Han Xin's original implementation was based on implementations of "git
 clone" and "git pack-refs".
@@ -34,14 +46,93 @@ The new implementation resolved all above issues.
 Inspired-by: Han Xin <hanxin.hx@alibaba-inc.com>
 Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---
- refs/files-backend.c | 83 +++++++++++++++++++++++++++++++++-----------
- 1 file changed, 62 insertions(+), 21 deletions(-)
+ refs.c                |   5 +-
+ refs/debug.c          |  20 ++------
+ refs/files-backend.c  | 105 +++++++++++++++++++++++++++++-------------
+ refs/packed-backend.c |  15 ++----
+ refs/refs-internal.h  |  10 ++--
+ 5 files changed, 84 insertions(+), 71 deletions(-)
 
+diff --git a/refs.c b/refs.c
+index 88b0a69195..a5ee0bb415 100644
+--- a/refs.c
++++ b/refs.c
+@@ -2308,10 +2308,7 @@ int ref_transaction_commit_extended(struct ref_transaction *transaction,
+ 		break;
+ 	}
+ 
+-	ret = refs->be->transaction_finish_extended(refs,
+-						    transaction,
+-						    err,
+-						    direct_to_packed_refs);
++	ret = refs->be->transaction_finish(refs, transaction, err);
+ 	if (!ret)
+ 		run_transaction_hook(transaction, "committed");
+ 	return ret;
+diff --git a/refs/debug.c b/refs/debug.c
+index c2deedd398..95d23f730c 100644
+--- a/refs/debug.c
++++ b/refs/debug.c
+@@ -94,30 +94,19 @@ static void print_transaction(struct ref_transaction *transaction)
+ 	trace_printf_key(&trace_refs, "}\n");
+ }
+ 
+-static int debug_transaction_finish_extended(struct ref_store *refs,
+-					     struct ref_transaction *transaction,
+-					     struct strbuf *err,
+-					     int direct_to_packed_refs)
++static int debug_transaction_finish(struct ref_store *refs,
++				    struct ref_transaction *transaction,
++				    struct strbuf *err)
+ {
+ 	struct debug_ref_store *drefs = (struct debug_ref_store *)refs;
+ 	int res;
+ 	transaction->ref_store = drefs->refs;
+-	res = drefs->refs->be->transaction_finish_extended(drefs->refs,
+-							   transaction,
+-							   err,
+-							   direct_to_packed_refs);
++	res = drefs->refs->be->transaction_finish(drefs->refs, transaction, err);
+ 	print_transaction(transaction);
+ 	trace_printf_key(&trace_refs, "finish: %d\n", res);
+ 	return res;
+ }
+ 
+-static int debug_transaction_finish(struct ref_store *refs,
+-				    struct ref_transaction *transaction,
+-				    struct strbuf *err)
+-{
+-	return debug_transaction_finish_extended(refs, transaction, err, 0);
+-}
+-
+ static int debug_transaction_abort(struct ref_store *refs,
+ 				   struct ref_transaction *transaction,
+ 				   struct strbuf *err)
+@@ -471,7 +460,6 @@ struct ref_storage_be refs_be_debug = {
+ 	.transaction_prepare = debug_transaction_prepare,
+ 	.transaction_prepare_extended = debug_transaction_prepare_extended,
+ 	.transaction_finish = debug_transaction_finish,
+-	.transaction_finish_extended = debug_transaction_finish_extended,
+ 	.transaction_abort = debug_transaction_abort,
+ 	.initial_transaction_commit = debug_initial_transaction_commit,
+ 
 diff --git a/refs/files-backend.c b/refs/files-backend.c
-index c320a4a19c..e5499cf315 100644
+index c320a4a19c..7360f13948 100644
 --- a/refs/files-backend.c
 +++ b/refs/files-backend.c
-@@ -2704,28 +2704,64 @@ static int files_transaction_prepare_extended(struct ref_store *ref_store,
+@@ -2629,6 +2629,11 @@ static int files_transaction_prepare_extended(struct ref_store *ref_store,
+ 	if (!transaction->nr)
+ 		goto cleanup;
+ 
++	if (direct_to_packed_refs)
++		transaction->flags |= REF_TRANSACTION_DIRECT_TO_PACKED_REFS;
++	else
++		transaction->flags &= ~REF_TRANSACTION_DIRECT_TO_PACKED_REFS;
++
+ 	CALLOC_ARRAY(backend_data, 1);
+ 	transaction->backend_data = backend_data;
+ 
+@@ -2704,28 +2709,64 @@ static int files_transaction_prepare_extended(struct ref_store *ref_store,
  		if (ret)
  			goto cleanup;
  
@@ -123,15 +214,38 @@ index c320a4a19c..e5499cf315 100644
  			ref_transaction_add_update(
  					packed_transaction, update->refname,
  					REF_HAVE_NEW | REF_NO_DEREF,
-@@ -2862,7 +2898,6 @@ static int files_transaction_finish_extended(struct ref_store *ref_store,
+@@ -2849,10 +2890,9 @@ static int files_transaction_prepare(struct ref_store *ref_store,
+  *
+  *   * Do not commit but delete refereces which marked as REF_NEEDS_COMMIT.
+  */
+-static int files_transaction_finish_extended(struct ref_store *ref_store,
+-					     struct ref_transaction *transaction,
+-					     struct strbuf *err,
+-					     int direct_to_packed_refs)
++static int files_transaction_finish(struct ref_store *ref_store,
++				    struct ref_transaction *transaction,
++				    struct strbuf *err)
+ {
+ 	struct files_ref_store *refs =
+ 		files_downcast(ref_store, 0, "ref_transaction_finish");
+@@ -2861,7 +2901,7 @@ static int files_transaction_finish_extended(struct ref_store *ref_store,
+ 	struct strbuf sb = STRBUF_INIT;
  	struct files_transaction_backend_data *backend_data;
  	struct ref_transaction *packed_transaction;
- 
 -
++	int direct_to_packed_refs;
+ 
  	assert(err);
  
- 	if (!transaction->nr) {
-@@ -2903,7 +2938,11 @@ static int files_transaction_finish_extended(struct ref_store *ref_store,
+@@ -2870,6 +2910,7 @@ static int files_transaction_finish_extended(struct ref_store *ref_store,
+ 		return 0;
+ 	}
+ 
++	direct_to_packed_refs = transaction->flags & REF_TRANSACTION_DIRECT_TO_PACKED_REFS;
+ 	backend_data = transaction->backend_data;
+ 	packed_transaction = backend_data->packed_transaction;
+ 
+@@ -2903,7 +2944,11 @@ static int files_transaction_finish_extended(struct ref_store *ref_store,
  				goto cleanup;
  			}
  		}
@@ -144,7 +258,7 @@ index c320a4a19c..e5499cf315 100644
  			clear_loose_ref_cache(refs);
  			if (commit_ref(lock)) {
  				strbuf_addf(err, "couldn't set '%s'", lock->ref_name);
-@@ -2956,8 +2995,10 @@ static int files_transaction_finish_extended(struct ref_store *ref_store,
+@@ -2956,8 +3001,10 @@ static int files_transaction_finish_extended(struct ref_store *ref_store,
  		struct ref_update *update = transaction->updates[i];
  		struct ref_lock *lock = update->backend_data;
  
@@ -157,5 +271,109 @@ index c320a4a19c..e5499cf315 100644
  			update->flags |= REF_DELETED_RMDIR;
  			if (!(update->type & REF_ISPACKED) ||
  			    update->type & REF_ISSYMREF) {
+@@ -2996,13 +3043,6 @@ cleanup:
+ 	return ret;
+ }
+ 
+-static int files_transaction_finish(struct ref_store *ref_store,
+-				    struct ref_transaction *transaction,
+-				    struct strbuf *err)
+-{
+-	return files_transaction_finish_extended(ref_store, transaction, err, 0);
+-}
+-
+ static int files_transaction_abort(struct ref_store *ref_store,
+ 				   struct ref_transaction *transaction,
+ 				   struct strbuf *err)
+@@ -3307,7 +3347,6 @@ struct ref_storage_be refs_be_files = {
+ 	.transaction_prepare = files_transaction_prepare,
+ 	.transaction_prepare_extended = files_transaction_prepare_extended,
+ 	.transaction_finish = files_transaction_finish,
+-	.transaction_finish_extended = files_transaction_finish_extended,
+ 	.transaction_abort = files_transaction_abort,
+ 	.initial_transaction_commit = files_initial_transaction_commit,
+ 
+diff --git a/refs/packed-backend.c b/refs/packed-backend.c
+index ccea6259df..bacf4c849a 100644
+--- a/refs/packed-backend.c
++++ b/refs/packed-backend.c
+@@ -1492,10 +1492,9 @@ static int packed_transaction_abort(struct ref_store *ref_store,
+ 	return 0;
+ }
+ 
+-static int packed_transaction_finish_extended(struct ref_store *ref_store,
+-					      struct ref_transaction *transaction,
+-					      struct strbuf *err,
+-					      int direct_to_packed_refs)
++static int packed_transaction_finish(struct ref_store *ref_store,
++				     struct ref_transaction *transaction,
++				     struct strbuf *err)
+ {
+ 	struct packed_ref_store *refs = packed_downcast(
+ 			ref_store,
+@@ -1521,13 +1520,6 @@ cleanup:
+ 	return ret;
+ }
+ 
+-static int packed_transaction_finish(struct ref_store *ref_store,
+-				     struct ref_transaction *transaction,
+-				     struct strbuf *err)
+-{
+-	return packed_transaction_finish_extended(ref_store, transaction, err, 0);
+-}
+-
+ static int packed_initial_transaction_commit(struct ref_store *ref_store,
+ 					    struct ref_transaction *transaction,
+ 					    struct strbuf *err)
+@@ -1558,7 +1550,6 @@ struct ref_storage_be refs_be_packed = {
+ 	.transaction_prepare = packed_transaction_prepare,
+ 	.transaction_prepare_extended = packed_transaction_prepare_extended,
+ 	.transaction_finish = packed_transaction_finish,
+-	.transaction_finish_extended = packed_transaction_finish_extended,
+ 	.transaction_abort = packed_transaction_abort,
+ 	.initial_transaction_commit = packed_initial_transaction_commit,
+ 
+diff --git a/refs/refs-internal.h b/refs/refs-internal.h
+index 4d23bcae42..e26fcf5f6c 100644
+--- a/refs/refs-internal.h
++++ b/refs/refs-internal.h
+@@ -221,6 +221,9 @@ enum ref_transaction_state {
+ 	(REF_TRANSACTION_RUN_PREPARED_HOOK  | \
+ 	 REF_TRANSACTION_RUN_COMMITTED_HOOK | \
+ 	 REF_TRANSACTION_RUN_ABORTED_HOOK)
++
++#define REF_TRANSACTION_DIRECT_TO_PACKED_REFS (1 << 3)
++
+ /*
+  * Data structure for holding a reference transaction, which can
+  * consist of checks and updates to multiple references, carried out
+@@ -233,6 +236,7 @@ struct ref_transaction {
+ 	size_t nr;
+ 	enum ref_transaction_state state;
+ 	unsigned int hook_flags;
++	unsigned int flags;
+ 	void *backend_data;
+ };
+ 
+@@ -566,11 +570,6 @@ typedef int ref_transaction_finish_fn(struct ref_store *refs,
+ 				      struct ref_transaction *transaction,
+ 				      struct strbuf *err);
+ 
+-typedef int ref_transaction_finish_extended_fn(struct ref_store *refs,
+-					       struct ref_transaction *transaction,
+-					       struct strbuf *err,
+-					       int direct_to_packed_refs);
+-
+ typedef int ref_transaction_abort_fn(struct ref_store *refs,
+ 				     struct ref_transaction *transaction,
+ 				     struct strbuf *err);
+@@ -703,7 +702,6 @@ struct ref_storage_be {
+ 	ref_transaction_prepare_fn *transaction_prepare;
+ 	ref_transaction_prepare_extended_fn *transaction_prepare_extended;
+ 	ref_transaction_finish_fn *transaction_finish;
+-	ref_transaction_finish_extended_fn *transaction_finish_extended;
+ 	ref_transaction_abort_fn *transaction_abort;
+ 	ref_transaction_commit_fn *initial_transaction_commit;
+ 
 -- 
 patchwork

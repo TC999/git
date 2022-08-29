@@ -1,7 +1,7 @@
 From 1008d53c5b67bb844497e088c125e60f7c5ec37e Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 30 Oct 2018 15:30:06 +0800
-Subject: [PATCH] Agit release 6.5.9
+Subject: [PATCH] Agit release 6.6.0.dev
 
 Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Signed-off-by: Han Xin <hanxin.hx@alibaba-inc.com>
@@ -437,6 +437,6 @@ index 0000000000..fc5c5419b3
 --- /dev/null
 +++ b/agit-version
 @@ -0,0 +1 @@
-+6.5.9
++6.6.0.dev
 -- 
 patchwork

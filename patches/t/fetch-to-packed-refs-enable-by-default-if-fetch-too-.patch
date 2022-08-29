@@ -1,0 +1,637 @@
+From e935aeb024aa68a7f5840c76ed1fe5f6503bbd29 Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Sun, 28 Aug 2022 21:40:24 +0800
+Subject: [PATCH 77/79] fetch-to-packed-refs: enable by default if fetch too
+ many refs
+
+The fetch to packed-refs behavior will be turn on automatically if there
+are lots of references (equal to or greater than 10). You can also
+disable it and use the traditional fetch to loose references behavior
+by calling:
+
+    git fetch --no-write-packed-refs ...
+
+We can change the default "10 references" threshold by providing new git
+config "pack.refStoreThreshold".
+
+The "pack.refStoreThreshold" config variable will be used in "git fetch"
+command, and maybe used in "git update-ref --stdin" in future. If the
+value is a boolean "true", will set a default number "10". If the value
+is false or number "0", will use the traditional write to loose refs
+behavior.
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ Documentation/config/pack.txt      |  10 ++
+ builtin/fetch.c                    |  25 +++-
+ t/t5593-fetch-write-packed-refs.sh | 216 +++++++++++++++++++----------
+ 3 files changed, 176 insertions(+), 75 deletions(-)
+
+diff --git a/Documentation/config/pack.txt b/Documentation/config/pack.txt
+index ad7f73a1ea..70f4c7681c 100644
+--- a/Documentation/config/pack.txt
++++ b/Documentation/config/pack.txt
+@@ -170,3 +170,13 @@ pack.writeReverseIndex::
+ 	for each new packfile that it writes in all places except for
+ 	linkgit:git-fast-import[1] and in the bulk checkin mechanism.
+ 	Defaults to false.
++
++pack.refStoreThreshold::
++	When calling "git fetch" and "git update-ref --stdin", if the
++	number of references is equal or greater than this threshold,
++	will save update of references directly to the "packed-refs"
++	file to improve performance.
+++
++If the value is a boolean "true", will set a default number "10". If
++the value is false or number "0", will handle the references as normal.
++I.E.: save the references as loose references.
+diff --git a/builtin/fetch.c b/builtin/fetch.c
+index 12055bb641..21d69775f1 100644
+--- a/builtin/fetch.c
++++ b/builtin/fetch.c
+@@ -29,6 +29,7 @@
+ #include "commit-graph.h"
+ #include "shallow.h"
+ #include "worktree.h"
++#include "refs/refs-internal.h"
+ 
+ #define FORCED_UPDATES_DELAY_WARNING_IN_MS (10 * 1000)
+ 
+@@ -57,6 +58,9 @@ static int fetch_prune_tags_config = -1; /* unspecified */
+ static int prune_tags = -1; /* unspecified */
+ #define PRUNE_TAGS_BY_DEFAULT 0 /* do we prune tags by default? */
+ 
++#define DEFAULT_PACK_REF_STORE_THRESHOLD 10
++static int pack_ref_store_threshold = DEFAULT_PACK_REF_STORE_THRESHOLD;
++
+ static int all, append, dry_run, force, keep, multiple, update_head_ok;
+ static int write_fetch_head = 1;
+ static int verbosity, deepen_relative, set_upstream, refetch;
+@@ -84,12 +88,14 @@ static struct list_objects_filter_options filter_options;
+ static struct string_list server_options = STRING_LIST_INIT_DUP;
+ static struct string_list negotiation_tip = STRING_LIST_INIT_NODUP;
+ static int fetch_write_commit_graph = -1;
+-static int fetch_write_packed_refs;
++static int fetch_write_packed_refs = 1;
+ static int stdin_refspecs = 0;
+ static int negotiate_only;
+ 
+ static int git_fetch_config(const char *k, const char *v, void *cb)
+ {
++	int is_bool;
++
+ 	if (!strcmp(k, "fetch.prune")) {
+ 		fetch_prune_config = git_config_bool(k, v);
+ 		return 0;
+@@ -100,6 +106,13 @@ static int git_fetch_config(const char *k, const char *v, void *cb)
+ 		return 0;
+ 	}
+ 
++	if (!strcmp(k, "pack.refstorethreshold")) {
++		pack_ref_store_threshold = git_config_bool_or_int(k, v, &is_bool);
++		if (is_bool && pack_ref_store_threshold)
++			pack_ref_store_threshold = DEFAULT_PACK_REF_STORE_THRESHOLD;
++		return 0;
++	}
++
+ 	if (!strcmp(k, "fetch.writepackedrefs")) {
+ 		fetch_write_packed_refs = git_config_bool(k, v);
+ 		return 0;
+@@ -1725,8 +1738,12 @@ static int do_fetch(struct transport *transport,
+ 		if (retcode)
+ 			goto cleanup;
+ 
+-		retcode = ref_transaction_commit_extended(transaction, &err,
+-							  fetch_write_packed_refs);
++		if (fetch_write_packed_refs &&
++		    pack_ref_store_threshold > 0 &&
++		    transaction->nr >= pack_ref_store_threshold)
++			retcode = ref_transaction_commit_extended(transaction, &err, 1);
++		else
++			retcode = ref_transaction_commit(transaction, &err);
+ 		if (retcode) {
+ 			error("%s", err.buf);
+ 			ref_transaction_free(transaction);
+@@ -1866,6 +1883,8 @@ static void add_options_to_argv(struct strvec *argv)
+ 		strvec_push(argv, "--force");
+ 	if (fetch_write_packed_refs)
+ 		strvec_push(argv, "--write-packed-refs");
++	else
++		strvec_push(argv, "--no-write-packed-refs");
+ 	if (keep)
+ 		strvec_push(argv, "--keep");
+ 	if (recurse_submodules == RECURSE_SUBMODULES_ON)
+diff --git a/t/t5593-fetch-write-packed-refs.sh b/t/t5593-fetch-write-packed-refs.sh
+index af93e7ee3d..686d1ec692 100755
+--- a/t/t5593-fetch-write-packed-refs.sh
++++ b/t/t5593-fetch-write-packed-refs.sh
+@@ -334,10 +334,12 @@ test_expect_success "prepare base.git" '
+ 	test_cmp_heads_and_tags -C base.git expect
+ '
+ 
+-test_expect_success 'fetch as loose refs' '
++test_expect_success 'fetch as loose refs (--no-write-packed-refs)' '
+ 	remove_and_create_dest_repo &&
+ 	clear_hook_output &&
+-	git -C dest.git fetch ../base.git "+refs/*:refs/*" &&
++	git -C dest.git \
++		fetch --no-write-packed-refs \
++		../base.git "+refs/*:refs/*" &&
+ 
+ 	test_path_is_missing dest.git/packed-refs &&
+ 	test_loose_refs_count dest.git 7 &&
+@@ -353,11 +355,11 @@ test_expect_success 'fetch as loose refs' '
+ 	test_cmp_heads_and_tags -C dest.git expect
+ '
+ 
+-test_expect_success GIT_CHECKSUM "fetch as loose refs: check git-checksum" '
++test_expect_success GIT_CHECKSUM "fetch as loose refs (--no-write-packed-refs): check git-checksum" '
+ 	test_verify_checksum -C dest.git
+ '
+ 
+-test_expect_success "fetch as loose refs: check refs-txn hook" '
++test_expect_success "fetch as loose refs (--no-write-packed-refs): check refs-txn hook" '
+ 	cat >expect <<-\EOF &&
+ 		## Call hook: reference-transaction prepared ##
+ 		<ZERO-OID> <COMMIT-C> refs/heads/main
+@@ -393,10 +395,61 @@ test_expect_success "fetch as loose refs: check refs-txn hook" '
+ 	test_cmp_refs_txn_hook_output expect
+ '
+ 
++test_expect_success 'fetch as loose refs but in one transaction (pack.refStoreThreshold=0)' '
++	remove_and_create_dest_repo &&
++	clear_hook_output &&
++	git -C dest.git \
++		-c pack.refStoreThreshold=0 \
++		fetch --write-packed-refs \
++		../base.git "+refs/*:refs/*" &&
++
++	test_path_is_missing dest.git/packed-refs &&
++	test_loose_refs_count dest.git 7 &&
++	cat >expect <<-EOF &&
++		<COMMIT-C> refs/heads/main
++		<COMMIT-A> refs/heads/topic/A
++		<COMMIT-A> refs/heads/topic/B
++		<COMMIT-C> refs/heads/topic/C
++		<COMMIT-A> refs/tags/tag-A
++		<COMMIT-B> refs/tags/tag-B
++		<COMMIT-C> refs/tags/tag-C
++	EOF
++	test_cmp_heads_and_tags -C dest.git expect
++'
++
++test_expect_success GIT_CHECKSUM "fetch as loose refs but in one transaction (pack.refStoreThreshold=0): check git-checksum" '
++	test_verify_checksum -C dest.git
++'
++
++test_expect_success "fetch as loose refs but in one transaction (pack.refStoreThreshold=0): check refs-txn hook" '
++	cat >expect <<-\EOF &&
++		## Call hook: reference-transaction prepared ##
++		<ZERO-OID> <COMMIT-C> refs/heads/main
++		<ZERO-OID> <COMMIT-A> refs/heads/topic/A
++		<ZERO-OID> <COMMIT-A> refs/heads/topic/B
++		<ZERO-OID> <COMMIT-C> refs/heads/topic/C
++		<ZERO-OID> <COMMIT-A> refs/tags/tag-A
++		<ZERO-OID> <COMMIT-B> refs/tags/tag-B
++		<ZERO-OID> <COMMIT-C> refs/tags/tag-C
++		<ZERO-OID> <COMMIT-C> HEAD
++		## Call hook: reference-transaction committed ##
++		<ZERO-OID> <COMMIT-C> refs/heads/main
++		<ZERO-OID> <COMMIT-A> refs/heads/topic/A
++		<ZERO-OID> <COMMIT-A> refs/heads/topic/B
++		<ZERO-OID> <COMMIT-C> refs/heads/topic/C
++		<ZERO-OID> <COMMIT-A> refs/tags/tag-A
++		<ZERO-OID> <COMMIT-B> refs/tags/tag-B
++		<ZERO-OID> <COMMIT-C> refs/tags/tag-C
++		<ZERO-OID> <COMMIT-C> HEAD
++	EOF
++	test_cmp_refs_txn_hook_output expect
++'
++
+ test_expect_success "fetch to packed-refs (via args)" '
+ 	remove_and_create_dest_repo &&
+ 	clear_hook_output &&
+ 	git -C dest.git \
++		-c pack.refStoreThreshold=1 \
+ 		fetch --write-packed-refs ../base.git "+refs/*:refs/*" &&
+ 
+ 	test_loose_refs_count dest.git 0 &&
+@@ -461,14 +514,17 @@ test_expect_success "fetch to packed-refs (via args): check refs-txn hook" '
+ 	test_cmp_refs_txn_hook_output expect
+ '
+ 
+-test_expect_success 'fetch to packed-refs (via git config)' '
++test_expect_success 'not fetch to packed-refs for small group of refs (via git config)' '
+ 	remove_and_create_dest_repo &&
+ 	clear_hook_output &&
+-	git -c fetch.writePackedRefs=true -C dest.git \
++	git \
++		-c pack.refStoreThreshold=10 \
++		-c fetch.writePackedRefs=true \
++		-C dest.git \
+ 		fetch ../base.git "+refs/*:refs/*" &&
+ 
+-	test_loose_refs_count dest.git 0 &&
+-	test_path_is_file dest.git/packed-refs &&
++	test_loose_refs_count dest.git 7 &&
++	test_path_is_missing dest.git/packed-refs &&
+ 	cat >expect <<-EOF &&
+ 		<COMMIT-C> refs/heads/main
+ 		<COMMIT-A> refs/heads/topic/A
+@@ -478,19 +534,7 @@ test_expect_success 'fetch to packed-refs (via git config)' '
+ 		<COMMIT-B> refs/tags/tag-B
+ 		<COMMIT-C> refs/tags/tag-C
+ 	EOF
+-	test_cmp_heads_and_tags -C dest.git expect &&
+-
+-	cat >expect <<-\EOF &&
+-		# pack-refs with: peeled fully-peeled sorted
+-		<COMMIT-C> refs/heads/main
+-		<COMMIT-A> refs/heads/topic/A
+-		<COMMIT-A> refs/heads/topic/B
+-		<COMMIT-C> refs/heads/topic/C
+-		<COMMIT-A> refs/tags/tag-A
+-		<COMMIT-B> refs/tags/tag-B
+-		<COMMIT-C> refs/tags/tag-C
+-	EOF
+-	test_cmp_packed_refs -C dest.git expect
++	test_cmp_heads_and_tags -C dest.git expect
+ '
+ 
+ test_expect_success GIT_CHECKSUM "fetch to packed-refs (via config): check git-checksum" '
+@@ -499,14 +543,6 @@ test_expect_success GIT_CHECKSUM "fetch to packed-refs (via config): check git-c
+ 
+ test_expect_success "fetch to packed-refs (via config): check refs-txn hook" '
+ 	cat >expect <<-\EOF &&
+-		## Call hook: reference-transaction prepared ##
+-		<ZERO-OID> <COMMIT-C> refs/heads/main
+-		<ZERO-OID> <COMMIT-A> refs/heads/topic/A
+-		<ZERO-OID> <COMMIT-A> refs/heads/topic/B
+-		<ZERO-OID> <COMMIT-C> refs/heads/topic/C
+-		<ZERO-OID> <COMMIT-A> refs/tags/tag-A
+-		<ZERO-OID> <COMMIT-B> refs/tags/tag-B
+-		<ZERO-OID> <COMMIT-C> refs/tags/tag-C
+ 		## Call hook: reference-transaction prepared ##
+ 		<ZERO-OID> <COMMIT-C> refs/heads/main
+ 		<ZERO-OID> <COMMIT-A> refs/heads/topic/A
+@@ -552,18 +588,22 @@ test_expect_success "fetch to packed-refs (via config): check refs-txn hook" '
+ #     topic/C (C, tag-C)
+ #     topic/D (D, tag-D)
+ #
+-test_expect_success 'incremental fetch new references' '
++test_expect_success 'incremental fetch new refs (loose refs)' '
+ 	git clone --mirror base.git source.git &&
+ 	git push source.git topic/D tag-D &&
+ 	test_when_finished "rm -rf source.git" &&
+ 
+ 	remove_and_create_dest_repo &&
+-	git -C dest.git fetch ../base.git "+refs/*:refs/*" &&
++	git -C dest.git \
++		fetch --no-write-packed-refs \
++		../base.git "+refs/*:refs/*" &&
+ 	test_path_is_missing dest.git/packed-refs &&
+ 	test_loose_refs_count dest.git 7 &&
+ 
+ 	clear_hook_output &&
+-	git -C dest.git fetch ../source.git "+refs/*:refs/*" &&
++	git -C dest.git \
++		fetch --no-write-packed-refs \
++		../source.git "+refs/*:refs/*" &&
+ 	test_path_is_missing dest.git/packed-refs &&
+ 
+ 	test_loose_refs_count dest.git 9 &&
+@@ -581,11 +621,11 @@ test_expect_success 'incremental fetch new references' '
+ 	test_cmp_heads_and_tags -C dest.git expect
+ '
+ 
+-test_expect_success GIT_CHECKSUM 'incremental fetch new references: check git-checksum' '
++test_expect_success GIT_CHECKSUM 'incremental fetch new refs (loose refs): check git-checksum' '
+ 	test_verify_checksum -C dest.git
+ '
+ 
+-test_expect_success 'incremental fetch new references: check refs-txn hook' '
++test_expect_success 'incremental fetch new refs (loose refs): check refs-txn hook' '
+ 	cat >expect <<-\EOF &&
+ 		## Call hook: reference-transaction prepared ##
+ 		<ZERO-OID> <COMMIT-D> refs/heads/topic/D
+@@ -622,18 +662,22 @@ test_expect_success 'incremental fetch new references: check refs-txn hook' '
+ #     topic/C (C, tag-C)
+ #     topic/D (D, tag-D)
+ #
+-test_expect_success 'incremental fetch new references (to packed-refs)' '
++test_expect_success 'incremental fetch new refs (packed-refs)' '
+ 	git clone --mirror base.git source.git &&
+ 	git push source.git topic/D tag-D &&
+ 	test_when_finished "rm -rf source.git" &&
+ 
+ 	remove_and_create_dest_repo &&
+-	git -C dest.git fetch ../base.git "+refs/*:refs/*" &&
++	git -C dest.git \
++		-c fetch.writePackedRefs=false \
++		fetch ../base.git "+refs/*:refs/*" &&
+ 	test_path_is_missing dest.git/packed-refs &&
+ 	test_loose_refs_count dest.git 7 &&
+ 
+ 	clear_hook_output &&
+-	git -c fetch.writepackedrefs=true -C dest.git \
++	git -C dest.git \
++		-c pack.refStoreThreshold=1 \
++		-c fetch.writePackedRefs=true \
+ 		fetch ../source.git "+refs/*:refs/*" &&
+ 	cat >expect <<-EOF &&
+ 		<COMMIT-C> refs/heads/main
+@@ -658,11 +702,11 @@ test_expect_success 'incremental fetch new references (to packed-refs)' '
+ 	test_cmp_packed_refs -C dest.git expect
+ '
+ 
+-test_expect_success GIT_CHECKSUM 'incremental fetch new references (to packed-refs): check git-checksum' '
++test_expect_success GIT_CHECKSUM 'incremental fetch new refs (packed-refs): check git-checksum' '
+ 	test_verify_checksum -C dest.git
+ '
+ 
+-test_expect_success 'incremental fetch new references (to packed-refs): check refs-txn hook' '
++test_expect_success 'incremental fetch new refs (packed-refs): check refs-txn hook' '
+ 	cat >expect <<-\EOF &&
+ 		## Call hook: reference-transaction prepared ##
+ 		<ZERO-OID> <COMMIT-D> refs/heads/topic/D
+@@ -699,18 +743,22 @@ test_expect_success 'incremental fetch new references (to packed-refs): check re
+ #     topic/B (B, tag-B)
+ #     topic/C (C, tag-C)
+ #
+-test_expect_success 'incremental fetch update references' '
++test_expect_success 'incremental fetch update references (loose refs)' '
+ 	git clone --mirror base.git source.git &&
+ 	git -C source.git update-ref refs/heads/topic/B $B &&
+ 	test_when_finished "rm -rf source.git" &&
+ 
+ 	remove_and_create_dest_repo &&
+-	git -C dest.git fetch ../base.git "+refs/*:refs/*" &&
++	git -C dest.git \
++		-c fetch.writePackedRefs=false \
++		fetch ../base.git "+refs/*:refs/*" &&
+ 	test_path_is_missing dest.git/packed-refs &&
+ 	test_loose_refs_count dest.git 7 &&
+ 
+ 	clear_hook_output &&
+-	git -C dest.git fetch ../source.git "+refs/*:refs/*" &&
++	git -C dest.git \
++		-c fetch.writePackedRefs=false \
++		fetch ../source.git "+refs/*:refs/*" &&
+ 	test_path_is_missing dest.git/packed-refs &&
+ 
+ 	test_loose_refs_count dest.git 7 &&
+@@ -762,19 +810,23 @@ test_expect_success "incremental fetch update references: check refs-txn hook" '
+ #     topic/B (B, tag-B)
+ #     topic/C (C, tag-C)
+ #
+-test_expect_success 'incremental fetch update references (to packed-refs)' '
++test_expect_success 'incremental fetch update refs (packed-refs)' '
+ 	git clone --mirror base.git source.git &&
+ 	git -C source.git update-ref refs/heads/topic/B $B &&
+ 	test_when_finished "rm -rf source.git" &&
+ 
+ 	remove_and_create_dest_repo &&
+ 
+-	git -C dest.git fetch ../base.git "+refs/*:refs/*" &&
++	git -C dest.git \
++		-c fetch.writePackedRefs=false \
++		fetch ../base.git "+refs/*:refs/*" &&
+ 	test_path_is_missing dest.git/packed-refs &&
+ 	test_loose_refs_count dest.git 7 &&
+ 
+ 	clear_hook_output &&
+-	git -c fetch.writepackedrefs=true -C dest.git \
++	git \
++		-c pack.refStoreThreshold=1 \
++		-C dest.git \
+ 		fetch ../source.git "+refs/*:refs/*" &&
+ 	cat >expect <<-EOF &&
+ 		<COMMIT-C> refs/heads/main
+@@ -796,11 +848,11 @@ test_expect_success 'incremental fetch update references (to packed-refs)' '
+ 	test_cmp_packed_refs -C dest.git expect
+ '
+ 
+-test_expect_success GIT_CHECKSUM "incremental fetch: update references (to packed-refs): check git-checksum" '
++test_expect_success GIT_CHECKSUM "incremental fetch: update refs (packed-refs): check git-checksum" '
+ 	test_verify_checksum -C dest.git
+ '
+ 
+-test_expect_success "incremental fetch: update references (to packed-refs): check refs-txn hook" '
++test_expect_success "incremental fetch: update refs (packed-refs): check refs-txn hook" '
+ 	cat >expect <<-\EOF &&
+ 		## Call hook: reference-transaction prepared ##
+ 		<ZERO-OID> <COMMIT-B> refs/heads/topic/B
+@@ -833,7 +885,7 @@ test_expect_success "incremental fetch: update references (to packed-refs): chec
+ #     topic/A (A, tag-A)
+ #     topic/C (C, tag-C)
+ #
+-test_expect_success 'incremental fetch with --prune' '
++test_expect_success 'incremental fetch with --prune (loose refs)' '
+ 	git clone --mirror base.git source.git &&
+ 	git -C source.git update-ref -d refs/heads/topic/B &&
+ 	git -C source.git update-ref -d refs/tags/tag-B &&
+@@ -841,12 +893,16 @@ test_expect_success 'incremental fetch with --prune' '
+ 
+ 	remove_and_create_dest_repo &&
+ 
+-	git -C dest.git fetch ../base.git "+refs/*:refs/*" &&
++	git -C dest.git \
++		-c fetch.writePackedRefs=false \
++		fetch ../base.git "+refs/*:refs/*" &&
+ 	test_path_is_missing dest.git/packed-refs &&
+ 	test_loose_refs_count dest.git 7 &&
+ 
+ 	clear_hook_output &&
+-	git -C dest.git fetch --prune ../source.git "+refs/*:refs/*" &&
++	git -C dest.git \
++		-c fetch.writePackedRefs=false \
++		fetch --prune ../source.git "+refs/*:refs/*" &&
+ 	test_path_is_missing dest.git/packed-refs &&
+ 
+ 	test_loose_refs_count dest.git 5 &&
+@@ -860,11 +916,11 @@ test_expect_success 'incremental fetch with --prune' '
+ 	test_cmp_heads_and_tags -C dest.git expect
+ '
+ 
+-test_expect_success GIT_CHECKSUM "incremental fetch with --prune: check git-checksum" '
++test_expect_success GIT_CHECKSUM "incremental fetch with --prune (loose refs): check git-checksum" '
+ 	test_verify_checksum -C dest.git
+ '
+ 
+-test_expect_success "incremental fetch with --prune: check refs-txn hook" '
++test_expect_success "incremental fetch with --prune (loose refs): check refs-txn hook" '
+ 	cat >expect <<-\EOF &&
+ 		## Call hook: reference-transaction prepared ##
+ 		<COMMIT-A> <ZERO-OID> refs/heads/topic/B
+@@ -897,7 +953,7 @@ test_expect_success "incremental fetch with --prune: check refs-txn hook" '
+ #     topic/A (A, tag-A)
+ #     topic/C (C, tag-C)
+ #
+-test_expect_success 'incremental fetch with --prune (to packed-refs)' '
++test_expect_success 'incremental fetch with --prune (packed-refs)' '
+ 	git clone --mirror base.git source.git &&
+ 	git -C source.git update-ref -d refs/heads/topic/B &&
+ 	git -C source.git update-ref -d refs/tags/tag-B &&
+@@ -905,12 +961,16 @@ test_expect_success 'incremental fetch with --prune (to packed-refs)' '
+ 
+ 	remove_and_create_dest_repo &&
+ 
+-	git -C dest.git fetch ../base.git "+refs/*:refs/*" &&
++	git -C dest.git \
++		-c fetch.writePackedRefs=false \
++		fetch ../base.git "+refs/*:refs/*" &&
+ 	test_path_is_missing dest.git/packed-refs &&
+ 	test_loose_refs_count dest.git 7 &&
+ 
+ 	clear_hook_output &&
+-	git -c fetch.writepackedrefs=true -C dest.git \
++	git -C dest.git \
++		-c pack.refStoreThreshold=1 \
++		-c fetch.writepackedrefs=true \
+ 		fetch --prune ../source.git "+refs/*:refs/*" &&
+ 
+ 	test_path_is_missing dest.git/packed-refs &&
+@@ -926,11 +986,11 @@ test_expect_success 'incremental fetch with --prune (to packed-refs)' '
+ 	test_cmp_heads_and_tags -C dest.git expect
+ '
+ 
+-test_expect_success GIT_CHECKSUM "incremental fetch with --prune (to packed-refs): check git-checksum" '
++test_expect_success GIT_CHECKSUM "incremental fetch with --prune (packed-refs): check git-checksum" '
+ 	test_verify_checksum -C dest.git
+ '
+ 
+-test_expect_success "incremental fetch with --prune (to packed-refs): check refs-txn hook" '
++test_expect_success "incremental fetch with --prune (packed-refs): check refs-txn hook" '
+ 	cat >expect <<-\EOF &&
+ 		## Call hook: reference-transaction prepared ##
+ 		<COMMIT-A> <ZERO-OID> refs/heads/topic/B
+@@ -965,7 +1025,7 @@ test_expect_success "incremental fetch with --prune (to packed-refs): check refs
+ #     topic/C (C, tag-C)
+ #     topic/D (D, tag-D)
+ #
+-test_expect_success 'incremental fetch with all kinds of updates' '
++test_expect_success 'incremental fetch with all kinds of updates (loose refs)' '
+ 	git clone --mirror base.git source.git &&
+ 	git -C source.git update-ref refs/heads/topic/B $B &&
+ 	git -C source.git update-ref -d refs/heads/topic/C &&
+@@ -975,12 +1035,16 @@ test_expect_success 'incremental fetch with all kinds of updates' '
+ 
+ 	remove_and_create_dest_repo &&
+ 
+-	git -C dest.git fetch ../base.git "+refs/*:refs/*" &&
++	git -C dest.git \
++		-c fetch.writepackedrefs=false \
++		fetch ../base.git "+refs/*:refs/*" &&
+ 	test_path_is_missing dest.git/packed-refs &&
+ 	test_loose_refs_count dest.git 7 &&
+ 
+ 	clear_hook_output &&
+-	git -C dest.git fetch --prune ../source.git "+refs/*:refs/*" &&
++	git -C dest.git \
++		-c fetch.writepackedrefs=false \
++		fetch --prune ../source.git "+refs/*:refs/*" &&
+ 	test_path_is_missing dest.git/packed-refs &&
+ 
+ 	test_loose_refs_count dest.git 7 &&
+@@ -996,11 +1060,11 @@ test_expect_success 'incremental fetch with all kinds of updates' '
+ 	test_cmp_heads_and_tags -C dest.git expect
+ '
+ 
+-test_expect_success GIT_CHECKSUM "incremental with all kinds of updates: check git-checksum" '
++test_expect_success GIT_CHECKSUM "incremental with all kinds of updates (loose refs): check git-checksum" '
+ 	test_verify_checksum -C dest.git
+ '
+ 
+-test_expect_success "incremental with all kinds of updates: check refs-txn hook" '
++test_expect_success "incremental with all kinds of updates (loose refs): check refs-txn hook" '
+ 	cat >expect <<-\EOF &&
+ 		## Call hook: reference-transaction prepared ##
+ 		<COMMIT-C> <ZERO-OID> refs/heads/topic/C
+@@ -1047,7 +1111,7 @@ test_expect_success "incremental with all kinds of updates: check refs-txn hook"
+ #     topic/C (C, tag-C)
+ #     topic/D (D, tag-D)
+ #
+-test_expect_success 'incremental with all kinds of updates (to packed-refs)' '
++test_expect_success 'incremental with all kinds of updates (packed-refs)' '
+ 	git clone --mirror base.git source.git &&
+ 	git -C source.git update-ref refs/heads/topic/B $B &&
+ 	git -C source.git update-ref -d refs/heads/topic/C &&
+@@ -1057,12 +1121,16 @@ test_expect_success 'incremental with all kinds of updates (to packed-refs)' '
+ 
+ 	remove_and_create_dest_repo &&
+ 
+-	git -C dest.git fetch ../base.git "+refs/*:refs/*" &&
++	git -C dest.git \
++		-c fetch.writePackedRefs=false \
++		fetch ../base.git "+refs/*:refs/*" &&
+ 	test_path_is_missing dest.git/packed-refs &&
+ 	test_loose_refs_count dest.git 7 &&
+ 
+ 	clear_hook_output &&
+-	git -c fetch.writepackedrefs=true -C dest.git \
++	git -C dest.git \
++		-c pack.refStoreThreshold=1 \
++		-c fetch.writepackedrefs=true \
+ 		fetch --prune ../source.git "+refs/*:refs/*" &&
+ 	test_path_is_file dest.git/packed-refs &&
+ 
+@@ -1087,11 +1155,11 @@ test_expect_success 'incremental with all kinds of updates (to packed-refs)' '
+ 	test_cmp_heads_and_tags -C dest.git expect
+ '
+ 
+-test_expect_success GIT_CHECKSUM 'incremental with all kinds of updates (to packed-refs): check git-checksum' '
++test_expect_success GIT_CHECKSUM 'incremental with all kinds of updates (packed-refs): check git-checksum' '
+ 	test_verify_checksum -C dest.git
+ '
+ 
+-test_expect_success 'incremental with all kinds of updates (to packed-refs): check refs-txn hook' '
++test_expect_success 'incremental with all kinds of updates (packed-refs): check refs-txn hook' '
+ 	cat >expect <<-\EOF &&
+ 		## Call hook: reference-transaction prepared ##
+ 		<ZERO-OID> <ZERO-OID> refs/heads/topic/C
+@@ -1138,7 +1206,7 @@ test_expect_success 'incremental with all kinds of updates (to packed-refs): che
+ #     topic/C (C, tag-C)
+ #     topic/D (D, tag-D)
+ #
+-test_expect_success 'incremental fetch with old packed-refs (to packed-refs)' '
++test_expect_success 'incremental fetch with old packed-refs (packed-refs)' '
+ 	git clone --mirror base.git source.git &&
+ 	git -C source.git update-ref refs/heads/topic/B $B &&
+ 	git -C source.git update-ref -d refs/heads/topic/C &&
+@@ -1148,14 +1216,18 @@ test_expect_success 'incremental fetch with old packed-refs (to packed-refs)' '
+ 
+ 	remove_and_create_dest_repo &&
+ 
+-	git -C dest.git fetch ../base.git "+refs/*:refs/*" &&
++	git -C dest.git \
++		-c fetch.writePackedRefs=false \
++		fetch ../base.git "+refs/*:refs/*" &&
+ 	test_path_is_missing dest.git/packed-refs &&
+ 	test_loose_refs_count dest.git 7 &&
+ 	echo "$B refs/heads/topic/A"  >dest.git/packed-refs &&
+ 	echo "$C refs/heads/topic/B" >>dest.git/packed-refs &&
+ 
+ 	clear_hook_output &&
+-	git -c fetch.writepackedrefs=true -C dest.git \
++	git -C dest.git \
++		-c pack.refStoreThreshold=1 \
++		-c fetch.writePackedRefs=true \
+ 		fetch --prune ../source.git "+refs/*:refs/*" &&
+ 	test_path_is_file dest.git/packed-refs &&
+ 
+@@ -1181,11 +1253,11 @@ test_expect_success 'incremental fetch with old packed-refs (to packed-refs)' '
+ 	test_cmp_heads_and_tags -C dest.git expect
+ '
+ 
+-test_expect_success GIT_CHECKSUM 'incremental fetch with old packed-refs (to packed-refs): check git-checksum' '
++test_expect_success GIT_CHECKSUM 'incremental fetch with old packed-refs (packed-refs): check git-checksum' '
+ 	test_verify_checksum -C dest.git
+ '
+ 
+-test_expect_success 'incremental fetch with old packed-refs (to packed-refs): check refs-txn hook' '
++test_expect_success 'incremental fetch with old packed-refs (packed-refs): check refs-txn hook' '
+ 	cat >expect <<-\EOF &&
+ 		## Call hook: reference-transaction prepared ##
+ 		<ZERO-OID> <ZERO-OID> refs/heads/topic/C
+-- 
+patchwork

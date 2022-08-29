@@ -1,7 +1,7 @@
-From ea256395bd0f28dd4485523fe512d8fbf2d317fd Mon Sep 17 00:00:00 2001
+From cef3295d9521cf32b359dbf3456be4e004786520 Mon Sep 17 00:00:00 2001
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Thu, 6 Jan 2022 18:03:21 +0800
-Subject: [PATCH 77/77] fetch-to-packed-refs: implement "git-remote update
+Subject: [PATCH 78/79] fetch-to-packed-refs: implement "git-remote update
  --write-packed-refs"
 
 Add new option "--write-packed-refs" to "git-remote update".
@@ -15,8 +15,8 @@ Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---
  Documentation/git-remote.txt               |   2 +
  builtin/remote.c                           |   7 +
- t/t5594-remote-update-write-packed-refs.sh | 298 +++++++++++++++++++++
- 3 files changed, 307 insertions(+)
+ t/t5594-remote-update-write-packed-refs.sh | 301 +++++++++++++++++++++
+ 3 files changed, 310 insertions(+)
  create mode 100755 t/t5594-remote-update-write-packed-refs.sh
 
 diff --git a/Documentation/git-remote.txt b/Documentation/git-remote.txt
@@ -62,10 +62,10 @@ index 5f4cde9d78..a8d28e1436 100644
  	strvec_push(&fetch_argv, "--multiple");
 diff --git a/t/t5594-remote-update-write-packed-refs.sh b/t/t5594-remote-update-write-packed-refs.sh
 new file mode 100755
-index 0000000000..7aac04e065
+index 0000000000..4824f84f4d
 --- /dev/null
 +++ b/t/t5594-remote-update-write-packed-refs.sh
-@@ -0,0 +1,298 @@
+@@ -0,0 +1,301 @@
 +#!/bin/sh
 +# Copyright (c) 2006, Junio C Hamano.
 +
@@ -286,7 +286,9 @@ index 0000000000..7aac04e065
 +#     branch-C (C, tag-C)
 +#
 +test_expect_success 'fetch as loose refs' '
-+	git -C dest.git remote update &&
++	git -C dest.git \
++		-c fetch.writePackedRefs=false \
++		remote update &&
 +	test_path_is_missing dest.git/packed-refs &&
 +	cat >expect <<-EOF &&
 +	<COMMIT-C> HEAD
@@ -335,6 +337,7 @@ index 0000000000..7aac04e065
 +
 +test_expect_success 'remote update --write-packed-refs' '
 +	git -C dest.git \
++		-c pack.refStoreThreshold=1 \
 +		remote update --write-packed-refs --prune &&
 +
 +	test_loose_refs_count dest.git 4 &&
