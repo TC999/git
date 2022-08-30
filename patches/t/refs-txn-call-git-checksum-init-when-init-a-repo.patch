@@ -1,4 +1,4 @@
-From 90169932470e741aebf84f5f62e4087565f7eac0 Mon Sep 17 00:00:00 2001
+From 3f4f2d564a8a15ebb76d243e31c7ebee68992df3 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 9 Aug 2022 10:28:53 +0800
 Subject: [PATCH 72/73] refs-txn: call "git-checksum --init" when init a repo

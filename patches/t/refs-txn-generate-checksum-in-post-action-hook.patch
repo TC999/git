@@ -1,4 +1,4 @@
-From 4da0cee354333eff281a9696642e2b78620197fa Mon Sep 17 00:00:00 2001
+From 4c7a4b54d4984ceff1e20be2aa80ba6b7806bbcb Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Mon, 23 Dec 2019 18:51:40 +0800
 Subject: [PATCH 70/73] refs-txn: generate checksum in post action hook
@@ -17,7 +17,7 @@ Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
  create mode 100755 t/t0903-git-checksum.sh
 
 diff --git a/refs/txn-post-hook.c b/refs/txn-post-hook.c
-index 52b696cd70..e6c5adc43d 100644
+index d0eba717cc..a82f0b2a58 100644
 --- a/refs/txn-post-hook.c
 +++ b/refs/txn-post-hook.c
 @@ -4,6 +4,7 @@
@@ -28,8 +28,8 @@ index 52b696cd70..e6c5adc43d 100644
  
  static int update_is_needed(struct ref_update *update) {
  	if (update->flags & REF_LOG_ONLY)
-@@ -75,6 +76,64 @@ cleanup:
- 	return;
+@@ -68,6 +69,64 @@ static void refs_txn_post_update_last_modified(struct ref_transaction *transacti
+ 	}
  }
  
 +/*
@@ -93,7 +93,7 @@ index 52b696cd70..e6c5adc43d 100644
  /*
   * Called from "reference-transaction committed" for our internal
   * refs post routines.
-@@ -84,4 +143,5 @@ void refs_txn_post_hook(struct ref_transaction *transaction) {
+@@ -77,4 +136,5 @@ void refs_txn_post_hook(struct ref_transaction *transaction) {
  		return;
  
  	refs_txn_post_update_last_modified(transaction);

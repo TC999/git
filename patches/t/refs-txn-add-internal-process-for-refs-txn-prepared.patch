@@ -1,4 +1,4 @@
-From 7678f1027822cf51bfeba56b513d7d2f5a090074 Mon Sep 17 00:00:00 2001
+From dbc0eb08447e6eccfa3d78ec22a06dc2113c9a95 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Mon, 22 Oct 2018 18:17:11 +0800
 Subject: [PATCH 68/73] refs-txn: add internal process for "refs-txn prepared"
@@ -73,7 +73,7 @@ index 782cf5fa78..b4c0e89d36 100644
  #endif /* REFS_REFS_INTERNAL_H */
 diff --git a/refs/txn-pre-hook.c b/refs/txn-pre-hook.c
 new file mode 100644
-index 0000000000..7069fef6c0
+index 0000000000..cd4cac8379
 --- /dev/null
 +++ b/refs/txn-pre-hook.c
 @@ -0,0 +1,59 @@
@@ -116,10 +116,10 @@ index 0000000000..7069fef6c0
 +			ret = 1;
 +			fd = open(lock_file.buf, O_RDONLY);
 +			if (fd != -1) {
-+				fprintf(stderr, "\n");
++				write_str_in_full(2, "\n");
 +				while ((len = read(fd, err_msg, 1024)) > 0)
 +					write_in_full(2, err_msg, len);
-+				fprintf(stderr, "\n");
++				write_str_in_full(2, "\n");
 +				close(fd);
 +			}
 +			break;

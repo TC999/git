@@ -1,7 +1,7 @@
-From 7a962d8365853dc6cbc898bb1e1957b7cf0816d7 Mon Sep 17 00:00:00 2001
+From 9a29dd7172bc98b20ba4807817b7a62a8245015c Mon Sep 17 00:00:00 2001
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Thu, 6 Jan 2022 17:58:56 +0800
-Subject: [PATCH 76/79] fetch-to-packed-refs: implement "git-fetch
+Subject: [PATCH 76/80] direct-to-packed-refs: implement "git-fetch
  --write-packed-refs"
 
 Add new option "--write-packed-refs" to git-fetch. We can also provide

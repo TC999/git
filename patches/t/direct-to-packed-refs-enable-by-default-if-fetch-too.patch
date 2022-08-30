@@ -1,7 +1,7 @@
-From e935aeb024aa68a7f5840c76ed1fe5f6503bbd29 Mon Sep 17 00:00:00 2001
+From 15e6fb8a25ec6dcec91d1544f3ea99a0c06fe945 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Sun, 28 Aug 2022 21:40:24 +0800
-Subject: [PATCH 77/79] fetch-to-packed-refs: enable by default if fetch too
+Subject: [PATCH 77/80] direct-to-packed-refs: enable by default if fetch too
  many refs
 
 The fetch to packed-refs behavior will be turn on automatically if there
@@ -24,8 +24,10 @@ Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---
  Documentation/config/pack.txt      |  10 ++
  builtin/fetch.c                    |  25 +++-
+ t/t1416-ref-transaction-hooks.sh   |   4 +
+ t/t5510-fetch.sh                   |   2 +-
  t/t5593-fetch-write-packed-refs.sh | 216 +++++++++++++++++++----------
- 3 files changed, 176 insertions(+), 75 deletions(-)
+ 5 files changed, 181 insertions(+), 76 deletions(-)
 
 diff --git a/Documentation/config/pack.txt b/Documentation/config/pack.txt
 index ad7f73a1ea..70f4c7681c 100644
@@ -121,6 +123,34 @@ index 12055bb641..21d69775f1 100644
  	if (keep)
  		strvec_push(argv, "--keep");
  	if (recurse_submodules == RECURSE_SUBMODULES_ON)
+diff --git a/t/t1416-ref-transaction-hooks.sh b/t/t1416-ref-transaction-hooks.sh
+index 3d39e1634a..666a47dd5e 100755
+--- a/t/t1416-ref-transaction-hooks.sh
++++ b/t/t1416-ref-transaction-hooks.sh
+@@ -8,6 +8,10 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ . ./test-lib.sh
+ 
+ test_expect_success setup '
++	# Use high threshold to prevent write directly to packed-refs.
++	git config --file "$TRASH_DIRECTORY/.gitconfig" \
++		pack.refStoreThreshold 100 &&
++
+ 	test_commit PRE &&
+ 	PRE_OID=$(git rev-parse PRE) &&
+ 	test_commit POST &&
+diff --git a/t/t5510-fetch.sh b/t/t5510-fetch.sh
+index d2903b81e5..3da8f8a773 100755
+--- a/t/t5510-fetch.sh
++++ b/t/t5510-fetch.sh
+@@ -293,7 +293,7 @@ test_expect_success 'fetch --atomic executes a single reference transaction only
+ 		( echo "$*" && cat ) >>actual
+ 	EOF
+ 
+-	git -C atomic fetch --atomic origin &&
++	git -C atomic fetch --no-write-packed-refs --atomic origin &&
+ 	test_cmp expected atomic/actual
+ '
+ 
 diff --git a/t/t5593-fetch-write-packed-refs.sh b/t/t5593-fetch-write-packed-refs.sh
 index af93e7ee3d..686d1ec692 100755
 --- a/t/t5593-fetch-write-packed-refs.sh

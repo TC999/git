@@ -1,8 +1,8 @@
-From 521706e15aac682b621e7b9b6020b7de995c94cb Mon Sep 17 00:00:00 2001
+From 5983598feb772265385aac654b259521534c415b Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Fri, 26 Aug 2022 21:42:14 +0800
-Subject: [PATCH 79/79] update-ref: write to packed-refs automatically for
- --stdin mode
+Subject: [PATCH 79/80] direct-to-packed-refs: write to packed-refs for
+ update-ref --stdin
 
 When running update-ref in stdin mode, write references to packed-refs
 automatically if number of entries in the transaction is equal to or

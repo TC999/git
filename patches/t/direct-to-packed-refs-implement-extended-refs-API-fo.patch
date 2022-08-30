@@ -1,7 +1,7 @@
-From def47e59309890bd655efeb77f6df01ae42f251c Mon Sep 17 00:00:00 2001
+From 6be4c65fc90e031f0d173a4f7934c87ca0e0f4da Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 23 Aug 2022 13:53:19 +0800
-Subject: [PATCH 75/79] fetch-to-packed-refs: implement extended refs API for
+Subject: [PATCH 75/80] direct-to-packed-refs: implement extended refs API for
  files-backend
 
 When we use "git fetch", references are always written as loose

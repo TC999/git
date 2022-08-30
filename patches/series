@@ -71,10 +71,11 @@ t/refs-txn-generate-checksum-in-post-action-hook.patch
 t/refs-txn-more-checksum-testcases-in-t0903-from-t1416.patch
 t/refs-txn-call-git-checksum-init-when-init-a-repo.patch
 t/refs-txn-call-execute_commands_atomic-for-large-refs.patch
-t/fetch-to-packed-refs-new-extension-for-refs-API.patch
-t/fetch-to-packed-refs-implement-extended-refs-API-for.patch
-t/fetch-to-packed-refs-implement-git-fetch-write-packe.patch
-t/fetch-to-packed-refs-enable-by-default-if-fetch-too-.patch
-t/fetch-to-packed-refs-implement-git-remote-update-wri.patch
-t/update-ref-write-to-packed-refs-automatically-for-st.patch
+t/direct-to-packed-refs-new-extension-for-refs-API.patch
+t/direct-to-packed-refs-implement-extended-refs-API-fo.patch
+t/direct-to-packed-refs-implement-git-fetch-write-pack.patch
+t/direct-to-packed-refs-enable-by-default-if-fetch-too.patch
+t/direct-to-packed-refs-implement-git-remote-update-wr.patch
+t/direct-to-packed-refs-write-to-packed-refs-for-updat.patch
+t/direct-to-packed-refs-FIXME-add-temporary-workaround.patch
 t/upload-pack-Add-pack-objects-hook-agit-clause.patch

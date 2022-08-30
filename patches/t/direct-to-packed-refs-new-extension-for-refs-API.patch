@@ -1,7 +1,7 @@
-From e13cd0a78b02e6b113d193549a1de3330ca02c77 Mon Sep 17 00:00:00 2001
+From 5724dfffd867e38b10a09edac4469962104bef67 Mon Sep 17 00:00:00 2001
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Thu, 6 Jan 2022 17:56:36 +0800
-Subject: [PATCH 74/79] fetch-to-packed-refs: new extension for refs API
+Subject: [PATCH 74/80] direct-to-packed-refs: new extension for refs API
 
 Add new interfaces to refs API, so we can update references directly
 into packed ref-store instead of files refs-store to increase

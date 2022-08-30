@@ -1,4 +1,4 @@
-From 07da93330b3da6bd0ccac28c5a9db63fb1a1bf5c Mon Sep 17 00:00:00 2001
+From 579ba2eb49f0eff1c059f45ef8e50368365e99e6 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 23 Oct 2018 11:18:16 +0800
 Subject: [PATCH 69/73] refs-txn: use refs-txn hook to refresh last modified
@@ -16,9 +16,9 @@ Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
  Makefile                 |   1 +
  refs.c                   |   6 ++
  refs/refs-internal.h     |   8 ++
- refs/txn-post-hook.c     |  87 ++++++++++++++++++++++
+ refs/txn-post-hook.c     |  80 ++++++++++++++++++++
  t/t0902-last-modified.sh | 155 +++++++++++++++++++++++++++++++++++++++
- 5 files changed, 257 insertions(+)
+ 5 files changed, 250 insertions(+)
  create mode 100644 refs/txn-post-hook.c
  create mode 100755 t/t0902-last-modified.sh
 
@@ -70,10 +70,10 @@ index b4c0e89d36..1f86887155 100644
  #endif /* REFS_REFS_INTERNAL_H */
 diff --git a/refs/txn-post-hook.c b/refs/txn-post-hook.c
 new file mode 100644
-index 0000000000..52b696cd70
+index 0000000000..d0eba717cc
 --- /dev/null
 +++ b/refs/txn-post-hook.c
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,80 @@
 +#include "../cache.h"
 +#include "refs-internal.h"
 +#include "run-command.h"
@@ -106,8 +106,7 @@ index 0000000000..52b696cd70
 + * Create/update last_modified file for post action of files_transaction.
 + */
 +static void refs_txn_post_update_last_modified(struct ref_transaction *transaction) {
-+	const char *path = git_path_info_last_modified();
-+	struct stat fstat;
++	const char *filename = git_path_info_last_modified();
 +	int fd;
 +	int i;
 +	int has_change = 0;
@@ -126,29 +125,23 @@ index 0000000000..52b696cd70
 +		return;
 +
 +	/* Create .git/info/last-modified file if not exist */
-+	if (access(path, F_OK)) {
-+		fd = creat(path, 0666);
-+		if (fd < 0)
-+			error("fail to create file %s", path);
-+		else {
-+			close(fd);
-+			adjust_shared_perm(path);
++	if (access(filename, F_OK)) {
++		if (safe_create_leading_directories((char *)filename)) {
++			error_errno(_("failed to create directories for '%s'"), filename);
++			return;
 +		}
-+		goto cleanup;
++		fd = open(filename, O_CREAT | O_WRONLY, 0666);
++		if (fd < 0) {
++			error_errno("fail to create file %s", filename);
++			return;
++		}
++		close(fd);
++		adjust_shared_perm(filename);
 +	}
 +
-+	if (stat(path, &fstat)) {
-+		error("fail to stat %s", path);
-+		goto cleanup;
++	if (utime(filename, NULL)) {
++		error_errno("fail to change mtime for %s", filename);
 +	}
-+
-+	if (utime(path, NULL)) {
-+		error("fail to change mtime of %s", path);
-+		goto cleanup;
-+	}
-+
-+cleanup:
-+	return;
 +}
 +
 +/*
