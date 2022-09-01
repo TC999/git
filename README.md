@@ -21,11 +21,19 @@
 * agit-master：将我们补丁打到 Git 源码的分支，方便大家快速本地编译和调试，**打标规则：vx.x.x-agit-y.y.y，其中 x 为 Git 的版本，y 为 AGit 版本**
 
 ## 已经发布的特性分支
+
 ### topic/0010-github-action
+
 说明：
-* 本特性对 GitHub Action 进行定制，减少在不必要的平台（Windows、macOS）上的构建，以节省费用
+* 本特性对 GitHub Action 进行定制，减少在不必要的平台（Linux、Windows、macOS）上的构建，以节省费用
 * 安装必要的依赖文件，例如在 macOS 上安装 openssl
 * 设置 README 中的编译徽章，从原来指向 git/git 项目，到指向 gotgit/private-git 项目
+* 推送到 GitHub 的 `gotgit/private-git` 仓库的more分支，只开启基本测试。
+* 当基本测试通过后，推送到特定分支名，以开启 Linux、Windows、macOS 的构建。例如推送到
+  "ci/build-for-windows-linux-macos" 分支以开启全量测试。CI 构建通过分支名是否包含 "windows"、
+  "linux"、"macos" 来判断是否开启特定平台 CI 构建。 
+
+
 ### topic/0020-refs-txn-hook
 说明：
 * 为 Git 的引用更新增加前置和后置钩子，实现仓库加锁、更新仓库最后更新时间、刷新仓库 checksum 的功能
