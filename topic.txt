@@ -4,6 +4,7 @@ refs-txn-hook: refactor-refs-txn
 black-hole
 quiltexport
 rate-limit
+proc-receive-multiple-prefixes
 agit-txn
 agit-gc
 transparent-data-encryption
