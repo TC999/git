@@ -3,6 +3,8 @@ AGIT Release Notes
 
 v6.6.0-dev
 ----------
+* github-actions: add conditional build for linux/windows/macos.
+
 * refactor-refs-txn: new topic to fix "reference-transaction" hook.
 
 * refs-txn-hook: rebase to "refactor-refs-txn" and refactor internal

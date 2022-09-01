@@ -1,7 +1,7 @@
-From 42fcb82b4ed13a8dd33a64fa475046e323f2c5a5 Mon Sep 17 00:00:00 2001
+From 1368abf10707c854fd253bc8f54bfec19a95f054 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Wed, 2 Jun 2021 17:56:35 +0800
-Subject: [PATCH 2/3] github action: install openssl for macOS
+Subject: [PATCH 2/3] github actions: install openssl for macOS
 
 Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---

@@ -1,6 +1,6 @@
-t/github-action-show-build-status-from-gotgit-private-.patch
-t/github-action-install-openssl-for-macOS.patch
-t/github-action-remove-build-for-windows-macOS.patch
+t/github-actions-show-build-status-from-gotgit-private.patch
+t/github-actions-install-openssl-for-macOS.patch
+t/github-actions-only-run-basic-CI-builds-by-default.patch
 t/t1416-more-testcases-for-reference-transaction-hook.patch
 t/refs-update-missing-old-oid-in-transaction-from-lock.patch
 t/refs-add-new-field-in-transaction-for-running-transa.patch
