@@ -1,12 +1,16 @@
-From a61011c438926e8cf8a922b32045679fa8b5a244 Mon Sep 17 00:00:00 2001
+From dcf231d9bcc69cf63e20ed1f70618356cefb11ad Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 7 Jul 2020 22:30:14 +0800
-Subject: [PATCH 25/25] gc: set threshold for packs automatically
+Subject: [PATCH 26/26] gc: set threshold for packs automatically
 
 Add new config variable "agit.gc", which is enabled (-1) by default.
 
 Set big_pack_threshold and keep_pack_threshold automatically if agit.gc
 is enabled and repo size greater than 200MB.
+
+EDIT:
+
+ * [Jiang Xin, 2022-09-02] setpreq to bypass 2 testcases on Windows.
 
 Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---
@@ -313,7 +317,7 @@ index 04e60a0255..7f4e52d2b7 100755
  
 diff --git a/t/t6503-agit-gc-threshold.sh b/t/t6503-agit-gc-threshold.sh
 new file mode 100755
-index 0000000000..4d78ad2fd5
+index 0000000000..9166564d1a
 --- /dev/null
 +++ b/t/t6503-agit-gc-threshold.sh
 @@ -0,0 +1,142 @@
@@ -420,7 +424,7 @@ index 0000000000..4d78ad2fd5
 +	test_cmp expect actual
 +'
 +
-+test_expect_success 'pack size: 32GB ~ 64GB' '
++test_expect_success !MINGW,!CYGWIN 'pack size: 32GB ~ 64GB' '
 +	if uname -a | grep -w i686 || test "$jobname" = "linux32"
 +	then
 +		cat >expect <<-EOF
@@ -439,7 +443,7 @@ index 0000000000..4d78ad2fd5
 +	test_cmp expect actual
 +'
 +
-+test_expect_success 'pack size: 64GB ~' '
++test_expect_success !MINGW,!CYGWIN 'pack size: 64GB ~' '
 +	if uname -a | grep -w i686 || test "$jobname" = "linux32"
 +	then
 +		cat >expect <<-EOF

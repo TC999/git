@@ -1,7 +1,7 @@
 From df9e0106c4645819bd7a776a9377725d9448a5e0 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 12 Jul 2022 08:58:54 +0800
-Subject: [PATCH 06/12] refs: add new field in transaction for running
+Subject: [PATCH 07/13] refs: add new field in transaction for running
  transaction hook
 
 Add a new field "hook_flags" in transaction, and only run the

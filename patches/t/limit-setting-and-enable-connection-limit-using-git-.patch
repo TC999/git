@@ -1,7 +1,7 @@
-From 0f75758b57ddd2a91a008eea662259f5133f44db Mon Sep 17 00:00:00 2001
+From e1cd4fad0b8f77626f06186d506d1a3c7baa34ba Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Thu, 3 Jun 2021 17:09:49 +0800
-Subject: [PATCH 21/21] limit: setting and enable connection limit using git
+Subject: [PATCH 22/22] limit: setting and enable connection limit using git
  config
 
 Loadavg connection limit is disabled by default, must enable explicitly
@@ -30,7 +30,7 @@ Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
  4 files changed, 114 insertions(+), 101 deletions(-)
 
 diff --git a/limiting.c b/limiting.c
-index c6b674c6de..be26c6b4d8 100644
+index 152b044262..74d13927e0 100644
 --- a/limiting.c
 +++ b/limiting.c
 @@ -21,6 +21,7 @@
@@ -41,8 +41,8 @@ index c6b674c6de..be26c6b4d8 100644
  
  #ifdef __APPLE__
    #include <sys/sysctl.h>
-@@ -28,19 +29,70 @@
-   #include <sys/sysinfo.h>
+@@ -30,19 +31,70 @@
+   #include <Psapi.h>
  #endif
  
 -static int getenv_int(char *env, int value)
@@ -120,7 +120,7 @@ index c6b674c6de..be26c6b4d8 100644
  }
  
  static int loadavg_test_dryrun(void)
-@@ -48,7 +100,7 @@ static int loadavg_test_dryrun(void)
+@@ -50,7 +102,7 @@ static int loadavg_test_dryrun(void)
  	static int n = -1;
  
  	if (n == -1)
@@ -129,7 +129,7 @@ index c6b674c6de..be26c6b4d8 100644
  	return n;
  }
  
-@@ -68,56 +120,6 @@ static int loadavg_test_mock(struct string_list *loadavg_list)
+@@ -70,56 +122,6 @@ static int loadavg_test_mock(struct string_list *loadavg_list)
  	return 1;
  }
  
@@ -186,7 +186,7 @@ index c6b674c6de..be26c6b4d8 100644
  static int get_loadavg(void)
  {
  	struct strbuf buf = STRBUF_INIT;
-@@ -197,15 +199,14 @@ static int get_loadavg(void)
+@@ -209,15 +211,14 @@ static int get_loadavg(void)
  	return percent;
  }
  
@@ -204,7 +204,7 @@ index c6b674c6de..be26c6b4d8 100644
  }
  
  /* sideband: 2 - progress, 3- error */
-@@ -244,13 +245,18 @@ int wait_for_avail_loadavg(int use_sideband)
+@@ -256,13 +257,18 @@ int wait_for_avail_loadavg(int use_sideband)
  	int sleep_secs;
  	int band = 0;
  
@@ -225,7 +225,7 @@ index c6b674c6de..be26c6b4d8 100644
  				sideband_printf(band,
  						"Server load (%d%%) is still high, quilt",
  						loadavg);
-@@ -261,9 +267,9 @@ int wait_for_avail_loadavg(int use_sideband)
+@@ -273,9 +279,9 @@ int wait_for_avail_loadavg(int use_sideband)
  			return 1;
  		} else {
  			srand(time(NULL));
@@ -238,7 +238,7 @@ index c6b674c6de..be26c6b4d8 100644
  					1);
  			if (use_sideband)
  				band = 2;
-@@ -272,7 +278,7 @@ int wait_for_avail_loadavg(int use_sideband)
+@@ -284,7 +290,7 @@ int wait_for_avail_loadavg(int use_sideband)
  					loadavg,
  					sleep_secs,
  					retries,
@@ -260,7 +260,7 @@ index 2f1c5e3958..feafa92348 100644
  #define ENV_LOADAVG_HARD_LIMIT		"AGIT_LOADAVG_HARD_LIMIT"
  #define ENV_LOADAVG_SLEEP_MIN		"AGIT_LOADAVG_SLEEP_MIN"
 diff --git a/t/t0930-git-fetch-rate-limit.sh b/t/t0930-git-fetch-rate-limit.sh
-index 82f5d3784d..b853e6755e 100755
+index 22c54b644b..d7af092a01 100755
 --- a/t/t0930-git-fetch-rate-limit.sh
 +++ b/t/t0930-git-fetch-rate-limit.sh
 @@ -47,16 +47,26 @@ create_commits_in () {
@@ -330,7 +330,7 @@ index 82f5d3784d..b853e6755e 100755
  
  	grep "^remote:" actual >actual.1 &&
 diff --git a/t/t0931-git-push-rate-limit.sh b/t/t0931-git-push-rate-limit.sh
-index 845c79f3be..868f7cb1a4 100755
+index 7cd4a22301..d67695dda7 100755
 --- a/t/t0931-git-push-rate-limit.sh
 +++ b/t/t0931-git-push-rate-limit.sh
 @@ -47,8 +47,7 @@ create_commits_in () {
@@ -407,7 +407,7 @@ index 845c79f3be..868f7cb1a4 100755
  	(
  		cd workcopy &&
  		test_must_fail env \
-@@ -170,7 +173,7 @@ test_expect_success "push failed: hard limit" '
+@@ -163,7 +166,7 @@ test_expect_success "push failed: hard limit" '
  test_expect_success "push fail: all soft limit" '
  	rm -r "$bare" &&
  	create_bare_repo "$bare" &&
@@ -416,7 +416,7 @@ index 845c79f3be..868f7cb1a4 100755
  	(
  		cd workcopy &&
  		test_must_fail env \
-@@ -216,7 +219,7 @@ test_expect_success "push fail: all soft limit" '
+@@ -202,7 +205,7 @@ test_expect_success "push fail: all soft limit" '
  test_expect_success "push ok: 3 soft limit, and ok" '
  	rm -r "$bare" &&
  	create_bare_repo "$bare" &&

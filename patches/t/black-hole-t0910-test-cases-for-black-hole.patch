@@ -1,7 +1,7 @@
 From ba3a3e7a014c8c77f9dbe1f366b1b38258a96cff Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 28 Jun 2022 19:34:14 +0800
-Subject: [PATCH 18/18] black-hole: t0910: test cases for black-hole
+Subject: [PATCH 19/19] black-hole: t0910: test cases for black-hole
 
 Add test cases git-clone and git-fetch for black-hole mode.
 

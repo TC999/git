@@ -1,7 +1,7 @@
 From 579ba2eb49f0eff1c059f45ef8e50368365e99e6 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 23 Oct 2018 11:18:16 +0800
-Subject: [PATCH 69/73] refs-txn: use refs-txn hook to refresh last modified
+Subject: [PATCH 73/77] refs-txn: use refs-txn hook to refresh last modified
  time of a repo
 
 Add an internal function "refs_txn_post_hook()" and run it along with

@@ -1,7 +1,7 @@
-From 167bdc1ba19c6e407a773087383f5b8d29f0c667 Mon Sep 17 00:00:00 2001
+From ae50b4f3188b91f372a205bc9b2757561364fb9b Mon Sep 17 00:00:00 2001
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Mon, 29 Mar 2021 15:06:51 +0800
-Subject: [PATCH 45/47] crypto: add new crypto algo AES_X4
+Subject: [PATCH 47/51] crypto: add new crypto algo AES_X4
 
 AES_X4(algo type 3) will repeat each byte of seq for 4 times, and
 encrypt 64 bytes once. In this mode, we only need 1/4 of calls to do

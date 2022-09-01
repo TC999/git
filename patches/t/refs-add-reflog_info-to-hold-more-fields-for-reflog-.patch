@@ -1,7 +1,7 @@
 From d9d72450c0e019a27b8a100a21533d67242c3a31 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Mon, 18 Jul 2022 22:21:08 +0800
-Subject: [PATCH 09/12] refs: add reflog_info to hold more fields for reflog
+Subject: [PATCH 10/13] refs: add reflog_info to hold more fields for reflog
  entry
 
 The parameter "msg" of the functions "ref_transaction_add_update()" and

@@ -1,7 +1,7 @@
-From 81a1e39def367be1746d98ca8933c448b45cf860 Mon Sep 17 00:00:00 2001
+From b1ebb33fc45058609bffaa5ab07dd06715884fcb Mon Sep 17 00:00:00 2001
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Thu, 7 Jan 2021 17:38:38 +0800
-Subject: [PATCH 35/47] crypto: read and verify encrypted packfile
+Subject: [PATCH 37/51] crypto: read and verify encrypted packfile
 
 If packfile is encrypted, try to decrypt when call use_pack().
 

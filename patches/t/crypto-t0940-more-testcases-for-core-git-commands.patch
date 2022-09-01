@@ -1,7 +1,7 @@
-From 0f6a68b08677e3135d23d8e94371ba6f15db0664 Mon Sep 17 00:00:00 2001
+From 1a4f70a02fa413eb839e2fb1c0a10b0a4c7fe7f3 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 29 Dec 2020 16:22:29 +0800
-Subject: [PATCH 39/47] crypto: t0940: more testcases for core git commands
+Subject: [PATCH 41/51] crypto: t0940: more testcases for core git commands
 
 Some test cases failed, and will be fixed later.
 

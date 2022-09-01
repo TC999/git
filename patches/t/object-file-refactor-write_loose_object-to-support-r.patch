@@ -1,7 +1,7 @@
 From 515fb8f99eccd91fa8bdffe4985098a4092e5351 Mon Sep 17 00:00:00 2001
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Tue, 9 Nov 2021 16:56:30 +0800
-Subject: [PATCH 48/56] object-file: refactor write_loose_object() to support
+Subject: [PATCH 52/60] object-file: refactor write_loose_object() to support
  read from stream
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

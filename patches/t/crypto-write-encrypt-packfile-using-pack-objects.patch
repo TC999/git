@@ -1,7 +1,7 @@
-From 356b6a1eb74460f9cbeab08ccce4c6b2f9875363 Mon Sep 17 00:00:00 2001
+From a7f807c47f00c706be620c9c6d909c904b93c681 Mon Sep 17 00:00:00 2001
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Thu, 7 Jan 2021 17:11:22 +0800
-Subject: [PATCH 32/47] crypto: write encrypt packfile using pack-objects
+Subject: [PATCH 34/51] crypto: write encrypt packfile using pack-objects
 
 When writting packfile, we call `hashwrite()`.  By using an enhanced
 writer `hashwrite_try_encrypt()`, we can write encrypt packfile by

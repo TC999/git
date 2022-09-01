@@ -1,7 +1,7 @@
 From 51178c0b96a8a2e8b68901d61058f97031bd9a68 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?=E7=82=BD=E5=A4=A9?= <hanxin.hx@alibaba-inc.com>
 Date: Thu, 10 Dec 2020 13:53:55 +0800
-Subject: [PATCH 26/47] crypto: trace: add trace hexdump
+Subject: [PATCH 27/51] crypto: trace: add trace hexdump
 
 trace_hexdump_key() will help us to dump the hex data.
 

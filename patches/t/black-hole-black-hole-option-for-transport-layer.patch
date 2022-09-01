@@ -1,7 +1,7 @@
 From 83a590452fd982937db1096ce406e546eacde450 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 28 Jun 2022 18:51:29 +0800
-Subject: [PATCH 14/18] black-hole: "black-hole" option for transport layer
+Subject: [PATCH 15/19] black-hole: "black-hole" option for transport layer
 
 The transport layer is an interface between the git front-end and the
 protocol helper. Add new "black-hole" option for the transport layer,

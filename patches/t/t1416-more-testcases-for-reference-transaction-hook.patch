@@ -1,7 +1,7 @@
 From 908dbd96904d40cafe2e46d501ad4525edeb17cc Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Sat, 16 Jul 2022 19:23:51 +0800
-Subject: [PATCH 04/12] t1416: more testcases for reference-transaction hook
+Subject: [PATCH 05/13] t1416: more testcases for reference-transaction hook
 
 Append more testcases in t1416 for various git commands that may trigger
 the "reference-transaction" hook.

@@ -1,22 +1,35 @@
-From 3f2b7a3bb884228b200ddc7b868256d6f820bd16 Mon Sep 17 00:00:00 2001
+From 1d2a0217549603a3ea202a37c3c0532f89348f55 Mon Sep 17 00:00:00 2001
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Fri, 5 Feb 2021 15:57:29 +0800
-Subject: [PATCH 43/47] crypto: add decrypt sub cmd
+Subject: [PATCH 45/51] crypto: add decrypt sub cmd
 
 Decrypt runs like git gc --prune=now which will remove unreachable loose
 objects to keep all objects decrypted after repack.
 
 Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---
+ .gitignore                   |   1 +
  Makefile                     |   1 +
  builtin.h                    |   1 +
  builtin/decrypt.c            | 259 +++++++++++++++++++++++++++++++++++
  git.c                        |   1 +
  t/t0940/test-1099-decrypt.sh |  64 +++++++++
- 5 files changed, 326 insertions(+)
+ 6 files changed, 327 insertions(+)
  create mode 100644 builtin/decrypt.c
  create mode 100644 t/t0940/test-1099-decrypt.sh
 
+diff --git a/.gitignore b/.gitignore
+index e81de1063a..d9434be472 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -53,6 +53,7 @@
+ /git-cvsimport
+ /git-cvsserver
+ /git-daemon
++/git-decrypt
+ /git-diff
+ /git-diff-files
+ /git-diff-index
 diff --git a/Makefile b/Makefile
 index 007d83442f..451699671f 100644
 --- a/Makefile

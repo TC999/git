@@ -1,4 +1,4 @@
-From 4a0c21f929d45294f886f243b40ed82a8a45ec5e Mon Sep 17 00:00:00 2001
+From 3098ad3117f79a12d5b3b86fd1870d314739fa5f Mon Sep 17 00:00:00 2001
 From: Xing Xin <moweng.xx@alibaba-inc.com>
 Date: Fri, 12 Aug 2022 14:43:06 +0800
 Subject: [PATCH] upload-pack: Add pack-objects hook agit clause

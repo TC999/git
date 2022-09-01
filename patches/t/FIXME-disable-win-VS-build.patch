@@ -1,0 +1,26 @@
+From 21e5110d0fd46d370f730a6fea5d92b6a29048b3 Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Fri, 2 Sep 2022 17:15:53 +0800
+Subject: [PATCH 4/4] FIXME: disable win+VS build
+
+Fail to link openssl for windows + VS build.
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ .github/workflows/main.yml | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/.github/workflows/main.yml b/.github/workflows/main.yml
+index ae8f2e02fc..26da3f13ab 100644
+--- a/.github/workflows/main.yml
++++ b/.github/workflows/main.yml
+@@ -135,6 +135,7 @@ jobs:
+     name: win+VS build
+     needs: ci-config
+     if: >-
++      false &&
+       needs.ci-config.outputs.enabled == 'yes' &&
+       contains(github.ref, 'windows')
+     env:
+-- 
+patchwork

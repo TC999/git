@@ -1,7 +1,7 @@
 From 74cac43dfac16f41432a6b91d82a47d9b88f08a1 Mon Sep 17 00:00:00 2001
 From: Xu Ziyang <yunhuai.xzy@alibaba-inc.com>
 Date: Mon, 18 Oct 2021 17:16:16 +0800
-Subject: [PATCH 58/60] pre-send-pack: new hook to send notifications before
+Subject: [PATCH 62/64] pre-send-pack: new hook to send notifications before
  sending pack
 
 In order to send notifications when a user is cloning the repository,

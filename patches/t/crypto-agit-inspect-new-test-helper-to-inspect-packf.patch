@@ -1,7 +1,7 @@
-From 77649aa58e15c70a53a85932d10e46815c8ddc58 Mon Sep 17 00:00:00 2001
+From c267a7b74940cf08c2f8ffc4a3c8effc18ba7ac9 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Wed, 17 Feb 2021 14:25:17 +0800
-Subject: [PATCH 37/47] crypto: agit-inspect: new test helper to inspect
+Subject: [PATCH 39/51] crypto: agit-inspect: new test helper to inspect
  packfile
 
 To inspect a packfile, using command:

@@ -1,7 +1,7 @@
-From 567b70f831afe2823041275e740d4d6ae32c8d26 Mon Sep 17 00:00:00 2001
+From 6f95ee73b5f70596c650f704437ad2a7607b1fb8 Mon Sep 17 00:00:00 2001
 From: "bojun.cbj" <bojun.cbj@alibaba-inc.com>
 Date: Tue, 11 Feb 2020 15:37:57 +0800
-Subject: [PATCH 23/23] agit-txn: push transactions for multiple replicas
+Subject: [PATCH] agit-txn: push transactions for multiple replicas
 
 Galileo project has a coordinator which coordinates the push operation
 on multiple replicas for one repository. The redesigned push protocol
@@ -65,6 +65,11 @@ Response from Galileo to "receive-pack":
 
         A flush packet will be given after this directive.
 
+EDIT:
+
+ * [Jiang Xin, 2022-09-02] mkfifo is missing on Windows, so we add preq
+   PIPE for each testcase, so we can bypass these testcases on Windows.
+
 Helped-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Signed-off-by: bojun.cbj <bojun.cbj@alibaba-inc.com>
 Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
@@ -75,7 +80,7 @@ Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
  create mode 100755 t/t0932-agit-receive-txn.sh
 
 diff --git a/builtin/receive-pack.c b/builtin/receive-pack.c
-index ffa0fc4f84..e4c93dc954 100644
+index 9aabffa1af..f259cc869d 100644
 --- a/builtin/receive-pack.c
 +++ b/builtin/receive-pack.c
 @@ -69,6 +69,15 @@ static int auto_update_server_info;
@@ -94,7 +99,7 @@ index ffa0fc4f84..e4c93dc954 100644
  static const char *service_dir;
  static const char *head_name;
  static void *head_name_to_free;
-@@ -116,6 +125,55 @@ static struct proc_receive_ref {
+@@ -111,6 +120,55 @@ static struct proc_receive_ref {
  
  static void proc_receive_ref_append(const char *prefix);
  
@@ -150,7 +155,7 @@ index ffa0fc4f84..e4c93dc954 100644
  static enum deny_action parse_deny_action(const char *var, const char *value)
  {
  	if (value) {
-@@ -1073,9 +1131,15 @@ static int read_proc_receive_report(struct packet_reader *reader,
+@@ -1039,9 +1097,15 @@ static int read_proc_receive_report(struct packet_reader *reader,
  				report->new_oid = oiddup(&new_oid);
  			else if (!strcmp(key, "forced-update"))
  				report->forced_update = 1;
@@ -167,7 +172,7 @@ index ffa0fc4f84..e4c93dc954 100644
  			continue;
  		}
  
-@@ -1844,6 +1908,72 @@ static int should_process_cmd(struct command *cmd)
+@@ -1810,6 +1874,72 @@ static int should_process_cmd(struct command *cmd)
  	return !cmd->error_string && !cmd->skip_update;
  }
  
@@ -240,7 +245,7 @@ index ffa0fc4f84..e4c93dc954 100644
  static void warn_if_skipped_connectivity_check(struct command *commands,
  					       struct shallow_info *si)
  {
-@@ -1934,10 +2064,85 @@ cleanup:
+@@ -1900,10 +2030,85 @@ cleanup:
  	strbuf_release(&err);
  }
  
@@ -327,7 +332,7 @@ index ffa0fc4f84..e4c93dc954 100644
  {
  	struct check_connected_options opt = CHECK_CONNECTED_INIT;
  	struct command *cmd;
-@@ -1949,6 +2154,7 @@ static void execute_commands(struct command *commands,
+@@ -1915,6 +2120,7 @@ static void execute_commands(struct command *commands,
  	if (unpacker_error) {
  		for (cmd = commands; cmd; cmd = cmd->next)
  			cmd->error_string = "unpacker error";
@@ -335,7 +340,7 @@ index ffa0fc4f84..e4c93dc954 100644
  		return;
  	}
  
-@@ -1995,9 +2201,21 @@ static void execute_commands(struct command *commands,
+@@ -1961,9 +2167,21 @@ static void execute_commands(struct command *commands,
  			if (!cmd->error_string)
  				cmd->error_string = "pre-receive hook declined";
  		}
@@ -357,7 +362,7 @@ index ffa0fc4f84..e4c93dc954 100644
  	/*
  	 * If there is no command ready to run, should return directly to destroy
  	 * temporary data in the quarantine area.
-@@ -2016,6 +2234,7 @@ static void execute_commands(struct command *commands,
+@@ -1982,6 +2200,7 @@ static void execute_commands(struct command *commands,
  			if (!cmd->error_string)
  				cmd->error_string = "unable to migrate objects to permanent storage";
  		}
@@ -365,7 +370,7 @@ index ffa0fc4f84..e4c93dc954 100644
  		return;
  	}
  	tmp_objdir = NULL;
-@@ -2026,12 +2245,37 @@ static void execute_commands(struct command *commands,
+@@ -1992,12 +2211,37 @@ static void execute_commands(struct command *commands,
  	head_name = head_name_to_free = resolve_refdup("HEAD", 0, NULL, NULL);
  
  	if (run_proc_receive &&
@@ -404,7 +409,7 @@ index ffa0fc4f84..e4c93dc954 100644
  
  	if (use_atomic)
  		execute_commands_atomic(commands, si);
-@@ -2040,6 +2284,9 @@ static void execute_commands(struct command *commands,
+@@ -2006,6 +2250,9 @@ static void execute_commands(struct command *commands,
  
  	if (shallow_update)
  		warn_if_skipped_connectivity_check(commands, si);
@@ -414,7 +419,7 @@ index ffa0fc4f84..e4c93dc954 100644
  }
  
  static struct command **queue_command(struct command **tail,
-@@ -2512,6 +2759,7 @@ int cmd_receive_pack(int argc, const char **argv, const char *prefix)
+@@ -2478,6 +2725,7 @@ int cmd_receive_pack(int argc, const char **argv, const char *prefix)
  		OPT_HIDDEN_BOOL(0, "http-backend-info-refs", &advertise_refs, NULL),
  		OPT_ALIAS(0, "advertise-refs", "http-backend-info-refs"),
  		OPT_HIDDEN_BOOL(0, "reject-thin-pack-for-testing", &reject_thin, NULL),
@@ -422,7 +427,7 @@ index ffa0fc4f84..e4c93dc954 100644
  		OPT_END()
  	};
  
-@@ -2593,7 +2841,7 @@ int cmd_receive_pack(int argc, const char **argv, const char *prefix)
+@@ -2559,7 +2807,7 @@ int cmd_receive_pack(int argc, const char **argv, const char *prefix)
  		}
  		use_keepalive = KEEPALIVE_ALWAYS;
  		execute_commands(commands, unpack_status, &si,
@@ -431,7 +436,7 @@ index ffa0fc4f84..e4c93dc954 100644
  		if (pack_lockfile)
  			unlink_or_warn(pack_lockfile);
  		sigchain_push(SIGPIPE, SIG_IGN);
-@@ -2602,9 +2850,11 @@ int cmd_receive_pack(int argc, const char **argv, const char *prefix)
+@@ -2568,9 +2816,11 @@ int cmd_receive_pack(int argc, const char **argv, const char *prefix)
  		else if (report_status)
  			report(commands, unpack_status);
  		sigchain_pop(SIGPIPE);
@@ -448,7 +453,7 @@ index ffa0fc4f84..e4c93dc954 100644
  			struct child_process proc = CHILD_PROCESS_INIT;
 diff --git a/t/t0932-agit-receive-txn.sh b/t/t0932-agit-receive-txn.sh
 new file mode 100755
-index 0000000000..58ea6f7c08
+index 0000000000..82a9238335
 --- /dev/null
 +++ b/t/t0932-agit-receive-txn.sh
 @@ -0,0 +1,246 @@
@@ -526,7 +531,7 @@ index 0000000000..58ea6f7c08
 +	pktline_len_update_branch_test01=0068
 +fi
 +
-+test_expect_success 'setup' '
++test_expect_success PIPE 'setup' '
 +	test_commit base &&
 +	git clone -s --bare . repo &&
 +	txn_tip=$(git rev-parse HEAD) &&
@@ -535,7 +540,7 @@ index 0000000000..58ea6f7c08
 +	pktline_len_branch_main=${advertise_refs_first_line%$suffix}
 +'
 +
-+test_expect_success 'standard git-receive-pack process' '
++test_expect_success PIPE 'standard git-receive-pack process' '
 +	mkfifo pipe &&
 +	start_receive_pack <pipe | \
 +		start_proxy_client >pipe 7>out &&
@@ -549,18 +554,18 @@ index 0000000000..58ea6f7c08
 +	test_cmp expect actual
 +'
 +
-+test_expect_success 'cleanup' '
++test_expect_success PIPE 'cleanup' '
 +	rm -f pipe &&
 +	git -C repo update-ref -d refs/heads/test01
 +'
 +
-+test_expect_success 'create 32-byte checksum file (in case no git-checksum installed)' '
++test_expect_success PIPE 'create 32-byte checksum file (in case no git-checksum installed)' '
 +	cat >repo/info/checksum <<-EOF
 +	12345678901234567890123456789012
 +	EOF
 +'
 +
-+test_expect_success 'receive pack with txn success' '
++test_expect_success PIPE 'receive pack with txn success' '
 +	rm -f pipe &&
 +	mkfifo pipe &&
 +	start_receive_pack --agit-txn <pipe | \
@@ -580,12 +585,12 @@ index 0000000000..58ea6f7c08
 +	test_cmp expect actual
 +'
 +
-+test_expect_success 'cleanup' '
++test_expect_success PIPE 'cleanup' '
 +	rm -f pipe &&
 +	git -C repo update-ref -d refs/heads/test01
 +'
 +
-+test_expect_success 'txn: prepare failed' '
++test_expect_success PIPE 'txn: prepare failed' '
 +	mkfifo pipe &&
 +	start_receive_pack --agit-txn <pipe | \
 +		start_proxy_client quit >pipe 7>out &&
@@ -603,11 +608,11 @@ index 0000000000..58ea6f7c08
 +	test_cmp expect actual
 +'
 +
-+test_expect_success 'cleanup' '
++test_expect_success PIPE 'cleanup' '
 +	rm -f pipe
 +'
 +
-+test_expect_success 'txn: commit failed' '
++test_expect_success PIPE 'txn: commit failed' '
 +	mkfifo pipe &&
 +	start_receive_pack --agit-txn <pipe | \
 +		start_proxy_client next1 quit >pipe 7>out &&
@@ -626,11 +631,11 @@ index 0000000000..58ea6f7c08
 +	test_cmp expect actual
 +'
 +
-+test_expect_success 'cleanup' '
++test_expect_success PIPE 'cleanup' '
 +	rm -f pipe
 +'
 +
-+test_expect_success 'setup pre-receive hook' '
++test_expect_success PIPE 'setup pre-receive hook' '
 +	cat >./repo/hooks/pre-receive <<-\EOF &&
 +	#!/bin/bash
 +	exit 1
@@ -638,7 +643,7 @@ index 0000000000..58ea6f7c08
 +	chmod 755 ./repo/hooks/pre-receive
 +'
 +
-+test_expect_success 'receive pack with txn but pre hook failed' '
++test_expect_success PIPE 'receive pack with txn but pre hook failed' '
 +	mkfifo pipe &&
 +	start_receive_pack --agit-txn <pipe | \
 +		start_proxy_client >pipe 7>out &&
@@ -655,12 +660,12 @@ index 0000000000..58ea6f7c08
 +	test_cmp expect actual
 +'
 +
-+test_expect_success 'cleanup' '
++test_expect_success PIPE 'cleanup' '
 +	rm -f pipe &&
 +	rm -f ./repo/hooks/pre-receive
 +'
 +
-+test_expect_success 'receive pack agit txn receive abnormal pktline' '
++test_expect_success PIPE 'receive pack agit txn receive abnormal pktline' '
 +	mkfifo pipe &&
 +	printf "" > actual &&
 +	start_receive_pack --agit-txn <pipe | \
@@ -674,11 +679,11 @@ index 0000000000..58ea6f7c08
 +	test_cmp expect actual
 +'
 +
-+test_expect_success 'cleanup' '
++test_expect_success PIPE 'cleanup' '
 +	rm -f pipe
 +'
 +
-+test_expect_success 'receive pack agit txn receive flush pktline' '
++test_expect_success PIPE 'receive pack agit txn receive flush pktline' '
 +	mkfifo pipe &&
 +	printf "" > actual &&
 +	start_receive_pack --agit-txn <pipe | \

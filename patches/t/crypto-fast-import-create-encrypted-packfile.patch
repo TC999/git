@@ -1,7 +1,7 @@
-From 0553ba654b52cadddaea8fb6c88bb2337c35d774 Mon Sep 17 00:00:00 2001
+From 2937bbd3269732dfe52de78ab48e17965d7108d8 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Fri, 19 Feb 2021 14:34:55 +0800
-Subject: [PATCH 38/47] crypto: fast-import: create encrypted packfile
+Subject: [PATCH 40/51] crypto: fast-import: create encrypted packfile
 
 Create encrypted packfile in target repository.
 

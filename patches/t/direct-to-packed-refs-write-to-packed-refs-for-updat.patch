@@ -1,7 +1,7 @@
 From 5983598feb772265385aac654b259521534c415b Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Fri, 26 Aug 2022 21:42:14 +0800
-Subject: [PATCH 79/80] direct-to-packed-refs: write to packed-refs for
+Subject: [PATCH 83/84] direct-to-packed-refs: write to packed-refs for
  update-ref --stdin
 
 When running update-ref in stdin mode, write references to packed-refs

@@ -1,7 +1,7 @@
 From 337c8dd6223dc68f350c84abe292b7903c52fcf1 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 19 Jul 2022 09:35:08 +0800
-Subject: [PATCH 12/12] refs: reimplement refs_delete_refs() and run hook once
+Subject: [PATCH 13/13] refs: reimplement refs_delete_refs() and run hook once
 
 When using "git branch -d" or "git tag -d" to delete one or multiple
 references, command "reference-transaction committed" will be called

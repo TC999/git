@@ -1,7 +1,7 @@
 From e9377a7f55267b2014f02b2fdd82f3f8c0988009 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Wed, 20 Jul 2022 10:39:39 +0800
-Subject: [PATCH 11/12] refs: reimplement files_copy_or_rename_ref() to run
+Subject: [PATCH 12/13] refs: reimplement files_copy_or_rename_ref() to run
  refs-txn hook
 
 When copying or renaming a branch, the "reference-transaction" hook is

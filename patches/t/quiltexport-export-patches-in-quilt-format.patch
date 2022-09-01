@@ -1,4 +1,4 @@
-From 74b4fe245e2448481218bf85f4c2997be61ddccc Mon Sep 17 00:00:00 2001
+From 7a4d9f1ff07019e6a377bb229911112168c2cad2 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 30 Oct 2018 13:25:30 +0800
 Subject: [PATCH] quiltexport: export patches in quilt format
@@ -7,6 +7,10 @@ Export commits in quilt format to "patches/" directory. All patches
 exported will be listed in file "patches/series".
 
 We can import these patches using `git-quiltimport` or `quilt` command.
+
+EDIT:
+
+ * [2022-09-02] fix bad shebang to work on Windows.
 
 Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---
@@ -104,11 +108,11 @@ index 9bd6f3c48f..95a4f65cb1 100644
  git-rebase                              mainporcelain           history
 diff --git a/git-quiltexport.sh b/git-quiltexport.sh
 new file mode 100755
-index 0000000000..da7f44a0af
+index 0000000000..44a7f6e6ab
 --- /dev/null
 +++ b/git-quiltexport.sh
 @@ -0,0 +1,127 @@
-+#bin/sh
++#!/bin/sh
 +
 +OPTIONS_KEEPDASHDASH=
 +OPTIONS_STUCKLONG=

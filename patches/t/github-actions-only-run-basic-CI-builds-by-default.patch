@@ -1,7 +1,7 @@
-From 6e07ca6bfa905754f5b71439668a39612742cd54 Mon Sep 17 00:00:00 2001
+From 84460a13087fe1119dde24e042d2eab20bdc2088 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Thu, 1 Sep 2022 09:51:03 +0800
-Subject: [PATCH 3/3] github-actions: only run basic CI builds by default
+Subject: [PATCH 2/4] github-actions: only run basic CI builds by default
 
 To save money, we only enable basic CI builds by default. If all basic
 CI builds passed, we can enable more CI builds by push to a specific

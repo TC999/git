@@ -1,7 +1,7 @@
 From 1fba5599720e2205ee9fb101f5f352c9793fb329 Mon Sep 17 00:00:00 2001
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Thu, 6 Jan 2022 18:03:21 +0800
-Subject: [PATCH 78/80] direct-to-packed-refs: implement "git-remote update
+Subject: [PATCH 82/84] direct-to-packed-refs: implement "git-remote update
  --write-packed-refs"
 
 Add new option "--write-packed-refs" to "git-remote update".

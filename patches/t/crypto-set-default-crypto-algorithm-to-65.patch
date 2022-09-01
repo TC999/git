@@ -1,7 +1,7 @@
-From 6bb7c5b18b7d51cea19780bda18ae50f5c755d11 Mon Sep 17 00:00:00 2001
+From 7e26229267d8ad081272f057391c5add2637b852 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Mon, 15 Mar 2021 17:41:08 +0800
-Subject: [PATCH 44/47] crypto: set default crypto algorithm to 65
+Subject: [PATCH 46/51] crypto: set default crypto algorithm to 65
 
 Set GIT_CRYPTO_ALGORITHM_DEFAULT to GIT_CRYPTO_ALGORITHM_EASY_AES,
 which use 12-byte pack header.

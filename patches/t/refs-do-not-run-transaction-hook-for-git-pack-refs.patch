@@ -1,7 +1,7 @@
 From b3e31103c4c449544ac836b2575640d40c3ca5b4 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 12 Jul 2022 09:06:44 +0800
-Subject: [PATCH 07/12] refs: do not run transaction hook for git-pack-refs
+Subject: [PATCH 08/13] refs: do not run transaction hook for git-pack-refs
 
 The git-pack-refs command will call "files_pack_refs()" to pack loose
 references into the "packed-refs" file, and there are no real changes

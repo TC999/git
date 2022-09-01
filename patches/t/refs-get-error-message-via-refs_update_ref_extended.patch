@@ -1,7 +1,7 @@
 From c4b712f720d7c7c0adf9be12b9d2ec1d345d048a Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Wed, 20 Jul 2022 16:32:53 +0800
-Subject: [PATCH 10/12] refs: get error message via refs_update_ref_extended()
+Subject: [PATCH 11/13] refs: get error message via refs_update_ref_extended()
 
 The last parameter of the function "refs_update_ref()" is an enum
 "action_on_err", and we can not use this function to get the error

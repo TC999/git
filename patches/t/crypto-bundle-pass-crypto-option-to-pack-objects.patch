@@ -1,7 +1,7 @@
-From ffa9aa211dcf48238e70b296257135529adb95ca Mon Sep 17 00:00:00 2001
+From 0db60a484d15d1f949c9a52fe76a8eb779761175 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Sun, 20 Dec 2020 18:54:18 +0800
-Subject: [PATCH 42/47] crypto: bundle: pass crypto option to pack-objects
+Subject: [PATCH 44/51] crypto: bundle: pass crypto option to pack-objects
 
 Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---

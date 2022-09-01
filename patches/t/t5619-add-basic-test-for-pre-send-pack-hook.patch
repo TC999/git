@@ -1,25 +1,30 @@
-From be01992077a7abe8c6446d3742433f4723d01a65 Mon Sep 17 00:00:00 2001
+From c705c753b74926de95bbf71cb1461ff21bb58d86 Mon Sep 17 00:00:00 2001
 From: Xu Ziyang <yunhuai.xzy@alibaba-inc.com>
 Date: Fri, 22 Oct 2021 17:12:50 +0800
-Subject: [PATCH 60/60] t5619: add basic test for pre-send-pack hook
+Subject: [PATCH 64/64] t5619: add basic test for pre-send-pack hook
 
 Add some basic test case, specifically:
 1. normal clone will receive the message from hook
 2. hook exit with a non-zero code won't affect the usual clone procedure
 3. hook's error is readed and sent to the client
 
+EDIT:
+ * [Jiang Xin, 2022-09-02] refactor by using write_script and
+   test_line_count to resolve failure on Windows.
+
 Signed-off-by: Xu Ziyang <yunhuai.xzy@alibaba-inc.com>
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---
- t/t5619-pre-send-pack-hook.sh | 55 +++++++++++++++++++++++++++++++++++
- 1 file changed, 55 insertions(+)
+ t/t5619-pre-send-pack-hook.sh | 63 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 63 insertions(+)
  create mode 100755 t/t5619-pre-send-pack-hook.sh
 
 diff --git a/t/t5619-pre-send-pack-hook.sh b/t/t5619-pre-send-pack-hook.sh
 new file mode 100755
-index 0000000000..a1b3622959
+index 0000000000..5810145544
 --- /dev/null
 +++ b/t/t5619-pre-send-pack-hook.sh
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,63 @@
 +#!/bin/bash
 +
 +test_description='Testing pre-send-pack-hook'
@@ -48,30 +53,38 @@ index 0000000000..a1b3622959
 +		git push origin main
 +	) &&
 +	write_script upstream.git/hooks/pre-send-pack <<-\EOF
-+	echo "repo too large"
++		echo "repo too large"
 +	EOF
 +'
 +
 +test_expect_success 'clone repo received message' '
 +	test_when_finished "rm -fr dst" &&
 +	git clone --progress --no-local upstream.git dst 2>output &&
-+	lc=$(cat output | grep "repo too large" | wc -l) &&
-+	test $lc -eq 1
++	grep "repo too large" output >actual &&
++	test_line_count = 1 actual
 +'
 +
 +test_expect_success 'hook exit non zero' '
-+	echo "exit -1" > upstream.git/hooks/pre-send-pack &&
++	write_script upstream.git/hooks/pre-send-pack <<-\EOF &&
++		#!/bin/sh
++
++		exit 1
++	EOF
 +	test_when_finished "rm -fr dst" &&
 +	git clone --no-local upstream.git dst &&
 +	test -f dst/file
 +'
 +
 +test_expect_success 'read error message from hook' '
-+	echo "echo "error from hook" 1>&2" > upstream.git/hooks/pre-send-pack &&
++	write_script upstream.git/hooks/pre-send-pack <<-\EOF &&
++		#!/bin/sh
++
++		echo "error from hook" 1>&2
++	EOF
 +	test_when_finished "rm -fr dst" &&
 +	git clone --progress --no-local upstream.git dst 2>output &&
-+	lc=$(cat output | grep "error from hook" | wc -l) &&
-+	test $lc -eq 1
++	cat output | grep "error from hook" >actual &&
++	test_line_count = 1 actual
 +'
 +
 +test_done

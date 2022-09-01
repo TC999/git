@@ -1,7 +1,7 @@
-From 136d6e62eeade4a1c0a269ef28e90fac71489473 Mon Sep 17 00:00:00 2001
+From 8872bffe416b597cc4cec0b876de02de3098d899 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 29 Dec 2020 16:22:29 +0800
-Subject: [PATCH 28/47] crypto: t0940: new helpers to test crypto functions
+Subject: [PATCH 30/51] crypto: t0940: new helpers to test crypto functions
 
 Add new test helper test-agit-crypto and test-agit-od to test crypto.c.
 

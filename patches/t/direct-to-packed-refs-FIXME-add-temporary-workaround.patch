@@ -1,7 +1,7 @@
 From 3bd7c09496b0c22f058c69c5875812a7cc93c1d9 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 30 Aug 2022 20:55:53 +0800
-Subject: [PATCH 80/80] direct-to-packed-refs: FIXME: add temporary workaround
+Subject: [PATCH 84/84] direct-to-packed-refs: FIXME: add temporary workaround
  for t5510-fetch
 
 We enable fetch-to-packed-refs and atomic-fetch by default for git-fetch

@@ -1,7 +1,7 @@
 From 15e6fb8a25ec6dcec91d1544f3ea99a0c06fe945 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Sun, 28 Aug 2022 21:40:24 +0800
-Subject: [PATCH 77/80] direct-to-packed-refs: enable by default if fetch too
+Subject: [PATCH 81/84] direct-to-packed-refs: enable by default if fetch too
  many refs
 
 The fetch to packed-refs behavior will be turn on automatically if there

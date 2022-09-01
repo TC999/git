@@ -1,0 +1,48 @@
+From cd00951a3ba42130af8c287223a7c4eb4cded598 Mon Sep 17 00:00:00 2001
+From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+Date: Thu, 1 Sep 2022 16:49:15 +0800
+Subject: [PATCH 50/51] crypto: turn on openssl to enable CI for windows
+
+Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
+---
+ config.mak.uname                    | 4 ++++
+ contrib/buildsystems/CMakeLists.txt | 2 +-
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/config.mak.uname b/config.mak.uname
+index 8ef143b8c7..b8e19ba945 100644
+--- a/config.mak.uname
++++ b/config.mak.uname
+@@ -233,6 +233,8 @@ ifeq ($(uname_S),SunOS)
+ 	BASIC_CFLAGS += -D__EXTENSIONS__ -D__sun__
+ endif
+ ifeq ($(uname_O),Cygwin)
++	# Alibaba git crypto needs: -lssl -lcrypto
++	NEEDS_SSL_WITH_CRYPTO = YesPlease
+ 	ifeq ($(shell expr "$(uname_R)" : '1\.[1-6]\.'),4)
+ 		NO_D_TYPE_IN_DIRENT = YesPlease
+ 		NO_STRCASESTR = YesPlease
+@@ -424,6 +426,8 @@ ifeq ($(uname_S),HP-UX)
+ 	GIT_TEST_CMP = cmp
+ endif
+ ifeq ($(uname_S),Windows)
++	# Alibaba git crypto needs: -lssl -lcrypto
++	NEEDS_SSL_WITH_CRYPTO = YesPlease
+ 	GIT_VERSION := $(GIT_VERSION).MSVC
+ 	pathsep = ;
+ 	# Assume that this is built in Git for Windows' SDK
+diff --git a/contrib/buildsystems/CMakeLists.txt b/contrib/buildsystems/CMakeLists.txt
+index 185f56f414..61d1dac203 100644
+--- a/contrib/buildsystems/CMakeLists.txt
++++ b/contrib/buildsystems/CMakeLists.txt
+@@ -215,7 +215,7 @@ endif()
+ include_directories(${CMAKE_SOURCE_DIR})
+ add_compile_definitions(GIT_HOST_CPU="${CMAKE_SYSTEM_PROCESSOR}")
+ add_compile_definitions(SHA256_BLK INTERNAL_QSORT RUNTIME_PREFIX)
+-add_compile_definitions(NO_OPENSSL SHA1_DC SHA1DC_NO_STANDARD_INCLUDES
++add_compile_definitions(SHA1_DC SHA1DC_NO_STANDARD_INCLUDES
+ 			SHA1DC_INIT_SAFE_HASH_DEFAULT=0
+ 			SHA1DC_CUSTOM_INCLUDE_SHA1_C="cache.h"
+ 			SHA1DC_CUSTOM_INCLUDE_UBC_CHECK_C="git-compat-util.h" )
+-- 
+patchwork

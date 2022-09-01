@@ -1,7 +1,10 @@
-From 1368abf10707c854fd253bc8f54bfec19a95f054 Mon Sep 17 00:00:00 2001
+From 0cc996ba5dc04393530fdce906a4f1b7885d8aed Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Wed, 2 Jun 2021 17:56:35 +0800
-Subject: [PATCH 2/3] github actions: install openssl for macOS
+Subject: [PATCH 29/51] crypto: CI: install openssl@1.1 on macOS
+
+Without providing the specific version, brew will install openssl@3
+instead, and which is incompatible.
 
 Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---
@@ -9,14 +12,14 @@ Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
  1 file changed, 9 insertions(+)
 
 diff --git a/ci/install-dependencies.sh b/ci/install-dependencies.sh
-index 107757a1fe..d5ab90e0a1 100755
+index 107757a1fe..f03ad95719 100755
 --- a/ci/install-dependencies.sh
 +++ b/ci/install-dependencies.sh
 @@ -53,6 +53,15 @@ macos-latest)
  		brew install "$BREW_PACKAGE"
  		brew link "$BREW_PACKAGE"
  	fi
-+	brew install openssl
++	brew install openssl@1.1
 +	case "$jobname" in
 +	osx-gcc)
 +		brew install gcc@9

@@ -1,7 +1,7 @@
 From d98573dc026fdad20e43e57fe93493f03005633c Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 9 Aug 2022 10:41:57 +0800
-Subject: [PATCH 71/73] refs-txn: more checksum testcases in t0903 from t1416
+Subject: [PATCH 75/77] refs-txn: more checksum testcases in t0903 from t1416
 
 Adapt testcases from t1416 for git-checksum test in t0903.
 

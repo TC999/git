@@ -1,7 +1,7 @@
 From 1958fe99086d078c2cdfd8c47e12472d247149ee Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 28 Jun 2022 19:12:29 +0800
-Subject: [PATCH 16/18] black-hole: implementation for remote-http* helper
+Subject: [PATCH 17/19] black-hole: implementation for remote-http* helper
 
 "remote-curl.c" is the helper for HTTP(S) protocol. Pass the "black-hole"
 option from the transport layer to remote-http* helper, and call

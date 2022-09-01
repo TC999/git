@@ -1,7 +1,7 @@
 From 3f4f2d564a8a15ebb76d243e31c7ebee68992df3 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 9 Aug 2022 10:28:53 +0800
-Subject: [PATCH 72/73] refs-txn: call "git-checksum --init" when init a repo
+Subject: [PATCH 76/77] refs-txn: call "git-checksum --init" when init a repo
 
 When initializing a repository, call "git checksum --init" to create
 initial checksum file. This behavior can be disabled by providing config

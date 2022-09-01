@@ -1,7 +1,7 @@
-From 478ae9bad7318fd96568fe1218da5032ee7e9513 Mon Sep 17 00:00:00 2001
+From 8b9425b64c386eae11f13bda857c22a4c3f85285 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?=E7=82=BD=E5=A4=A9?= <hanxin.hx@alibaba-inc.com>
 Date: Tue, 29 Dec 2020 16:12:29 +0800
-Subject: [PATCH 30/47] crypto: load agit.crypto.* settings from git config
+Subject: [PATCH 32/51] crypto: load agit.crypto.* settings from git config
 
 Load agit.crypto.* settings by calling `git_default_config()`, and also
 fix commands which forget to load default git config, such as:

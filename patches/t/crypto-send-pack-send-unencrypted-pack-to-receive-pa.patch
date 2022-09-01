@@ -1,7 +1,7 @@
-From 5572f20441ef03d5beeab1110a0a96c82f775a31 Mon Sep 17 00:00:00 2001
+From 55d55abfc6270f4a33d39a112c740d84d6bdc170 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?=E7=82=BD=E5=A4=A9?= <hanxin.hx@alibaba-inc.com>
 Date: Tue, 29 Dec 2020 16:12:29 +0800
-Subject: [PATCH 40/47] crypto: send-pack: send unencrypted pack to
+Subject: [PATCH 42/51] crypto: send-pack: send unencrypted pack to
  receive-pack
 
 When running "git push", add "--no-pack-enc" option to git-pack-objects

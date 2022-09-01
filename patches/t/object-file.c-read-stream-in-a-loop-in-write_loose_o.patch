@@ -1,7 +1,7 @@
 From 41de8b99fb7e58888bf19baf4d8410aab8d06c87 Mon Sep 17 00:00:00 2001
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Fri, 12 Nov 2021 12:34:18 +0800
-Subject: [PATCH 50/56] object-file.c: read stream in a loop in
+Subject: [PATCH 54/60] object-file.c: read stream in a loop in
  write_loose_object()
 
 In order to prepare the stream version of "write_loose_object()", read

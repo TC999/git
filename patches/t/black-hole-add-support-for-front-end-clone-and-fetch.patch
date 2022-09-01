@@ -1,7 +1,7 @@
 From 56d071b10eb732cf9572ab0e99bb7e9f1a231659 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Sun, 7 Jul 2019 20:09:52 +0800
-Subject: [PATCH 17/18] black-hole: add support for front-end, clone and fetch
+Subject: [PATCH 18/19] black-hole: add support for front-end, clone and fetch
 
 Add "black-hole" feature to front-end: git-clone and git-fetch.
 

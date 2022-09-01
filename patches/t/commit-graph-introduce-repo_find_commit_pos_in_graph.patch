@@ -1,7 +1,7 @@
 From 5822e2df1093e73eed24e7b3752aa587cf6968ee Mon Sep 17 00:00:00 2001
 From: Taylor Blau <me@ttaylorr.com>
 Date: Tue, 12 Jul 2022 19:10:31 -0400
-Subject: [PATCH 65/66] commit-graph: introduce
+Subject: [PATCH 69/70] commit-graph: introduce
  `repo_find_commit_pos_in_graph()`
 
 Low-level callers in systems that are adjacent to the commit-graph (like

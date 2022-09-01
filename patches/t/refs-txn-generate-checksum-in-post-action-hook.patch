@@ -1,7 +1,7 @@
 From 4c7a4b54d4984ceff1e20be2aa80ba6b7806bbcb Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Mon, 23 Dec 2019 18:51:40 +0800
-Subject: [PATCH 70/73] refs-txn: generate checksum in post action hook
+Subject: [PATCH 74/77] refs-txn: generate checksum in post action hook
 
 Call `git-checksum --update` in the internal "refs_txn_post_hook()"
 function to update the checksum of a repository if there are references

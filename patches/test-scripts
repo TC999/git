@@ -1,3 +1,4 @@
+t7300-clean.sh
 t1416-ref-transaction-hooks.sh
 t5510-fetch.sh
 t0910-fetch-blackhole.sh

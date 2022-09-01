@@ -1,7 +1,7 @@
-From 32967b5b31e6d16df9e17b232cb77eabe4dbf546 Mon Sep 17 00:00:00 2001
+From b7a5af0c6311fdebbedeaeb7070c133faf618f3d Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?=E7=82=BD=E5=A4=A9?= <hanxin.hx@alibaba-inc.com>
 Date: Tue, 29 Dec 2020 15:38:43 +0800
-Subject: [PATCH 31/47] crypto: add encrypt/decrypt support for loose objects
+Subject: [PATCH 33/51] crypto: add encrypt/decrypt support for loose objects
 
 Changes to support encrypt for loose objects:
 

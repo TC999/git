@@ -1,7 +1,7 @@
-From ced3b48e9e69bb1c377565984962d24d7754b28a Mon Sep 17 00:00:00 2001
+From 572e52ae85318b03d1aaaa0662af7d20e751ea54 Mon Sep 17 00:00:00 2001
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Mon, 27 Sep 2021 15:39:43 +0800
-Subject: [PATCH 47/47] crypto: fixup byte_counter reset in copy_pack_data()
+Subject: [PATCH 49/51] crypto: fixup byte_counter reset in copy_pack_data()
 
 When pack_mapped > packed_git_limit, packed_git will use many windows,
 the given packed_git may be changed after use_pack(). So we should reset

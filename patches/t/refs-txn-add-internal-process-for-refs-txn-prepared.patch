@@ -1,7 +1,7 @@
 From dbc0eb08447e6eccfa3d78ec22a06dc2113c9a95 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Mon, 22 Oct 2018 18:17:11 +0800
-Subject: [PATCH 68/73] refs-txn: add internal process for "refs-txn prepared"
+Subject: [PATCH 72/77] refs-txn: add internal process for "refs-txn prepared"
 
 Add internal process "refs_txn_pre_hook()" when running hook command
 "reference-transaction prepared" to resolve problems for some scenarios.

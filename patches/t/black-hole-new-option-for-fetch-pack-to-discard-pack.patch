@@ -1,7 +1,7 @@
 From 5722f0b92e79e77ed9c8574e4f4e340dc4bf4650 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 28 Jun 2022 15:38:49 +0800
-Subject: [PATCH 13/18] black-hole: new option for fetch-pack to discard
+Subject: [PATCH 14/19] black-hole: new option for fetch-pack to discard
  packfile
 
 When we do git-fetch or git-clone, a pair of programs, "fetch-pack" and

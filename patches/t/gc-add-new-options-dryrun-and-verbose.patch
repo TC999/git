@@ -1,7 +1,7 @@
 From 4843e879ac55a8fe32e2f91c4ec6cf35df2fb249 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Thu, 9 Jul 2020 15:09:46 +0800
-Subject: [PATCH 24/25] gc: add new options --dryrun and --verbose
+Subject: [PATCH 25/26] gc: add new options --dryrun and --verbose
 
 Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---

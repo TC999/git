@@ -1,7 +1,7 @@
-From 98c407793cf0c1af91d5d178ec18c5e0b11cc877 Mon Sep 17 00:00:00 2001
+From 06d82e5128cd4bc1e7b6fce0ed5b3cfdd3477674 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Sun, 28 Mar 2021 09:25:06 +0800
-Subject: [PATCH 22/23] proc-receive: parse config with multiple prefixes
+Subject: [PATCH] proc-receive: parse config with multiple prefixes
 
 Can take multiple prefixes in one receive.procReceiveRefs setting.  So
 we can handle all references other than heads and tags.  E.g.:
@@ -9,15 +9,20 @@ we can handle all references other than heads and tags.  E.g.:
     git config --add \
         receive.procReceiveRefs "!:refs/heads,refs/tags"
 
+Edit:
+
+ * [Jiang Xin, 2022-09-01] replace strsep with strtok for compatiblity
+   for build on Windows.
+
 Signed-off-by: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 ---
- builtin/receive-pack.c                 |  60 +++++++--
+ builtin/receive-pack.c                 |  65 +++++++--
  t/t5411/once-0020-proc-receive-refs.sh | 178 +++++++++++++++++++++++++
- 2 files changed, 225 insertions(+), 13 deletions(-)
+ 2 files changed, 230 insertions(+), 13 deletions(-)
  create mode 100644 t/t5411/once-0020-proc-receive-refs.sh
 
 diff --git a/builtin/receive-pack.c b/builtin/receive-pack.c
-index 9aabffa1af..ffa0fc4f84 100644
+index 9aabffa1af..0cd0680389 100644
 --- a/builtin/receive-pack.c
 +++ b/builtin/receive-pack.c
 @@ -100,12 +100,17 @@ static int keepalive_in_sec = 5;
@@ -39,15 +44,20 @@ index 9aabffa1af..ffa0fc4f84 100644
  	struct proc_receive_ref *next;
  } *proc_receive_ref;
  
-@@ -360,6 +365,7 @@ struct command {
+@@ -360,10 +365,12 @@ struct command {
  static void proc_receive_ref_append(const char *prefix)
  {
  	struct proc_receive_ref *ref_pattern;
-+	struct ref_prefix *ref_prefix;
++	struct ref_prefix **ref_pp;
  	char *p;
  	int len;
  
-@@ -378,15 +384,36 @@ static void proc_receive_ref_append(const char *prefix)
+ 	CALLOC_ARRAY(ref_pattern, 1);
++	ref_pp = &ref_pattern->ref_prefix;
+ 	p = strchr(prefix, ':');
+ 	if (p) {
+ 		while (prefix < p) {
+@@ -378,15 +385,29 @@ static void proc_receive_ref_append(const char *prefix)
  			prefix++;
  		}
  		prefix++;
@@ -64,32 +74,41 @@ index 9aabffa1af..ffa0fc4f84 100644
 -	while (len && prefix[len - 1] == '/')
 -		len--;
 -	ref_pattern->ref_prefix = xmemdupz(prefix, len);
-+	if (strncmp(prefix, "refs/", 5) && strcmp(prefix, "refs")) {
-+		fprintf(stderr, "prefix '%s' not start with 'refs/'", prefix);
-+		free(ref_pattern);
-+		return;
-+	}
-+	ref_pattern->ref_prefix = xcalloc(1, sizeof(struct ref_prefix));
-+	ref_prefix = ref_pattern->ref_prefix;
-+	while ((p = strsep((char **)&prefix, ",")) != NULL) {
++	for (p = strtok((char *)prefix, ","); p; p = strtok(NULL, ",")) {
 +		len = strlen(p);
 +		while (len && p[len - 1] == '/')
 +			len--;
-+		ref_prefix->prefix = xmemdupz(p, len);
-+		if (prefix) {
-+		    if (!strncmp(prefix, "refs/", 5) || !strcmp(prefix, "refs")) {
-+			ref_prefix->next =
-+				xcalloc(1, sizeof(struct ref_prefix));
-+			ref_prefix = ref_prefix->next;
-+		    } else {
++		if (strncmp(p, "refs/", 5) && strcmp(p, "refs")) {
 +			fprintf(stderr, "prefix '%s' not start with 'refs/'", prefix);
-+		    }
++			continue;
 +		}
++		*ref_pp = xcalloc(1, sizeof(struct ref_prefix));
++		(*ref_pp)->prefix = xmemdupz(p, len);
++		ref_pp = &(*ref_pp)->next;
 +	}
++	if (!ref_pattern->ref_prefix)
++		goto cleanup;
++
  	if (!proc_receive_ref) {
  		proc_receive_ref = ref_pattern;
  	} else {
-@@ -402,13 +429,14 @@ static void proc_receive_ref_append(const char *prefix)
+@@ -397,18 +418,30 @@ static void proc_receive_ref_append(const char *prefix)
+ 			end = end->next;
+ 		end->next = ref_pattern;
+ 	}
++	return;
++
++cleanup:
++	for (ref_pp = &ref_pattern->ref_prefix; *ref_pp;) {
++		struct ref_prefix **pp;
++		pp = &(*ref_pp)->next;
++		free((*ref_pp)->prefix);
++		free((*ref_pp));
++		ref_pp = pp;
++	}
++	free(ref_pattern);
+ }
+ 
  static int proc_receive_ref_matches(struct command *cmd)
  {
  	struct proc_receive_ref *p;
@@ -105,7 +124,7 @@ index 9aabffa1af..ffa0fc4f84 100644
  
  		if (!p->want_add && is_null_oid(&cmd->old_oid))
  			continue;
-@@ -419,13 +447,19 @@ static int proc_receive_ref_matches(struct command *cmd)
+@@ -419,13 +452,19 @@ static int proc_receive_ref_matches(struct command *cmd)
  			 !is_null_oid(&cmd->new_oid))
  			continue;
  

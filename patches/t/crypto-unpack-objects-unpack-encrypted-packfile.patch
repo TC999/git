@@ -1,7 +1,7 @@
-From db638323a08b35c658aa0b8d2fb0e3c189a81040 Mon Sep 17 00:00:00 2001
+From 045c10d2f9f062a3ac237eaac3e8e5f2c8900259 Mon Sep 17 00:00:00 2001
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Thu, 7 Jan 2021 17:47:17 +0800
-Subject: [PATCH 33/47] crypto: unpack-objects: unpack encrypted packfile
+Subject: [PATCH 35/51] crypto: unpack-objects: unpack encrypted packfile
 
 The first part of an encrypted packfile is the plain header, while the
 other data (excluding the tailer checksum) are encrypted.  When we
