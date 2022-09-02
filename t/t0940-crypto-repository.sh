@@ -33,6 +33,12 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 . "$TEST_DIRECTORY"/t0940/common-functions.sh
 . "$TEST_DIRECTORY/lib-gpg.sh"
 
+# TODO: CI on Windows will hang for this case.
+if test_have_prereq WINDOWS
+then
+	test_done
+fi
+
 create_bare_repo () {
 	test "$#" = 1 ||
 	BUG "not 1 parameter to create-bare-repo"
