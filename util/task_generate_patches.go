@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -214,8 +215,37 @@ func (g *GeneratePatches) removeNumberFormFileName(patchPath string) (string, er
 	if index := strings.Index(patchName, "-"); index > -1 {
 		newPatchName = patchName[index+1:]
 		newPatchPath = path.Join(patchFolder, newPatchName)
+
+		// The patch was existed, need to rename
+		// TODO: the possibility of file renaming is not very high, so the method of
+		// judging whether the file name exists in a for is relatively inefficient, but
+		// it is more effective for the current scene, Add a TODO here to mark the point
+		// that can be optimized
+		for CheckFileExist(newPatchPath) == nil {
+			newPatchPath = g.renamePatch(newPatchPath)
+		}
+
 		return newPatchPath, os.Rename(patchPath, newPatchPath)
 	}
 
 	return patchPath, nil
+}
+
+func (g *GeneratePatches) renamePatch(patchPath string) string {
+	patchFolder := path.Dir(patchPath)
+	patchName := path.Base(patchPath)
+	ext := path.Ext(patchName)
+	nameWithoutExtension := patchName[:len(patchName)-len(ext)]
+	underlineIndex := strings.LastIndex(nameWithoutExtension, "_")
+	fileNumberStr := nameWithoutExtension[underlineIndex+1:]
+
+	fileNumber, err := strconv.Atoi(fileNumberStr)
+	if err != nil {
+		// If fileNumber not a number, then append "_1" to the file
+		return filepath.Join(patchFolder, fmt.Sprintf("%s_1%s", nameWithoutExtension, ext))
+	}
+
+	fileNumber++
+	nameWithoutNumber := nameWithoutExtension[:underlineIndex]
+	return filepath.Join(patchFolder, fmt.Sprintf("%s_%d%s", nameWithoutNumber, fileNumber, ext))
 }
