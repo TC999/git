@@ -1,4 +1,4 @@
-From 1fba5599720e2205ee9fb101f5f352c9793fb329 Mon Sep 17 00:00:00 2001
+From 3dff61927ca916adb1c3f237fd1fa91252b42fc4 Mon Sep 17 00:00:00 2001
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Thu, 6 Jan 2022 18:03:21 +0800
 Subject: [PATCH 82/84] direct-to-packed-refs: implement "git-remote update

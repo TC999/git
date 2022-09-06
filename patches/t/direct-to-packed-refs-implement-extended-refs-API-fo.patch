@@ -1,4 +1,4 @@
-From 6be4c65fc90e031f0d173a4f7934c87ca0e0f4da Mon Sep 17 00:00:00 2001
+From 17e07056e6a4bff66acdeec2724a8543c3f58c8d Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Tue, 23 Aug 2022 13:53:19 +0800
 Subject: [PATCH 79/84] direct-to-packed-refs: implement extended refs API for

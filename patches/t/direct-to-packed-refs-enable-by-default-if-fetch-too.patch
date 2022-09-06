@@ -1,4 +1,4 @@
-From 15e6fb8a25ec6dcec91d1544f3ea99a0c06fe945 Mon Sep 17 00:00:00 2001
+From ca64d1c86c8048bdf5edc1f477cf8a5f69949d51 Mon Sep 17 00:00:00 2001
 From: Jiang Xin <zhiyou.jx@alibaba-inc.com>
 Date: Sun, 28 Aug 2022 21:40:24 +0800
 Subject: [PATCH 81/84] direct-to-packed-refs: enable by default if fetch too
