@@ -24,6 +24,8 @@
 #include "notes-utils.h"
 #include "worktree.h"
 
+static char *separator = "\n";
+
 static const char * const git_notes_usage[] = {
 	N_("git notes [--ref <notes-ref>] [list [<object>]]"),
 	N_("git notes [--ref <notes-ref>] add [-f] [--allow-empty] [-m <msg> | -F <file> | (-c | -C) <object>] [<object>]"),
@@ -209,7 +211,7 @@ static void write_note_data(struct note_data *d, struct object_id *oid)
 	}
 }
 
-static int parse_msg_arg(const struct option *opt, const char *arg, int unset)
+static int parse_msg_arg_add(const struct option *opt, const char *arg, int unset)
 {
 	struct note_data *d = opt->value;
 
@@ -222,6 +224,43 @@ static int parse_msg_arg(const struct option *opt, const char *arg, int unset)
 	strbuf_stripspace(&d->buf, 0);
 
 	d->given = 1;
+	return 0;
+}
+
+static void insert_separator(struct strbuf *message)
+{
+	const char *insert;
+
+	if (!separator)
+		separator = "\n";
+	if (*separator == '\0')
+		/* separator is empty; use as-is (no blank line) */
+		return;
+	else if (separator[strlen(separator) - 1] == '\n')
+		/* user supplied newline; use as-is */
+		insert = separator;
+	else
+		/* separator lacks newline; add it ourselves */
+		insert = xstrfmt("%s%s", separator,"\n");
+	strbuf_insertstr(message, 0, insert);
+}
+
+static int parse_msg_arg_append(const struct option *opt, const char *arg, int unset)
+{
+	struct note_data *d = opt->value;
+	struct strbuf append = STRBUF_INIT;
+
+	BUG_ON_OPT_NEG(unset);
+
+	strbuf_addstr(&append, arg);
+	if (d->buf.len){
+		insert_separator(&append);
+	}
+	strbuf_addbuf(&d->buf, &append);
+	strbuf_stripspace(&d->buf, 0);
+
+	d->given = 1;
+	strbuf_release(&append);
 	return 0;
 }
 
@@ -406,7 +445,7 @@ static int add(int argc, const char **argv, const char *prefix)
 	struct option options[] = {
 		OPT_CALLBACK_F('m', "message", &d, N_("message"),
 			N_("note contents as a string"), PARSE_OPT_NONEG,
-			parse_msg_arg),
+			parse_msg_arg_add),
 		OPT_CALLBACK_F('F', "file", &d, N_("file"),
 			N_("note contents in a file"), PARSE_OPT_NONEG,
 			parse_file_arg),
@@ -572,7 +611,7 @@ static int append_edit(int argc, const char **argv, const char *prefix)
 	struct option options[] = {
 		OPT_CALLBACK_F('m', "message", &d, N_("message"),
 			N_("note contents as a string"), PARSE_OPT_NONEG,
-			parse_msg_arg),
+			parse_msg_arg_append),
 		OPT_CALLBACK_F('F', "file", &d, N_("file"),
 			N_("note contents in a file"), PARSE_OPT_NONEG,
 			parse_file_arg),
@@ -584,6 +623,8 @@ static int append_edit(int argc, const char **argv, const char *prefix)
 			parse_reuse_arg),
 		OPT_BOOL(0, "allow-empty", &allow_empty,
 			N_("allow storing empty note")),
+		OPT_STRING(0, "separator", &separator, N_("text"),
+			N_("insert <text> as separator before appending to an existing note")),
 		OPT_END()
 	};
 	int edit = !strcmp(argv[0], "edit");
@@ -619,7 +660,7 @@ static int append_edit(int argc, const char **argv, const char *prefix)
 		char *prev_buf = read_object_file(note, &type, &size);
 
 		if (d.buf.len && prev_buf && size)
-			strbuf_insertstr(&d.buf, 0, "\n");
+			insert_separator(&d.buf);
 		if (prev_buf && size)
 			strbuf_insert(&d.buf, 0, prev_buf, size);
 		free(prev_buf);

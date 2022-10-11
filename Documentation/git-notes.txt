@@ -11,7 +11,7 @@ SYNOPSIS
 'git notes' [list [<object>]]
 'git notes' add [-f] [--allow-empty] [-F <file> | -m <msg> | (-c | -C) <object>] [<object>]
 'git notes' copy [-f] ( --stdin | <from-object> [<to-object>] )
-'git notes' append [--allow-empty] [-F <file> | -m <msg> | (-c | -C) <object>] [<object>]
+'git notes' append [--allow-empty] [--separator] [-F <file> | -m <msg> | (-c | -C) <object>] [<object>]
 'git notes' edit [--allow-empty] [<object>]
 'git notes' show [<object>]
 'git notes' merge [-v | -q] [-s <strategy> ] <notes-ref>
@@ -86,7 +86,11 @@ the command can read the input given to the `post-rewrite` hook.)
 
 append::
 	Append to the notes of an existing object (defaults to HEAD).
-	Creates a new notes object if needed.
+	Creates a new notes object if needed. If the note of the given
+	object and the note to be appended are not empty, a blank line
+	will be inserted between them as the separator ("blank line" is
+	the default behavior, `--separator` option supports to specify
+	a customized one).
 
 edit::
 	Edit the notes for a given object (defaults to HEAD).
@@ -158,6 +162,16 @@ OPTIONS
 --allow-empty::
 	Allow an empty note object to be stored. The default behavior is
 	to automatically remove empty notes.
+
+--separator <text>::
+	Specify the <text> to be inserted between existing note and appended
+	message, the <text> acts as a separator.
+	If <text> is empty (`--separator=''`), will append the message to
+	existing note directly without insert any separator.
+	If <text> is nonempty, will use as-is. One thing to notice is if
+	the <text> lacks newline charactor, will add the newline automatically.
+	If not specify this option, a blank line will be inserted as the
+	separator.
 
 --ref <ref>::
 	Manipulate the notes tree in <ref>.  This overrides
