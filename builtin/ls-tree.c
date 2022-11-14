@@ -24,6 +24,7 @@ static struct pathspec pathspec;
 static int chomp_prefix;
 static const char *ls_tree_prefix;
 static const char *format;
+static const char *pattern;
 struct show_tree_data {
 	unsigned mode;
 	enum object_type type;
@@ -45,6 +46,32 @@ static enum ls_tree_cmdmode {
 	MODE_NAME_STATUS,
 	MODE_OBJECT_ONLY,
 } cmdmode;
+
+__attribute__((unused))
+static int match_pattern(const char *line)
+{
+	int ret = 0;
+	regex_t r;
+	regmatch_t m[1];
+	char errbuf[64];
+
+	ret = regcomp(&r, pattern, 0);
+	if (ret) {
+		regerror(ret, &r, errbuf, sizeof(errbuf));
+		die("failed regcomp() for pattern '%s' (%s)", pattern, errbuf);
+	}
+	ret = regexec(&r, line, 1, m, 0);
+	if (ret) {
+		if (ret == REG_NOMATCH)
+			goto cleanup;
+		regerror(ret, &r, errbuf, sizeof(errbuf));
+		die("failed regexec() for subject '%s' (%s)", line, errbuf);
+	}
+
+cleanup:
+	regfree(&r);
+	return ret;
+}
 
 static void expand_objectsize(struct strbuf *line, const struct object_id *oid,
 			      const enum object_type type, unsigned int padded)
