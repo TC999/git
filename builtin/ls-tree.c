@@ -32,7 +32,7 @@ struct show_tree_data {
 	struct strbuf *base;
 };
 
-static const  char * const ls_tree_usage[] = {
+static const char * const ls_tree_usage[] = {
 	N_("git ls-tree [<options>] <tree-ish> [<path>...]"),
 	NULL
 };
