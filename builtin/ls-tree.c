@@ -30,6 +30,7 @@ struct show_tree_data {
 	const struct object_id *oid;
 	const char *pathname;
 	struct strbuf *base;
+	char *size_text;
 };
 
 static const char * const ls_tree_usage[] = {
@@ -186,6 +187,7 @@ static int show_tree_common(struct show_tree_data *data, int *recurse,
 	data->oid = oid;
 	data->pathname = pathname;
 	data->base = base;
+	data->size_text = NULL;
 
 	if (type == OBJ_BLOB) {
 		if (ls_options & LS_TREE_ONLY)
@@ -203,6 +205,13 @@ static int show_tree_common(struct show_tree_data *data, int *recurse,
 static void show_tree_common_default_long(struct show_tree_data *data)
 {
 	int base_len = data->base->len;
+
+	if (data->size_text)
+		printf("%06o %s %s %7s\t", data->mode, type_name(data->type),
+		       find_unique_abbrev(data->oid, abbrev), data->size_text);
+	else
+		printf("%06o %s %s\t", data->mode, type_name(data->type),
+		       find_unique_abbrev(data->oid, abbrev));
 
 	strbuf_addstr(data->base, data->pathname);
 	write_name_quoted_relative(data->base->buf,
@@ -223,8 +232,6 @@ static int show_tree_default(const struct object_id *oid, struct strbuf *base,
 	if (early >= 0)
 		return early;
 
-	printf("%06o %s %s\t", data.mode, type_name(data.type),
-	       find_unique_abbrev(data.oid, abbrev));
 	show_tree_common_default_long(&data);
 	return recurse;
 }
@@ -253,8 +260,7 @@ static int show_tree_long(const struct object_id *oid, struct strbuf *base,
 		xsnprintf(size_text, sizeof(size_text), "-");
 	}
 
-	printf("%06o %s %s %7s\t", data.mode, type_name(data.type),
-	       find_unique_abbrev(data.oid, abbrev), size_text);
+	data.size_text = size_text;
 	show_tree_common_default_long(&data);
 	return recurse;
 }
