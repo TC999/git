@@ -200,15 +200,15 @@ static int show_tree_common(struct show_tree_data *data, int *recurse,
 	return ret;
 }
 
-static void show_tree_common_default_long(struct strbuf *base,
-					  const char *pathname,
-					  const size_t baselen)
+static void show_tree_common_default_long(struct show_tree_data *data)
 {
-	strbuf_addstr(base, pathname);
-	write_name_quoted_relative(base->buf,
+	int base_len = data->base->len;
+
+	strbuf_addstr(data->base, data->pathname);
+	write_name_quoted_relative(data->base->buf,
 				   chomp_prefix ? ls_tree_prefix : NULL, stdout,
 				   line_termination);
-	strbuf_setlen(base, baselen);
+	strbuf_setlen(data->base, base_len);
 }
 
 static int show_tree_default(const struct object_id *oid, struct strbuf *base,
@@ -225,7 +225,7 @@ static int show_tree_default(const struct object_id *oid, struct strbuf *base,
 
 	printf("%06o %s %s\t", data.mode, type_name(data.type),
 	       find_unique_abbrev(data.oid, abbrev));
-	show_tree_common_default_long(base, pathname, data.base->len);
+	show_tree_common_default_long(&data);
 	return recurse;
 }
 
@@ -255,7 +255,7 @@ static int show_tree_long(const struct object_id *oid, struct strbuf *base,
 
 	printf("%06o %s %s %7s\t", data.mode, type_name(data.type),
 	       find_unique_abbrev(data.oid, abbrev), size_text);
-	show_tree_common_default_long(base, pathname, data.base->len);
+	show_tree_common_default_long(&data);
 	return recurse;
 }
 
