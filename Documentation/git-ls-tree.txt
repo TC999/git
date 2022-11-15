@@ -10,7 +10,7 @@ SYNOPSIS
 --------
 [verse]
 'git ls-tree' [-d] [-r] [-t] [-l] [-z]
-	    [--name-only] [--name-status] [--object-only] [--full-name] [--full-tree] [--abbrev[=<n>]] [--format=<format>]
+	    [--name-only] [--name-status] [--object-only] [--full-name] [--full-tree] [--abbrev[=<n>]] [--format=<format>] [--pattern=<pattern>]
 	    <tree-ish> [<path>...]
 
 DESCRIPTION
@@ -92,6 +92,11 @@ OPTIONS
 	When specified, `--format` cannot be combined with other
 	format-altering options, including `--long`, `--name-only`
 	and `--object-only`.
+
+--pattern=<pattern>::
+    The <pattern> is a string of regular expression format used to
+    match each entry. Unmatched entries will be filtered and not
+    dump to the output.
 
 [<path>...]::
 	When paths are given, show them (note that this isn't really raw
