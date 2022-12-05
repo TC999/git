@@ -588,11 +588,12 @@ int cmd_push(int argc, const char **argv, const char *prefix)
 	struct option options[] = {
 		OPT__VERBOSITY(&verbosity),
 		OPT_STRING( 0 , "repo", &repo, N_("repository"), N_("repository")),
-		OPT_BIT( 0 , "all", &flags, N_("push all refs"), TRANSPORT_PUSH_ALL),
+		OPT_BIT( 0 , "all", &flags, N_("push all branches"), TRANSPORT_PUSH_ALL),
+		OPT_BIT( 0 , "heads", &flags, N_("push all branches"), TRANSPORT_PUSH_ALL),
 		OPT_BIT( 0 , "mirror", &flags, N_("mirror all refs"),
 			    (TRANSPORT_PUSH_MIRROR|TRANSPORT_PUSH_FORCE)),
 		OPT_BOOL('d', "delete", &deleterefs, N_("delete refs")),
-		OPT_BOOL( 0 , "tags", &tags, N_("push tags (can't be used with --all or --mirror)")),
+		OPT_BOOL( 0 , "tags", &tags, N_("push tags (can't be used with --all or --heads or --mirror)")),
 		OPT_BIT('n' , "dry-run", &flags, N_("dry run"), TRANSPORT_PUSH_DRY_RUN),
 		OPT_BIT( 0,  "porcelain", &flags, N_("machine-readable output"), TRANSPORT_PUSH_PORCELAIN),
 		OPT_BIT('f', "force", &flags, N_("force updates"), TRANSPORT_PUSH_FORCE),
@@ -635,7 +636,7 @@ int cmd_push(int argc, const char **argv, const char *prefix)
 	set_push_cert_flags(&flags, push_cert);
 
 	if (deleterefs && (tags || (flags & (TRANSPORT_PUSH_ALL | TRANSPORT_PUSH_MIRROR))))
-		die(_("options '%s' and '%s' cannot be used together"), "--delete", "--all/--mirror/--tags");
+		die(_("options '%s' and '%s' cannot be used together"), "--delete", "--all/--heads/--mirror/--tags");
 	if (deleterefs && argc < 2)
 		die(_("--delete doesn't make sense without any refs"));
 
@@ -673,9 +674,9 @@ int cmd_push(int argc, const char **argv, const char *prefix)
 
 	if (flags & TRANSPORT_PUSH_ALL) {
 		if (tags)
-			die(_("options '%s' and '%s' cannot be used together"), "--all", "--tags");
+			die(_("options '%s' and '%s' cannot be used together"), "--all/--heads", "--tags");
 		if (argc >= 2)
-			die(_("--all can't be combined with refspecs"));
+			die(_("--all/--heads can't be combined with refspecs"));
 	}
 	if (flags & TRANSPORT_PUSH_MIRROR) {
 		if (tags)
@@ -684,7 +685,7 @@ int cmd_push(int argc, const char **argv, const char *prefix)
 			die(_("--mirror can't be combined with refspecs"));
 	}
 	if ((flags & TRANSPORT_PUSH_ALL) && (flags & TRANSPORT_PUSH_MIRROR))
-		die(_("options '%s' and '%s' cannot be used together"), "--all", "--mirror");
+		die(_("options '%s' and '%s' cannot be used together"), "--all/--heads", "--mirror");
 
 	if (!is_empty_cas(&cas) && (flags & TRANSPORT_PUSH_FORCE_IF_INCLUDES))
 		cas.use_force_if_includes = 1;

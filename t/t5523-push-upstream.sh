@@ -60,13 +60,18 @@ test_expect_success 'push -u :topic_2' '
 	check_config topic_2 upstream refs/heads/other2
 '
 
-test_expect_success 'push -u --all' '
-	git branch all1 &&
-	git branch all2 &&
-	git push -u --all &&
-	check_config all1 upstream refs/heads/all1 &&
-	check_config all2 upstream refs/heads/all2
-'
+
+for option in 'all' 'heads'
+do
+
+	test_expect_success "push -u --$option" '
+		git branch "$option"1 &&
+		git branch "$option"2 &&
+		git push -u --"$option" &&
+		check_config "$option"1 upstream refs/heads/"$option"1 &&
+		check_config "$option"2 upstream refs/heads/"$option"2
+	'
+done
 
 test_expect_success 'push -u HEAD' '
 	git checkout -b headbranch &&
