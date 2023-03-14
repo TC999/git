@@ -311,6 +311,82 @@ static int do_ls_tree_path(struct lazy_tree *root_tree, const char *path)
 	return ret;
 }
 
+static int do_rm_entry(struct lazy_tree *root_tree, const char *path, int force)
+{
+	struct strbuf buf = STRBUF_INIT;
+	struct lazy_tree *tree;
+	char *p;
+	int len;
+	struct lazy_tree **tree_entry;
+	struct file_entry **file_entry;
+	int ret = 0;
+
+	/* walk to parent dir */
+	len = strlen(path);
+	while (path[len - 1] == '/' && len > 0)
+		len--;
+	while (len > 0 && path[len - 1] != '/')
+		len--;
+	strbuf_add(&buf, path, len);
+	if (walk_tree(root_tree, buf.buf, &tree, MARK_TREE_DIRTY))
+		return -1;
+
+	/* find matched entry, and marked as deleted */
+	strbuf_reset(&buf);
+	p = (char *)path + len;
+	len = strlen(p);
+	while (p[len - 1] == '/' && len > 0)
+		len--;
+	strbuf_add(&buf, p, len);
+
+	tree_entry = &tree->dir_entry;
+	while (*tree_entry) {
+		if (!strcmp(buf.buf, (*tree_entry)->name)) {
+			struct lazy_tree *next = (*tree_entry)->next;
+			free_one_tree_entry(*tree_entry);
+			*tree_entry = next;
+			goto cleanup;
+		}
+		tree_entry = &(*tree_entry)->next;
+	}
+
+	file_entry = &tree->file_entry;
+	while (*file_entry) {
+		if (!strcmp(buf.buf, (*file_entry)->name)) {
+			struct file_entry *next = (*file_entry)->next;
+			free_one_file_entry(*file_entry);
+			*file_entry = next;
+			goto cleanup;
+		}
+		file_entry = &(*file_entry)->next;
+	}
+
+	if (!force)
+		ret = error("rm: %s: no such file or directory", path);
+
+cleanup:
+	strbuf_release(&buf);
+	return ret;
+}
+
+static int do_rm(struct lazy_tree *root_tree, const char *buf)
+{
+	const char *path;
+	int force = 0;
+
+	/*
+	 * Format:
+	 *     [-f] SP name
+	 */
+	if (skip_prefix(buf, "-f ", &path))
+		force = 1;
+	else
+		path = buf;
+
+	return do_rm_entry(root_tree, path, force);
+}
+
+
 int cmd_edit_tree(int argc, const char **argv, const char *prefix)
 {
 	const char *input = NULL;
@@ -379,6 +455,8 @@ int cmd_edit_tree(int argc, const char **argv, const char *prefix)
 			fprintf(stderr, "%s\n", p);
 		else if (!strcmp(sb.buf, "echo"))
 			fprintf(stderr, "\n");
+		else if (skip_prefix(sb.buf, "rm ", &p))
+			ret = do_rm(&root_tree, p);
 		else
 			ret = error("unknown command: %s", sb.buf);
 	}
