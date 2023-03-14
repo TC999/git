@@ -5,6 +5,7 @@
  */
 #include "builtin.h"
 #include "config.h"
+#include "object-store.h"
 #include "pathspec.h"
 #include "parse-options.h"
 #include "tree.h"
@@ -386,6 +387,170 @@ static int do_rm(struct lazy_tree *root_tree, const char *buf)
 	return do_rm_entry(root_tree, path, force);
 }
 
+static int do_add_entry(struct lazy_tree *root_tree, unsigned mode,
+			struct object_id *oid, const char *path, int force)
+{
+	struct strbuf buf = STRBUF_INIT;
+	struct lazy_tree *tree;
+	char *p;
+	int len;
+	struct lazy_tree **tree_entry;
+	struct file_entry **file_entry;
+	int ret = 0;
+	enum object_type type;
+
+	/* We check availability of oid except for submodules */
+	type = object_type(mode);
+	if (type != OBJ_COMMIT) {
+		unsigned long unused;
+		int obj_type;
+		obj_type = oid_object_info(the_repository, oid, &unused);
+		if (obj_type < 0)
+			die("object %s is missing for path: %s",
+			    oid_to_hex(oid), path);
+		if (type != obj_type)
+			die("unmatched types (actual: %s, want: %s)",
+			    type_name(obj_type), type_name(type));
+	}
+
+	/* walk to parent dir */
+	len = strlen(path);
+	while (path[len - 1] == '/' && len > 0)
+		len--;
+	while (len > 0 && path[len - 1] != '/')
+		len--;
+	strbuf_add(&buf, path, len);
+	if (walk_tree(root_tree, buf.buf, &tree, MARK_TREE_DIRTY))
+		return -1;
+
+	/* save entry name in buf */
+	strbuf_reset(&buf);
+	p = (char *)path + len;
+	len = strlen(p);
+	while (p[len - 1] == '/' && len > 0)
+		len--;
+	strbuf_add(&buf, p, len);
+
+	/* add a tree entry */
+	if (type == OBJ_TREE) {
+		tree_entry = &tree->dir_entry;
+		while (*tree_entry) {
+			if (!strcmp(buf.buf, (*tree_entry)->name)) {
+				if (oideq(&(*tree_entry)->tree.object.oid,
+					  oid)) {
+					if (!force)
+						warning("already exist, ignored: %s",
+							path);
+					break;
+				}
+				if (force) {
+					/* remove old tree_entry */
+					struct lazy_tree *next =
+						(*tree_entry)->next;
+					free_one_tree_entry(*tree_entry);
+					*tree_entry = next;
+					/* Continue loop, until we cannot find a
+					 * match entry. */
+					continue;
+				}
+				ret = error(
+					"found a conflict tree with different oid, please use replace command for it: %s",
+					path);
+				goto cleanup;
+			}
+			tree_entry = &(*tree_entry)->next;
+		}
+		/* not exist, add tree */
+		if (!*tree_entry)
+			*tree_entry = new_lazy_tree(buf.buf, oid, 0);
+	}
+	/* add a file entry */
+	else {
+		for (file_entry = &tree->file_entry; *file_entry;
+		     file_entry = &(*file_entry)->next) {
+			if (!strcmp(buf.buf, (*file_entry)->name)) {
+				if ((*file_entry)->mode == mode &&
+				    oideq(&(*file_entry)->oid, oid)) {
+					if (!force)
+						warning("already exist, ignored: %s",
+							path);
+					break;
+				}
+				if (force) {
+					(*file_entry)->mode = mode;
+					(*file_entry)->oid = *oid;
+					break;
+				}
+				ret = error(
+					"found a conflict entry with different mode or oid, please use replace command for it: %s",
+					path);
+				goto cleanup;
+			}
+		}
+		/* not exist, add tree */
+		if (!*file_entry) {
+			*file_entry = xcalloc(1, sizeof(struct file_entry));
+			(*file_entry)->mode = mode;
+			(*file_entry)->oid = *oid;
+			(*file_entry)->name = xstrdup(buf.buf);
+		}
+	}
+
+cleanup:
+	strbuf_release(&buf);
+	return ret;
+}
+
+static int do_add(struct lazy_tree *root_tree, const char *buf)
+{
+	const char *ptr;
+	const char *path, *p;
+	char *ntr;
+	unsigned mode;
+	struct object_id oid;
+	int force = 0;
+
+	/*
+	 * Format:
+	 *     [-f] mode SP sha SP name
+	 */
+	if (skip_prefix(buf, "-f ", &ptr))
+		force = 1;
+	else
+		ptr = buf;
+	mode = strtoul(ptr, &ntr, 8);
+	if (ptr == ntr || !ntr || *ntr != ' ')
+		die("bad input for add: %s", buf);
+	ptr = ntr + 1; /* sha */
+	ntr = strchr(ptr, ' ');
+	if (!ntr || parse_oid_hex(ptr, &oid, &p) || *p != ' ')
+		die("bad input for add: %s", buf);
+	path = p + 1;
+
+	return do_add_entry(root_tree, mode, &oid, path, force);
+}
+
+static int do_add_tree(struct lazy_tree *root_tree, const char *buf)
+{
+	const char *ptr;
+	const char *path, *p;
+	struct object_id oid;
+	int force = 0;
+
+	/*
+	 * Format:
+	 *     [-f] SP sha SP name
+	 */
+	if (skip_prefix(buf, "-f ", &ptr))
+		force = 1;
+	else
+		ptr = (char *)buf;
+	if (parse_oid_hex(ptr, &oid, &p) || *p != ' ')
+		die("bad input for add-tree: %s", buf);
+	path = p + 1;
+
+	return do_add_entry(root_tree, S_IFDIR, &oid, path, force);
+}
 
 int cmd_edit_tree(int argc, const char **argv, const char *prefix)
 {
@@ -455,6 +620,10 @@ int cmd_edit_tree(int argc, const char **argv, const char *prefix)
 			fprintf(stderr, "%s\n", p);
 		else if (!strcmp(sb.buf, "echo"))
 			fprintf(stderr, "\n");
+		else if (skip_prefix(sb.buf, "add ", &p))
+			ret = do_add(&root_tree, p);
+		else if (skip_prefix(sb.buf, "add-tree ", &p))
+			ret = do_add_tree(&root_tree, p);
 		else if (skip_prefix(sb.buf, "rm ", &p))
 			ret = do_rm(&root_tree, p);
 		else
