@@ -552,6 +552,46 @@ static int do_add_tree(struct lazy_tree *root_tree, const char *buf)
 	return do_add_entry(root_tree, S_IFDIR, &oid, path, force);
 }
 
+static int do_replace_entry(struct lazy_tree *root_tree, unsigned mode,
+			    struct object_id *oid, const char *path, int force)
+{
+	if (do_rm_entry(root_tree, path, force))
+		return -1;
+	if (do_add_entry(root_tree, mode, oid, path, force))
+		return -1;
+	return 0;
+}
+
+static int do_replace(struct lazy_tree *root_tree, const char *buf)
+{
+	const char *ptr;
+	const char *path, *p;
+	char *ntr;
+	unsigned mode;
+	struct object_id oid;
+	int force = 0;
+
+	/*
+	 * Format:
+	 *     [-f] SP mode SP sha SP name
+	 */
+	if (skip_prefix(buf, "-f ", &ptr))
+		force = 1;
+	else
+		ptr = buf;
+
+	mode = strtoul(ptr, &ntr, 8);
+	if (ptr == ntr || !ntr || *ntr != ' ')
+		die("bad input for add: %s", buf);
+	ptr = ntr + 1; /* sha */
+	ntr = strchr(ptr, ' ');
+	if (!ntr || parse_oid_hex(ptr, &oid, &p) || *p != ' ')
+		die("bad input for add: %s", buf);
+	path = p + 1;
+
+	return do_replace_entry(root_tree, mode, &oid, path, force);
+}
+
 int cmd_edit_tree(int argc, const char **argv, const char *prefix)
 {
 	const char *input = NULL;
@@ -624,6 +664,8 @@ int cmd_edit_tree(int argc, const char **argv, const char *prefix)
 			ret = do_add(&root_tree, p);
 		else if (skip_prefix(sb.buf, "add-tree ", &p))
 			ret = do_add_tree(&root_tree, p);
+		else if (skip_prefix(sb.buf, "replace ", &p))
+			ret = do_replace(&root_tree, p);
 		else if (skip_prefix(sb.buf, "rm ", &p))
 			ret = do_rm(&root_tree, p);
 		else
