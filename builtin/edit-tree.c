@@ -208,6 +208,109 @@ static int walk_tree(struct lazy_tree *root_tree, const char *path,
 	return 0;
 }
 
+static int is_empty_tree(struct lazy_tree *tree)
+{
+	struct lazy_tree *tree_entry;
+	struct file_entry *file_entry;
+
+	/*
+	 * If has a valid tree-id (not a place_holder), and not loaded yet,
+	 * that means it's a non-empty tree, and we have no interesting to
+	 * travel it.
+	 */
+	if (!tree->loaded && !is_place_holder_tree(tree))
+		return 0;
+
+	for (file_entry = tree->file_entry; file_entry;
+	     file_entry = file_entry->next)
+		return 0;
+
+	for (tree_entry = tree->dir_entry; tree_entry;
+	     tree_entry = tree_entry->next) {
+		if (!is_empty_tree(tree_entry))
+			return 0;
+	}
+
+	return 1;
+}
+
+static int do_ls_tree(struct lazy_tree *tree, const char *parent_dir)
+{
+	struct strbuf full_path = STRBUF_INIT;
+	struct strbuf mark = STRBUF_INIT;
+	struct lazy_tree *tree_entry;
+	struct file_entry *file_entry;
+
+	if (parent_dir && *parent_dir)
+		strbuf_addstr(&full_path, parent_dir);
+	if (*tree->name) {
+		if (full_path.len)
+			strbuf_addch(&full_path, '/');
+		strbuf_addstr(&full_path, tree->name);
+	}
+
+	if (tree->dirty || !tree->loaded) {
+		strbuf_addstr(&mark, " (");
+		strbuf_addch(&mark, tree->dirty ? '!' : ' ');
+		strbuf_addch(&mark, tree->loaded ? ' ' : '?');
+		strbuf_addch(&mark, ')');
+	}
+
+	/* show this tree entry */
+	fprintf(stderr, "%06o %s %*s %s%s\n", S_IFDIR,
+		type_name(object_type(S_IFDIR)), (int)the_hash_algo->hexsz,
+		!is_place_holder_tree(tree) ?
+			oid_to_hex(&tree->tree.object.oid) :
+			"",
+		full_path.len ? full_path.buf : ".", mark.buf);
+
+	for (tree_entry = tree->dir_entry; tree_entry;
+	     tree_entry = tree_entry->next) {
+		if (!is_empty_tree(tree_entry))
+			do_ls_tree(tree_entry, full_path.buf);
+	}
+
+	for (file_entry = tree->file_entry; file_entry;
+	     file_entry = file_entry->next) {
+		/* show this file entry */
+		fprintf(stderr, "%06o %s %s %s%s%s\n", file_entry->mode,
+			type_name(object_type(file_entry->mode)),
+			oid_to_hex(&file_entry->oid), full_path.buf,
+			full_path.len ? "/" : "", file_entry->name);
+	}
+
+	strbuf_release(&full_path);
+	strbuf_release(&mark);
+	return 0;
+}
+
+static int do_ls_tree_path(struct lazy_tree *root_tree, const char *path)
+{
+	struct lazy_tree *tree;
+	struct strbuf buf = STRBUF_INIT;
+	int len;
+	int ret;
+
+	/* The input ppath is the tree we want to show, get the tree. */
+	if (walk_tree(root_tree, path, &tree, 0))
+		return -1;
+
+	/* We should pass the parent_dir of the tree to do_ls_tree(). */
+	len = strlen(path);
+	while (path[len - 1] == '/' && len > 0)
+		len--;
+	while (len > 0 && path[len - 1] != '/')
+		len--;
+	while (path[len - 1] == '/' && len > 0)
+		len--;
+	strbuf_add(&buf, path, len);
+
+	ret = do_ls_tree(tree, (const char *)buf.buf);
+
+	strbuf_release(&buf);
+	return ret;
+}
+
 int cmd_edit_tree(int argc, const char **argv, const char *prefix)
 {
 	const char *input = NULL;
@@ -268,6 +371,14 @@ int cmd_edit_tree(int argc, const char **argv, const char *prefix)
 			continue;
 		if (skip_prefix(sb.buf, "walk ", &p))
 			ret = walk_tree(&root_tree, p, NULL, 0);
+		else if (skip_prefix(sb.buf, "ls-tree ", &p))
+			ret = do_ls_tree_path(&root_tree, p);
+		else if (!strcmp(sb.buf, "ls-tree"))
+			ret = do_ls_tree_path(&root_tree, "");
+		else if (skip_prefix(sb.buf, "echo ", &p))
+			fprintf(stderr, "%s\n", p);
+		else if (!strcmp(sb.buf, "echo"))
+			fprintf(stderr, "\n");
 		else
 			ret = error("unknown command: %s", sb.buf);
 	}
