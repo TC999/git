@@ -42,6 +42,20 @@ struct lazy_tree {
 	struct lazy_tree *next;
 };
 
+/*
+ * entries is an array of treeent, to store entries in a tree,
+ * and will be used to rehash the tree.
+ */
+static struct treeent {
+	char *name;
+	int len;
+	struct object_id *oid;
+	unsigned mode;
+} **entries;
+
+/* alloc is the number of treeent already allocated by calling ALLOC_GROW. */
+static int alloc;
+
 static const char *edit_tree_usage[] = {
 	"git edit-tree [-z] [-f <input-file>] <tree-id>", NULL
 };
@@ -592,6 +606,105 @@ static int do_replace(struct lazy_tree *root_tree, const char *buf)
 	return do_replace_entry(root_tree, mode, &oid, path, force);
 }
 
+static void append_to_tree(int *idx, unsigned mode, struct object_id *oid,
+			   char *path)
+{
+	struct treeent *ent;
+	if (strchr(path, '/'))
+		die("path %s contains slash", path);
+
+	ent = xcalloc(1, sizeof(*ent));
+	ent->name = path;
+	ent->len = strlen(path);
+	ent->mode = mode;
+	ent->oid = oid;
+
+	ALLOC_GROW(entries, *idx + 1, alloc);
+	entries[(*idx)++] = ent;
+}
+
+static int ent_compare(const void *a_, const void *b_)
+{
+	struct treeent *a = *(struct treeent **)a_;
+	struct treeent *b = *(struct treeent **)b_;
+	return base_name_compare(a->name, a->len, a->mode,
+				 b->name, b->len, b->mode);
+}
+
+static int rehash_tree(struct lazy_tree *tree)
+{
+	struct lazy_tree *tree_entry;
+	struct file_entry *file_entry;
+	int used = 0;
+	size_t size;
+	int i;
+	struct strbuf buf = STRBUF_INIT;
+
+	for (tree_entry = tree->dir_entry; tree_entry;
+	     tree_entry = tree_entry->next) {
+		if (is_empty_tree(tree_entry))
+			continue;
+		append_to_tree(&used, S_IFDIR, &tree_entry->tree.object.oid,
+			       tree_entry->name);
+	}
+
+	for (file_entry = tree->file_entry; file_entry;
+	     file_entry = file_entry->next) {
+		append_to_tree(&used, file_entry->mode, &file_entry->oid,
+			       file_entry->name);
+	}
+
+	QSORT(entries, used, ent_compare);
+	for (size = i = 0; i < used; i++)
+		size += 32 + entries[i]->len;
+
+	strbuf_init(&buf, size);
+	for (i = 0; i < used; i++) {
+		struct treeent *ent = entries[i];
+		strbuf_addf(&buf, "%o %s%c", ent->mode, ent->name, '\0');
+		strbuf_add(&buf, ent->oid->hash, the_hash_algo->rawsz);
+	}
+
+	write_object_file(buf.buf, buf.len, OBJ_TREE, &tree->tree.object.oid);
+	strbuf_release(&buf);
+	tree->dirty = 0;
+	/* Make place-holder tree as loaded to prevent reload with duplicate
+	 * entries */
+	tree->loaded = 1;
+	return 0;
+}
+
+static int do_commit(struct lazy_tree *tree)
+{
+	struct lazy_tree **tree_entry;
+	int ret = 0;
+
+	if (!tree->dirty)
+		return 0;
+
+	tree_entry = &tree->dir_entry;
+	while (*tree_entry) {
+		/* Remove empty subdir */
+		if (is_empty_tree(*tree_entry)) {
+			struct lazy_tree *next;
+			next = (*tree_entry)->next;
+			free_one_tree_entry(*tree_entry);
+			*tree_entry = next;
+			continue;
+		}
+		/* Commit dirty subdir */
+		if ((*tree_entry)->dirty) {
+			ret = do_commit(*tree_entry);
+			if (ret)
+				break;
+		}
+		tree_entry = &(*tree_entry)->next;
+	}
+	if (!ret)
+		ret = rehash_tree(tree);
+	return ret;
+}
+
 int cmd_edit_tree(int argc, const char **argv, const char *prefix)
 {
 	const char *input = NULL;
@@ -668,12 +781,19 @@ int cmd_edit_tree(int argc, const char **argv, const char *prefix)
 			ret = do_replace(&root_tree, p);
 		else if (skip_prefix(sb.buf, "rm ", &p))
 			ret = do_rm(&root_tree, p);
+		else if (!strcmp(sb.buf, "commit"))
+			ret = do_commit(&root_tree);
 		else
 			ret = error("unknown command: %s", sb.buf);
 	}
 
 	if (reader != stdin)
 		fclose(reader);
+
+	if (!ret)
+		ret = do_commit(&root_tree);
+	if (!ret)
+		printf("%s\n", oid_to_hex(&root_tree.tree.object.oid));
 
 	strbuf_release(&sb);
 	return ret;
