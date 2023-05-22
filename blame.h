@@ -16,6 +16,8 @@
 #define BLAME_DEFAULT_MOVE_SCORE	20
 #define BLAME_DEFAULT_COPY_SCORE	40
 
+///////
+
 struct fingerprint;
 
 /*
