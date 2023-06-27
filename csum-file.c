@@ -20,11 +20,11 @@ static void verify_buffer_or_die(struct hashfile *f,
 	ssize_t ret = read_in_full(f->check_fd, f->check_buffer, count);
 
 	if (ret < 0)
-		die_errno("%s: sha1 file read error", f->name);
+		die_errno(_("%s: sha1 file read error"), f->name);
 	if (ret != count)
-		die("%s: sha1 file truncated", f->name);
+		die(_("%s: sha1 file truncated"), f->name);
 	if (memcmp(buf, f->check_buffer, count))
-		die("sha1 file '%s' validation error", f->name);
+		die(_("sha1 file '%s' validation error"), f->name);
 }
 
 static void flush(struct hashfile *f, const void *buf, unsigned int count)
@@ -34,8 +34,8 @@ static void flush(struct hashfile *f, const void *buf, unsigned int count)
 
 	if (write_in_full(f->fd, buf, count) < 0) {
 		if (errno == ENOSPC)
-			die("sha1 file '%s' write error. Out of diskspace", f->name);
-		die_errno("sha1 file '%s' write error", f->name);
+			die(_("sha1 file '%s' write error. Out of diskspace"), f->name);
+		die_errno(_("sha1 file '%s' write error"), f->name);
 	}
 
 	f->total += count;
@@ -81,7 +81,7 @@ int finalize_hashfile(struct hashfile *f, unsigned char *result,
 		fsync_component_or_die(component, f->fd, f->name);
 	if (flags & CSUM_CLOSE) {
 		if (close(f->fd))
-			die_errno("%s: sha1 file error on close", f->name);
+			die_errno(_("%s: sha1 file error on close"), f->name);
 		fd = 0;
 	} else
 		fd = f->fd;
@@ -89,12 +89,12 @@ int finalize_hashfile(struct hashfile *f, unsigned char *result,
 		char discard;
 		int cnt = read_in_full(f->check_fd, &discard, 1);
 		if (cnt < 0)
-			die_errno("%s: error when reading the tail of sha1 file",
+			die_errno(_("%s: error when reading the tail of sha1 file"),
 				  f->name);
 		if (cnt)
-			die("%s: sha1 file has trailing garbage", f->name);
+			die(_("%s: sha1 file has trailing garbage"), f->name);
 		if (close(f->check_fd))
-			die_errno("%s: sha1 file error on close", f->name);
+			die_errno(_("%s: sha1 file error on close"), f->name);
 	}
 	free_hashfile(f);
 	return fd;
