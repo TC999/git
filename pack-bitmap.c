@@ -1905,7 +1905,7 @@ uint32_t midx_preferred_pack(struct bitmap_index *bitmap_git)
 	return nth_midxed_pack_int_id(m, pack_pos_to_midx(bitmap_git->midx, 0));
 }
 
-int reuse_partial_packfile_from_bitmap(struct bitmap_index *bitmap_git,
+int reuse_partial_objects_from_bitmap(struct bitmap_index *bitmap_git,
 				       struct packed_git **packfile_out,
 				       uint32_t *entries,
 				       struct bitmap **reuse_out)

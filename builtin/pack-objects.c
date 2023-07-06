@@ -3946,7 +3946,7 @@ static int get_object_list_from_bitmap(struct rev_info *revs)
 		return -1;
 
 	if (pack_options_allow_reuse() &&
-	    !reuse_partial_packfile_from_bitmap(
+	    !reuse_partial_objects_from_bitmap(
 			bitmap_git,
 			&reuse_packfile,
 			&reuse_packfile_objects,
