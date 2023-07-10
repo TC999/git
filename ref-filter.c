@@ -617,7 +617,7 @@ static int ahead_behind_atom_parser(struct ref_format *format, struct used_atom 
 	item = string_list_append(&format->bases, arg);
 	item->util = lookup_commit_reference_by_name(arg);
 	if (!item->util)
-		die("failed to find '%s'", arg);
+		die(_("failed to find the ahead-behind committish: '%s'"), arg);
 
 	return 0;
 }
