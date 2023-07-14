@@ -102,7 +102,7 @@ int cmd_for_each_ref(int argc, const char **argv, const char *prefix)
 
 	filter.match_as_path = 1;
 	filter_refs(&array, &filter, FILTER_REFS_ALL);
-	filter_ahead_behind(the_repository, &format, &array);
+	filter_ahead_behind(the_repository, &format, &array, 0);
 
 	ref_array_sort(sorting, &array);
 

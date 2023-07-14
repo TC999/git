@@ -165,6 +165,7 @@ struct ref_array_item *ref_array_push(struct ref_array *array,
  */
 void filter_ahead_behind(struct repository *r,
 			 struct ref_format *format,
-			 struct ref_array *array);
+			 struct ref_array *array,
+			 int strict);
 
 #endif /*  REF_FILTER_H  */
