@@ -92,13 +92,11 @@ static int deal_blob(struct strbuf *tree_buf, const char *name)
 }
 
 static int deal_tree(struct strbuf *parent_tree_buf, const char *dir_name)
-
 {
 	struct dir_iterator *iter;
 	int iter_status;
 	struct object_id tree;
 	struct strbuf tree_buf = STRBUF_INIT;
-	struct dir_struct dir = DIR_INIT;
 
 	iter = dir_iterator_begin(dir_name, DIR_ITERATOR_PEDANTIC);
 
@@ -106,9 +104,9 @@ static int deal_tree(struct strbuf *parent_tree_buf, const char *dir_name)
 		die_errno(_("failed to start iterator over '%s'"), dir_name);
 	while ((iter_status = dir_iterator_advance(iter)) == ITER_OK) {
 		if (iter->st.st_mode & S_IFDIR) {
-			deal_tree(iter->path.buf, &tree_buf);
+			deal_tree(&tree_buf, iter->path.buf);
 		} else if (iter->st.st_mode & S_IFREG) {
-			deal_blob(&tree_buf, iter->basename);
+			deal_blob(&tree_buf, iter->path.buf);
 		} else {
 			die(_("unsupported file type '%s', mode: '%o'"),
 			    iter->relative_path, iter->st.st_mode);
@@ -117,7 +115,6 @@ static int deal_tree(struct strbuf *parent_tree_buf, const char *dir_name)
 
 	strbuf_addf(parent_tree_buf, "%o %s%c", 040000, dir_name, '\0');
 	strbuf_add(parent_tree_buf, tree.hash, the_hash_algo->rawsz);
-
 	strbuf_release(&tree_buf);
 	return 0;
 }
@@ -130,22 +127,45 @@ static int write_attach_tree(const struct pathspec *pathspec,
 	struct object_id tree_oid;
 	struct strbuf tree_buf = STRBUF_INIT;
 	struct strbuf attach_tree_buf = STRBUF_INIT;
-	struct dir_struct dir = DIR_INIT;
 	char *commit_oid = oid_to_hex(attach_commit);
+	struct dir_struct dir = DIR_INIT;
 
-	for (int i = 0; i < pathspec->nr; i++) {
-		char *path = pathspec->items[i].original;
-		if (lstat(path, &st))
-			die_errno(_("fail to stat file '%s'"), path);
+	dir.flags = DIR_SHOW_OTHER_DIRECTORIES | DIR_SHOW_IGNORED_TOO |
+		    DIR_NO_GITLINKS | DIR_HIDE_EMPTY_DIRECTORIES |
+		    DIR_SKIP_NESTED_GIT;
+
+	fill_directory(&dir, the_repository->index, pathspec);
+	if (!dir.nr && !dir.ignored_nr)
+		die(_("no attachments need to attach"));
+
+	for (int i = 0; i < dir.nr; i++) {
+		struct dir_entry *ent = dir.entries[i];
+		if (lstat(ent->name, &st))
+			die_errno(_("fail to stat file '%s'"), ent->name);
 		if (S_ISREG(st.st_mode)) {
-			deal_blob(&tree_buf, path);
+			deal_blob(&tree_buf, ent->name);
 		} else if (S_ISDIR(st.st_mode)) {
-			deal_tree(path, &tree_buf);
+			deal_tree(&tree_buf, ent->name);
 		} else {
-			die(_("unsupported file type '%s', mode: '%o'"), path,
-			    st.st_mode);
+			die(_("unsupported file type '%s', mode: '%o'"),
+			    ent->name, st.st_mode);
 		}
 	}
+
+	for (int j = 0; j < dir.ignored_nr; j++) {
+		struct dir_entry *ent = dir.ignored[j];
+		if (lstat(ent->name, &st))
+			die_errno(_("fail to stat file '%s'"), ent->name);
+		if (S_ISREG(st.st_mode)) {
+			deal_blob(&tree_buf, ent->name);
+		} else if (S_ISDIR(st.st_mode)) {
+			deal_tree(&tree_buf, ent->name);
+		} else {
+			die(_("unsupported file type '%s', mode: '%o'"),
+			    ent->name, st.st_mode);
+		}
+	}
+
 	write_object_file(tree_buf.buf, tree_buf.len, OBJ_TREE, &tree_oid);
 
 	strbuf_addf(&attach_tree_buf, "%o %s%c", 040000, commit_oid, '\0');
@@ -155,6 +175,7 @@ static int write_attach_tree(const struct pathspec *pathspec,
 
 	strbuf_release(&tree_buf);
 	strbuf_release(&attach_tree_buf);
+	dir_clear(&dir);
 	return 0;
 }
 
