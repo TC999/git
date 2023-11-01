@@ -967,6 +967,7 @@ LIB_OBJS += apply.o
 LIB_OBJS += archive-tar.o
 LIB_OBJS += archive-zip.o
 LIB_OBJS += archive.o
+LIB_OBJS += attach.o
 LIB_OBJS += attr.o
 LIB_OBJS += base85.o
 LIB_OBJS += bisect.o

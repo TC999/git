@@ -55,6 +55,8 @@ const char *getenv_safe(struct strvec *argv, const char *name);
 #define GIT_OPTIONAL_LOCKS_ENVIRONMENT "GIT_OPTIONAL_LOCKS"
 #define GIT_TEXT_DOMAIN_DIR_ENVIRONMENT "GIT_TEXTDOMAINDIR"
 #define GIT_ATTR_SOURCE_ENVIRONMENT "GIT_ATTR_SOURCE"
+#define GIT_ATTACHMENTS_REF_ENVIRONMENT "GIT_ATTACHMENTS_REF"
+#define GIT_ATTACHMENTS_DEFAULT_REF "refs/attachments/commits"
 
 /*
  * Environment variable used in handshaking the wire protocol.
@@ -189,6 +191,8 @@ enum object_creation_mode {
 	OBJECT_CREATION_USES_HARDLINKS = 0,
 	OBJECT_CREATION_USES_RENAMES = 1
 };
+
+extern char *attachments_ref_name;
 
 extern enum object_creation_mode object_creation_mode;
 
