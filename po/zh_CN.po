@@ -265,7 +265,7 @@ msgstr "补丁更新"
 
 #: add-interactive.c
 msgid "Review diff"
-msgstr "检视 diff"
+msgstr "检视差异"
 
 #: add-interactive.c
 msgid "show paths with changes"
